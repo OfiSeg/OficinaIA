@@ -1,0 +1,1107 @@
+<!DOCTYPE html>
+
+<html lang="es">
+
+<head>
+
+    <meta charset="UTF-8">
+
+    <meta
+        name="viewport"
+        content="width=device-width, initial-scale=1.0"
+    >
+
+    <title>Oficina Seguros</title>
+
+    <link
+        rel="stylesheet"
+        href="{{ url_for('static', filename='css/estilo.css') }}"
+    >
+
+</head>
+
+
+<body>
+
+
+<div class="app">
+
+
+    <!-- ==========================================
+         SIDEBAR
+         ========================================== -->
+
+    <aside class="sidebar">
+
+
+        <!-- LOGO -->
+
+        <div class="brand">
+
+            <div class="brand-logo">
+
+                OS
+
+            </div>
+
+
+            <div>
+
+                <div class="brand-name">
+
+                    Oficina Seguros
+
+                </div>
+
+                <div class="brand-subtitle">
+
+                    Panel de trabajo
+
+                </div>
+
+            </div>
+
+        </div>
+
+
+
+        <!-- NAVEGACIÓN -->
+
+        <nav class="navigation">
+
+
+            <div class="nav-section-title">
+
+                PRINCIPAL
+
+            </div>
+
+
+            <a
+                href="{{ url_for('documentos') }}"
+                class="nav-item active"
+            >
+
+                <span>⌂</span>
+
+                Inicio
+
+            </a>
+
+
+            <a
+                href="{{ url_for('buscar') }}"
+                class="nav-item"
+            >
+
+                <span>⌕</span>
+
+                Buscador
+
+                <kbd>F3</kbd>
+
+            </a>
+
+
+            <a
+                href="{{ url_for('notas') }}"
+                class="nav-item"
+            >
+
+                <span>□</span>
+
+                Bloc de notas
+
+            </a>
+
+
+
+            <!-- COMPAÑÍAS -->
+
+            <div class="nav-section-title companies-title">
+
+                COMPAÑÍAS
+
+            </div>
+
+
+            <div class="company-search">
+
+                <span>⌕</span>
+
+                <input
+                    type="text"
+                    id="buscadorCompanias"
+                    placeholder="Buscar compañía..."
+                    autocomplete="off"
+                >
+
+            </div>
+
+
+            <div
+                class="company-list"
+                id="listaCompanias"
+            >
+
+
+                {% for carpeta in carpetas %}
+
+
+                <a
+                    href="{{ url_for('ver_carpeta', carpeta=carpeta) }}"
+                    class="company-item"
+                    data-company="{{ carpeta.replace('_', ' ')|lower }}"
+                >
+
+                    <span class="company-icon">
+
+                        ▪
+
+                    </span>
+
+
+                    <span>
+
+                        {% if carpeta.lower() == "mercantil_andina" or carpeta.lower() == "mercantilandina" %}
+
+                            Mercantil Andina
+
+                        {% elif carpeta.lower() == "san_cristobal" %}
+
+                            San Cristóbal
+
+                        {% elif carpeta.lower() == "federacion_patronal" %}
+
+                            Federación Patronal
+
+                        {% elif carpeta.lower() == "la_segunda" %}
+
+                            La Segunda
+
+                        {% elif carpeta.lower() == "rio_uruguay" %}
+
+                            Río Uruguay
+
+                        {% elif carpeta.lower() == "sancor_seguros" %}
+
+                            Sancor Seguros
+
+                        {% elif carpeta.lower() == "provincia" %}
+
+                            Provincia Seguros
+
+                        {% elif carpeta.lower() == "mercantil" %}
+
+                            Mercantil Andina
+
+                        {% else %}
+
+                            {{ carpeta.replace('_', ' ') }}
+
+                        {% endif %}
+
+                    </span>
+
+                </a>
+
+
+                {% endfor %}
+
+
+            </div>
+
+
+        </nav>
+
+
+
+        <!-- USUARIO -->
+
+        <div class="sidebar-bottom">
+
+
+            <div class="user-card">
+
+
+                <div class="user-avatar">
+
+                    {{ usuario[0]|upper }}
+
+                </div>
+
+
+                <div class="user-data">
+
+                    <strong>
+
+                        {{ usuario }}
+
+                    </strong>
+
+                    <span>
+
+                        Sesión activa
+
+                    </span>
+
+                </div>
+
+
+                <a
+                    href="{{ url_for('logout') }}"
+                    class="logout"
+                    title="Cerrar sesión"
+                >
+
+                    ↪
+
+                </a>
+
+            </div>
+
+
+        </div>
+
+
+    </aside>
+
+
+
+    <!-- ==========================================
+         CONTENIDO PRINCIPAL
+         ========================================== -->
+
+    <main class="main">
+
+
+        <!-- TOPBAR -->
+
+        <header class="topbar">
+
+
+            <div class="top-left">
+
+                <div class="page-title">
+
+                    Oficina
+
+                </div>
+
+                <div class="page-subtitle">
+
+                    Centro de trabajo
+
+                </div>
+
+            </div>
+
+
+            <div class="top-center">
+
+                <div id="fechaActual">
+
+                    Domingo 16 de agosto
+
+                </div>
+
+            </div>
+
+
+            <div class="top-actions">
+
+
+                <a
+                    href="https://web.whatsapp.com/"
+                    target="_blank"
+                    class="top-action"
+                    title="WhatsApp Web"
+                >
+
+                    ◉
+
+                </a>
+
+
+                <a
+                    href="https://drive.google.com/"
+                    target="_blank"
+                    class="top-action"
+                    title="Google Drive"
+                >
+
+                    ▣
+
+                </a>
+
+
+                <a
+                    href="https://photos.google.com/"
+                    target="_blank"
+                    class="top-action"
+                    title="Google Fotos"
+                >
+
+                    ◎
+
+                </a>
+
+
+                <div class="top-clock">
+
+                    <strong id="horaActual">
+
+                        00:00
+
+                    </strong>
+
+                    <span>
+
+                        hora local
+
+                    </span>
+
+                </div>
+
+
+            </div>
+
+
+        </header>
+
+
+
+        <!-- ==========================================
+             DASHBOARD
+             ========================================== -->
+
+        <div class="dashboard">
+
+
+            <!-- ======================================
+                 COLUMNA PRINCIPAL
+                 ====================================== -->
+
+            <section class="main-column">
+
+
+                <!-- BIENVENIDA -->
+
+                <div class="welcome-bar">
+
+
+                    <div>
+
+                        <div class="welcome-small">
+
+                            SISTEMA DE OFICINA
+
+                        </div>
+
+
+                        <h1>
+
+                            Buen día, {{ usuario }}
+
+                        </h1>
+
+
+                        <p>
+
+                            Todo lo que necesitás para trabajar,
+                            en un solo lugar.
+
+                        </p>
+
+                    </div>
+
+
+                    <div class="welcome-status">
+
+                        <span></span>
+
+                        Sistema operativo
+
+                    </div>
+
+
+                </div>
+
+
+
+                <!-- CHAT -->
+
+                <section class="assistant">
+
+
+                    <div class="assistant-top">
+
+
+                        <div class="assistant-profile">
+
+
+                            <div class="assistant-avatar">
+
+                                ✦
+
+                            </div>
+
+
+                            <div>
+
+                                <h2>
+
+                                    Asistente Oficina
+
+                                </h2>
+
+
+                                <div class="assistant-online">
+
+                                    <span></span>
+
+                                    Disponible
+
+                                </div>
+
+                            </div>
+
+
+                        </div>
+
+
+                        <div class="assistant-info">
+
+                            IA · Documentos · Consultas
+
+                        </div>
+
+
+                    </div>
+
+
+
+                    <!-- CHAT -->
+
+                    <div
+                        id="chat"
+                        class="chat-window"
+                    >
+
+
+                        <div class="welcome">
+
+
+                            <div class="welcome-icon">
+
+                                ✦
+
+                            </div>
+
+
+                            <h2>
+
+                                ¿En qué puedo ayudarte?
+
+                            </h2>
+
+
+                            <p>
+
+                                Consultá información de compañías,
+                                pólizas, documentos o cualquier
+                                cosa relacionada con tu oficina.
+
+                            </p>
+
+
+                            <div class="suggestions">
+
+
+                                <button
+                                    onclick="usarSugerencia('¿Qué documentos tengo disponibles?')"
+                                >
+
+                                    📄 Documentos
+
+                                </button>
+
+
+                                <button
+                                    onclick="usarSugerencia('Buscar información de una compañía')"
+                                >
+
+                                    🏢 Compañías
+
+                                </button>
+
+
+                                <button
+                                    onclick="usarSugerencia('Necesito ayuda con una póliza')"
+                                >
+
+                                    📋 Pólizas
+
+                                </button>
+
+
+                            </div>
+
+
+                        </div>
+
+
+                    </div>
+
+
+
+                    <!-- INPUT -->
+
+                    <div class="chat-input-wrapper">
+
+
+                        <div class="chat-input">
+
+
+                            <input
+                                type="text"
+                                id="mensaje"
+                                placeholder="Escribí tu consulta..."
+                                autocomplete="off"
+                            >
+
+
+                            <button
+                                onclick="enviarMensaje()"
+                                class="send-button"
+                            >
+
+                                ↑
+
+                            </button>
+
+
+                        </div>
+
+
+                        <div class="chat-hint">
+
+                            Enter para enviar · F3 para buscar
+
+                        </div>
+
+
+                    </div>
+
+
+                </section>
+
+
+            </section>
+
+
+
+            <!-- ======================================
+                 COLUMNA DERECHA
+                 ====================================== -->
+
+            <aside class="right-column">
+
+
+                <!-- HORA / FECHA -->
+
+                <div class="info-card time-card">
+
+
+                    <div class="card-label">
+
+                        HOY
+
+                    </div>
+
+
+                    <div
+                        id="horaGrande"
+                        class="big-time"
+                    >
+
+                        00:00
+
+                    </div>
+
+
+                    <div
+                        id="fechaGrande"
+                        class="big-date"
+                    >
+
+                        Domingo 16 de agosto
+
+                    </div>
+
+
+                    <div class="card-line"></div>
+
+
+                    <div class="system-state">
+
+                        <span></span>
+
+                        Sistema funcionando
+
+                    </div>
+
+
+                </div>
+
+
+
+                <!-- HERRAMIENTAS -->
+
+                <div class="info-card">
+
+
+                    <div class="card-header">
+
+                        <strong>
+
+                            Herramientas
+
+                        </strong>
+
+                        <span>
+
+                            Acceso rápido
+
+                        </span>
+
+                    </div>
+
+
+                    <a
+                        href="https://drive.google.com/"
+                        target="_blank"
+                        class="tool-row"
+                    >
+
+                        <div class="tool-icon">
+
+                            ▣
+
+                        </div>
+
+
+                        <div>
+
+                            <strong>
+
+                                Google Drive
+
+                            </strong>
+
+                            <span>
+
+                                Documentos
+
+                            </span>
+
+                        </div>
+
+
+                        <b>→</b>
+
+                    </a>
+
+
+                    <a
+                        href="https://photos.google.com/"
+                        target="_blank"
+                        class="tool-row"
+                    >
+
+                        <div class="tool-icon">
+
+                            ◎
+
+                        </div>
+
+
+                        <div>
+
+                            <strong>
+
+                                Google Fotos
+
+                            </strong>
+
+                            <span>
+
+                                Imágenes
+
+                            </span>
+
+                        </div>
+
+
+                        <b>→</b>
+
+                    </a>
+
+
+                    <a
+                        href="https://web.whatsapp.com/"
+                        target="_blank"
+                        class="tool-row"
+                    >
+
+                        <div class="tool-icon">
+
+                            ◉
+
+                        </div>
+
+
+                        <div>
+
+                            <strong>
+
+                                WhatsApp Web
+
+                            </strong>
+
+                            <span>
+
+                                Mensajes
+
+                            </span>
+
+                        </div>
+
+
+                        <b>→</b>
+
+                    </a>
+
+
+                    <a
+                        href="https://chatgpt.com/"
+                        target="_blank"
+                        class="tool-row"
+                    >
+
+                        <div class="tool-icon">
+
+                            ✦
+
+                        </div>
+
+
+                        <div>
+
+                            <strong>
+
+                                ChatGPT
+
+                            </strong>
+
+                            <span>
+
+                                Inteligencia artificial
+
+                            </span>
+
+                        </div>
+
+
+                        <b>→</b>
+
+                    </a>
+
+
+                </div>
+
+
+
+                <!-- ESTADO -->
+
+                <div class="info-card status-card">
+
+
+                    <div class="card-header">
+
+                        <strong>
+
+                            Estado
+
+                        </strong>
+
+                    </div>
+
+
+                    <div class="status-row">
+
+                        <span class="status-dot"></span>
+
+                        Servidor local
+
+                        <strong>
+
+                            ONLINE
+
+                        </strong>
+
+                    </div>
+
+
+                    <div class="status-row">
+
+                        <span class="status-dot"></span>
+
+                        Documentos
+
+                        <strong>
+
+                            DISPONIBLE
+
+                        </strong>
+
+                    </div>
+
+
+                    <div class="status-row">
+
+                        <span class="status-dot"></span>
+
+                        Asistente
+
+                        <strong>
+
+                            ACTIVO
+
+                        </strong>
+
+                    </div>
+
+
+                </div>
+
+
+            </aside>
+
+
+        </div>
+
+
+
+        <!-- ==========================================
+             FOOTER
+             ========================================== -->
+
+        <footer class="footer">
+
+
+            <div>
+
+                ● Oficina Seguros
+
+            </div>
+
+
+            <div>
+
+                Sistema privado · Acceso autorizado
+
+            </div>
+
+
+            <div>
+
+                F3 · Buscador
+
+            </div>
+
+
+        </footer>
+
+
+    </main>
+
+
+</div>
+
+
+
+<script
+    src="{{ url_for('static', filename='js/app.js') }}">
+</script>
+
+
+
+<script>
+
+
+// ==========================================
+// RELOJ
+// ==========================================
+
+function actualizarReloj() {
+
+
+    const ahora =
+        new Date();
+
+
+    const horas =
+        String(
+            ahora.getHours()
+        ).padStart(
+            2,
+            "0"
+        );
+
+
+    const minutos =
+        String(
+            ahora.getMinutes()
+        ).padStart(
+            2,
+            "0"
+        );
+
+
+    const segundos =
+        String(
+            ahora.getSeconds()
+        ).padStart(
+            2,
+            "0"
+        );
+
+
+    const hora =
+        horas +
+        ":" +
+        minutos;
+
+
+    const horaCompleta =
+        horas +
+        ":" +
+        minutos +
+        ":" +
+        segundos;
+
+
+    const horaActual =
+        document.getElementById(
+            "horaActual"
+        );
+
+
+    const horaGrande =
+        document.getElementById(
+            "horaGrande"
+        );
+
+
+    if (horaActual) {
+
+        horaActual.textContent =
+            hora;
+
+    }
+
+
+    if (horaGrande) {
+
+        horaGrande.textContent =
+            horaCompleta;
+
+    }
+
+
+    const dias = [
+
+        "Domingo",
+        "Lunes",
+        "Martes",
+        "Miércoles",
+        "Jueves",
+        "Viernes",
+        "Sábado"
+
+    ];
+
+
+    const meses = [
+
+        "enero",
+        "febrero",
+        "marzo",
+        "abril",
+        "mayo",
+        "junio",
+        "julio",
+        "agosto",
+        "septiembre",
+        "octubre",
+        "noviembre",
+        "diciembre"
+
+    ];
+
+
+    const fechaTexto =
+
+        dias[ahora.getDay()] +
+        " " +
+        ahora.getDate() +
+        " de " +
+        meses[ahora.getMonth()];
+
+
+    const fechaActual =
+        document.getElementById(
+            "fechaActual"
+        );
+
+
+    const fechaGrande =
+        document.getElementById(
+            "fechaGrande"
+        );
+
+
+    if (fechaActual) {
+
+        fechaActual.textContent =
+            fechaTexto;
+
+    }
+
+
+    if (fechaGrande) {
+
+        fechaGrande.textContent =
+            fechaTexto;
+
+    }
+
+}
+
+
+actualizarReloj();
+
+
+setInterval(
+    actualizarReloj,
+    1000
+);
+
+
+</script>
+
+
+</body>
+
+</html>

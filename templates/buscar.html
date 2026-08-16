@@ -1,0 +1,365 @@
+<!DOCTYPE html>
+
+<html lang="es">
+
+<head>
+
+<meta charset="UTF-8">
+
+<meta
+    name="viewport"
+    content="width=device-width, initial-scale=1.0"
+>
+
+<title>Buscador - Oficina Seguros</title>
+
+<link
+    rel="stylesheet"
+    href="{{ url_for('static', filename='css/estilo.css') }}"
+>
+
+</head>
+
+
+<body>
+
+
+<div class="app">
+
+
+<aside class="sidebar">
+
+
+<div class="brand">
+
+<div class="brand-logo">
+OS
+</div>
+
+<div>
+
+<div class="brand-name">
+Oficina Seguros
+</div>
+
+<div class="brand-subtitle">
+Buscador
+</div>
+
+</div>
+
+</div>
+
+
+<nav class="navigation">
+
+
+<a
+    href="{{ url_for('documentos') }}"
+    class="nav-item"
+>
+
+<span>⌂</span>
+
+Inicio
+
+</a>
+
+
+<a
+    href="{{ url_for('buscar') }}"
+    class="nav-item active"
+>
+
+<span>⌕</span>
+
+Buscador
+
+<kbd>F3</kbd>
+
+</a>
+
+
+<a
+    href="{{ url_for('notas') }}"
+    class="nav-item"
+>
+
+<span>□</span>
+
+Bloc de notas
+
+</a>
+
+
+</nav>
+
+
+</aside>
+
+
+<main class="main">
+
+
+<header class="topbar">
+
+<div>
+
+<div class="page-title">
+Buscador
+</div>
+
+<div class="page-subtitle">
+Buscar entre todos los documentos
+</div>
+
+</div>
+
+</header>
+
+
+<div style="
+    flex:1;
+    padding:30px;
+    overflow:auto;
+">
+
+
+<div style="
+    max-width:850px;
+    margin:auto;
+">
+
+
+<h1 style="
+    margin-bottom:8px;
+">
+
+Buscador de documentos
+
+</h1>
+
+
+<p style="
+    color:#8d959e;
+    font-size:12px;
+">
+
+Buscá pólizas, condiciones, coberturas,
+manuales y cualquier archivo cargado.
+
+</p>
+
+
+<div style="
+    margin-top:25px;
+    height:55px;
+    display:flex;
+    align-items:center;
+    border:1px solid #dce2e7;
+    border-radius:10px;
+    background:white;
+    padding:0 15px;
+">
+
+
+<span style="
+    color:#9da4ad;
+    margin-right:10px;
+">
+
+⌕
+
+</span>
+
+
+<input
+    id="busqueda"
+    type="text"
+    placeholder="Buscar archivo..."
+    autocomplete="off"
+    style="
+        flex:1;
+        height:100%;
+        border:none;
+        outline:none;
+        font-size:13px;
+    "
+>
+
+
+</div>
+
+
+<div
+    id="resultados"
+    style="
+        margin-top:20px;
+    "
+></div>
+
+
+</div>
+
+
+</div>
+
+
+</main>
+
+
+</div>
+
+
+<script>
+
+
+const input =
+    document.getElementById(
+        "busqueda"
+    );
+
+
+const resultados =
+    document.getElementById(
+        "resultados"
+    );
+
+
+async function buscarArchivos() {
+
+
+    const q =
+        input.value.trim();
+
+
+    if (!q) {
+
+        resultados.innerHTML = "";
+
+        return;
+
+    }
+
+
+    const response =
+        await fetch(
+            "/api/buscar?q=" +
+            encodeURIComponent(q)
+        );
+
+
+    const archivos =
+        await response.json();
+
+
+    resultados.innerHTML = "";
+
+
+    if (archivos.length === 0) {
+
+        resultados.innerHTML = `
+
+            <div style="
+                padding:25px;
+                text-align:center;
+                color:#9299a2;
+            ">
+
+                No se encontraron archivos.
+
+            </div>
+
+        `;
+
+        return;
+
+    }
+
+
+    archivos.forEach(
+        archivo => {
+
+
+            const div =
+                document.createElement(
+                    "div"
+                );
+
+
+            div.style.cssText = `
+
+                padding:15px;
+
+                margin-bottom:8px;
+
+                background:white;
+
+                border:1px solid #e3e7eb;
+
+                border-radius:9px;
+
+                cursor:pointer;
+
+            `;
+
+
+            div.innerHTML = `
+
+                <strong>
+
+                    ${archivo.nombre}
+
+                </strong>
+
+                <div style="
+                    margin-top:5px;
+                    color:#9299a2;
+                    font-size:10px;
+                ">
+
+                    ${archivo.compania}
+                    ·
+                    ${archivo.tamaño} KB
+
+                </div>
+
+            `;
+
+
+            div.onclick = () => {
+
+                window.open(
+                    "/archivo/" +
+                    archivo.ruta,
+                    "_blank"
+                );
+
+            };
+
+
+            resultados.appendChild(
+                div
+            );
+
+        }
+    );
+
+}
+
+
+input.addEventListener(
+    "input",
+    buscarArchivos
+);
+
+
+input.focus();
+
+
+</script>
+
+
+</body>
+
+</html>

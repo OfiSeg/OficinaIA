@@ -1,0 +1,131 @@
+<!DOCTYPE html>
+
+<html lang="es">
+
+<head>
+
+<meta charset="UTF-8">
+
+<meta
+    name="viewport"
+    content="width=device-width, initial-scale=1.0"
+>
+
+<title>Oficina Seguros</title>
+
+<link
+    rel="stylesheet"
+    href="{{ url_for('static', filename='css/login.css') }}"
+>
+
+</head>
+
+
+<body>
+
+
+<div class="login-page">
+
+
+<div class="login-card">
+
+
+<div class="logo">
+OS
+</div>
+
+
+<h1>
+Oficina Seguros
+</h1>
+
+
+<p class="subtitle">
+Acceso privado
+</p>
+
+
+<form method="POST">
+
+
+<label>
+Usuario
+</label>
+
+
+<div class="input-box">
+
+<span>◉</span>
+
+<input
+    type="text"
+    name="usuario"
+    placeholder="Ingresá tu usuario"
+    required
+    autofocus
+>
+
+</div>
+
+
+<label>
+Contraseña
+</label>
+
+
+<div class="input-box">
+
+<span>●</span>
+
+<input
+    type="password"
+    name="password"
+    placeholder="Ingresá tu contraseña"
+    required
+>
+
+</div>
+
+
+{% if error %}
+
+<div class="error">
+
+{{ error }}
+
+</div>
+
+{% endif %}
+
+
+<button
+    type="submit"
+    class="login-button"
+>
+
+Iniciar sesión
+
+<span>→</span>
+
+</button>
+
+
+</form>
+
+
+<div class="security">
+
+🔒 Sistema privado · Acceso autorizado únicamente
+
+</div>
+
+
+</div>
+
+
+</div>
+
+
+</body>
+
+</html>
