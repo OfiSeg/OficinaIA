@@ -828,162 +828,35 @@ def guardar_notas():
     "/api/chat",
     methods=["POST"]
 )
-
 @requiere_login
-
 def chat():
-
-    data = request.get_json(
-        silent=True
-    )
-
+    data = request.get_json(silent=True)
 
     if not data:
+        return jsonify({"respuesta": "No recibí ningún mensaje."})
 
-        return jsonify({
-
-            "respuesta":
-                "No recibí ningún mensaje."
-
-        })
-
-
-    mensaje = data.get(
-        "mensaje",
-        ""
-    ).strip()
-
+    mensaje = data.get("mensaje", "").strip()
 
     if not mensaje:
+        return jsonify({"respuesta": "Escribime una consulta."})
 
-        return jsonify({
+    resultados = buscar_en_documentos(mensaje)
 
-            "respuesta":
-                "Escribime una consulta."
+    contexto = ""
 
-        })
+    for resultado in resultados[:5]:
+        contexto += "ARCHIVO: " + resultado.get("archivo", "") + "\n"
+        contexto += "COMPAÑIA: " + resultado.get("compania", "") + "\n"
+        contexto += resultado.get("texto", "") + "\n\n"
 
+    try:
+        from servicios_ia import consultar_gemini
+        respuesta = consultar_gemini(mensaje, contexto)
+    except Exception as error:
+        print("ERROR CHAT GEMINI:", error)
+        respuesta = "No pude conectar con el asistente de IA en este momento."
 
-    # ------------------------------------------------------
-    # BUSCAR EN LOS PDF
-    # ------------------------------------------------------
-
-    resultados = buscar_en_documentos(
-        mensaje
-    )
-
-
-    # ------------------------------------------------------
-    # SI ENCONTRAMOS INFORMACIÓN
-    # ------------------------------------------------------
-
-    if resultados:
-
-        respuesta = (
-            "Encontré información relacionada "
-            "en tus documentos.\n\n"
-        )
-
-
-        for resultado in resultados[:3]:
-
-            texto = resultado["texto"]
-
-            palabras = re.findall(
-                r"\w+",
-                mensaje.lower()
-            )
-
-
-            posiciones = []
-
-
-            for palabra in palabras:
-
-                if len(palabra) < 3:
-
-                    continue
-
-
-                posicion = (
-                    texto.lower().find(
-                        palabra
-                    )
-                )
-
-
-                if posicion >= 0:
-
-                    posiciones.append(
-                        posicion
-                    )
-
-
-            if posiciones:
-
-                posicion = min(
-                    posiciones
-                )
-
-            else:
-
-                posicion = 0
-
-
-            inicio = max(
-                0,
-                posicion - 150
-            )
-
-
-            fin = min(
-                len(texto),
-                posicion + 650
-            )
-
-
-            fragmento = (
-                texto[inicio:fin]
-                .replace(
-                    "\n",
-                    " "
-                )
-            )
-
-
-            respuesta += (
-
-                f"📄 "
-                f"{resultado['archivo']}\n"
-
-                f"🏢 "
-                f"{resultado['compania']}\n\n"
-
-                f"{fragmento}\n\n"
-
-                "────────────────────\n\n"
-
-            )
-
-
-    else:
-
-        respuesta = (
-            "No encontré coincidencias "
-            "en los documentos cargados.\n\n"
-            "Cuando conectemos la IA, "
-            "voy a poder interpretar la "
-            "pregunta y buscar información "
-            "de forma mucho más inteligente."
-        )
-
-
-    return jsonify({
-
-        "respuesta":
-            respuesta
-
-    })
+    return jsonify({"respuesta": respuesta})
 
 
 # ==========================================================

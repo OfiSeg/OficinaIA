@@ -213,7 +213,7 @@ async function enviarMensaje() {
     try {
 
         const respuesta =
-            await fetch("/chat", {
+            await fetch("/api/chat", {
 
                 method: "POST",
 
