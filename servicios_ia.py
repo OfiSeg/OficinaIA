@@ -2,6 +2,13 @@ import os
 from google import genai
 
 
+MODELOS = [
+    "gemini-flash-latest",
+    "gemini-flash-lite-latest",
+    "gemini-3.5-flash-lite",
+]
+
+
 def obtener_cliente_gemini():
 
     api_key = os.getenv("GEMINI_API_KEY")
@@ -21,55 +28,92 @@ def consultar_gemini(pregunta, contexto=""):
     if cliente is None:
 
         return (
-            "La IA todavía no está configurada. "
+            "La IA no esta configurada. "
             "Falta GEMINI_API_KEY."
         )
+
 
     prompt = f"""
 Sos el asistente interno de una oficina de seguros de Argentina.
 
-Tu función es ayudar al productor a interpretar pólizas,
-condiciones generales, condiciones particulares, coberturas,
-exclusiones, franquicias, servicios y documentación de seguros.
+Tu tarea es ayudar al productor a consultar y analizar:
+
+- polizas
+- coberturas
+- condiciones generales
+- condiciones particulares
+- exclusiones
+- franquicias
+- servicios de asistencia
+- documentacion de las companias
 
 REGLAS:
 
-- Usá principalmente la documentación proporcionada.
-- No inventes coberturas ni condiciones.
-- Si la documentación no alcanza para responder, decilo claramente.
-- Diferenciá entre lo que dice la documentación y tu interpretación.
-- Mencioná la compañía y el documento cuando sea relevante.
-- Respondé en español argentino.
-- Sé directo y práctico.
+- Usa principalmente la DOCUMENTACION proporcionada.
+- No inventes coberturas, cantidades, limites ni condiciones.
+- Si la documentacion no alcanza, decilo claramente.
+- Diferencia entre lo que dice el documento y una interpretacion.
+- Cuando sea posible menciona compania y documento.
+- Responde en espanol argentino.
+- Se claro, directo y practico.
 
-PREGUNTA DEL PRODUCTOR:
+PREGUNTA:
 
 {pregunta}
 
-DOCUMENTACIÓN ENCONTRADA:
+DOCUMENTACION ENCONTRADA:
 
 {contexto}
 """
 
-    try:
 
-        respuesta = cliente.models.generate_content(
+    ultimo_error = None
 
-            model="gemini-flash-latest",
 
-            contents=prompt
+    for modelo in MODELOS:
 
-        )
+        try:
 
-        return respuesta.text
+            print(
+                "GEMINI MODELO:",
+                modelo
+            )
 
-    except Exception as error:
 
-        print(
-            "ERROR GEMINI:",
-            error
-        )
+            respuesta = cliente.models.generate_content(
 
-        return (
-            "No pude conectarme con Gemini en este momento."
-        )
+                model=modelo,
+
+                contents=prompt
+
+            )
+
+
+            if respuesta and respuesta.text:
+
+                return respuesta.text
+
+
+        except Exception as error:
+
+            ultimo_error = error
+
+            print(
+                "ERROR GEMINI",
+                modelo,
+                ":",
+                error
+            )
+
+
+    print(
+        "GEMINI TODOS LOS MODELOS FALLARON:",
+        ultimo_error
+    )
+
+
+    return (
+        "Gemini no esta disponible "
+        "en este momento. "
+        "Intenta nuevamente en unos segundos."
+    )
