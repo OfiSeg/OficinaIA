@@ -1071,4 +1071,87 @@ a {
         grid-template-columns: 1fr;
     }
 
+}/* =========================================================
+   HERRAMIENTAS OFICINA
+   ========================================================= */
+
+.access-grid {
+    grid-template-columns: repeat(6, minmax(0, 1fr));
+}
+
+.access-card {
+    min-height: 68px;
+}
+
+.access-icon.nosis {
+    background: #eef2ff;
+    color: #4338ca;
+    font-weight: 800;
+}
+
+.access-icon.envios {
+    background: #fff7ed;
+    color: #ea580c;
+    font-weight: 800;
+}
+
+.access-icon.datacar {
+    background: #ecfeff;
+    color: #0891b2;
+    font-weight: 800;
+}
+
+.access-icon.gmail {
+    background: #fff1f2;
+    color: #dc2626;
+    font-weight: 800;
+}
+
+
+/* =========================================================
+   OCULTAR CUALQUIER BUSCADOR DE COMPAÑÍAS ANTIGUO
+   ========================================================= */
+
+.company-search {
+    display: none !important;
+}
+
+
+/* =========================================================
+   TOPBAR MÁS LIMPIA
+   ========================================================= */
+
+.topbar {
+    margin-bottom: 18px;
+}
+
+
+/* =========================================================
+   RESPONSIVE
+   ========================================================= */
+
+@media (max-width: 1250px) {
+
+    .access-grid {
+        grid-template-columns: repeat(3, minmax(0, 1fr));
+    }
+
+}
+
+
+@media (max-width: 800px) {
+
+    .access-grid {
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
+
+}
+
+
+@media (max-width: 500px) {
+
+    .access-grid {
+        grid-template-columns: 1fr;
+    }
+
 }

@@ -1,5 +1,4 @@
 <!DOCTYPE html>
-
 <html lang="es">
 
 <head>
@@ -27,36 +26,29 @@
 <div class="app">
 
 
-    <!-- ==========================================
+    <!-- =====================================================
          SIDEBAR
-         ========================================== -->
+         ===================================================== -->
 
     <aside class="sidebar">
 
 
-        <!-- LOGO -->
+        <!-- MARCA -->
 
         <div class="brand">
 
             <div class="brand-logo">
-
                 OS
-
             </div>
-
 
             <div>
 
                 <div class="brand-name">
-
                     Oficina Seguros
-
                 </div>
 
                 <div class="brand-subtitle">
-
                     Panel de trabajo
-
                 </div>
 
             </div>
@@ -71,9 +63,7 @@
 
 
             <div class="nav-section-title">
-
                 PRINCIPAL
-
             </div>
 
 
@@ -125,20 +115,6 @@
             </div>
 
 
-            <div class="company-search">
-
-                <span>⌕</span>
-
-                <input
-                    type="text"
-                    id="buscadorCompanias"
-                    placeholder="Buscar compañía..."
-                    autocomplete="off"
-                >
-
-            </div>
-
-
             <div
                 class="company-list"
                 id="listaCompanias"
@@ -151,17 +127,15 @@
                 <a
                     href="{{ url_for('ver_carpeta', carpeta=carpeta) }}"
                     class="company-item"
-                    data-company="{{ carpeta.replace('_', ' ')|lower }}"
                 >
 
                     <span class="company-icon">
-
                         ▪
-
                     </span>
 
 
                     <span>
+
 
                         {% if carpeta.lower() == "mercantil_andina" or carpeta.lower() == "mercantilandina" %}
 
@@ -201,6 +175,7 @@
 
                         {% endif %}
 
+
                     </span>
 
                 </a>
@@ -234,15 +209,11 @@
                 <div class="user-data">
 
                     <strong>
-
                         {{ usuario }}
-
                     </strong>
 
                     <span>
-
                         Sesión activa
-
                     </span>
 
                 </div>
@@ -254,9 +225,10 @@
                     title="Cerrar sesión"
                 >
 
-                    ↪
+                    ⋮
 
                 </a>
+
 
             </div>
 
@@ -268,9 +240,9 @@
 
 
 
-    <!-- ==========================================
-         CONTENIDO PRINCIPAL
-         ========================================== -->
+    <!-- =====================================================
+         CONTENIDO
+         ===================================================== -->
 
     <main class="main">
 
@@ -280,89 +252,15 @@
         <header class="topbar">
 
 
-            <div class="top-left">
+            <div>
 
                 <div class="page-title">
-
-                    Oficina
-
+                    Asistente
                 </div>
 
                 <div class="page-subtitle">
-
-                    Centro de trabajo
-
+                    Tu espacio de trabajo
                 </div>
-
-            </div>
-
-
-            <div class="top-center">
-
-                <div id="fechaActual">
-
-                    Domingo 16 de agosto
-
-                </div>
-
-            </div>
-
-
-            <div class="top-actions">
-
-
-                <a
-                    href="https://web.whatsapp.com/"
-                    target="_blank"
-                    class="top-action"
-                    title="WhatsApp Web"
-                >
-
-                    ◉
-
-                </a>
-
-
-                <a
-                    href="https://drive.google.com/"
-                    target="_blank"
-                    class="top-action"
-                    title="Google Drive"
-                >
-
-                    ▣
-
-                </a>
-
-
-                <a
-                    href="https://photos.google.com/"
-                    target="_blank"
-                    class="top-action"
-                    title="Google Fotos"
-                >
-
-                    ◎
-
-                </a>
-
-
-                <div class="top-clock">
-
-                    <strong id="horaActual">
-
-                        00:00
-
-                    </strong>
-
-                    <span>
-
-                        hora local
-
-                    </span>
-
-                </div>
-
 
             </div>
 
@@ -371,56 +269,38 @@
 
 
 
-        <!-- ==========================================
-             DASHBOARD
-             ========================================== -->
+        <!-- =================================================
+             CHAT
+             ================================================= -->
 
-        <div class="dashboard">
-
-
-            <!-- ======================================
-                 COLUMNA PRINCIPAL
-                 ====================================== -->
-
-            <section class="main-column">
+        <section class="assistant">
 
 
-                <!-- BIENVENIDA -->
+            <div class="assistant-top">
 
-                <div class="welcome-bar">
+
+                <div class="assistant-profile">
+
+
+                    <div class="assistant-avatar">
+                        ✦
+                    </div>
 
 
                     <div>
 
-                        <div class="welcome-small">
-
-                            SISTEMA DE OFICINA
-
-                        </div>
-
-
                         <h1>
-
-                            Buen día, {{ usuario }}
-
+                            Asistente Oficina
                         </h1>
 
 
-                        <p>
+                        <div class="assistant-online">
 
-                            Todo lo que necesitás para trabajar,
-                            en un solo lugar.
+                            <span></span>
 
-                        </p>
+                            Disponible
 
-                    </div>
-
-
-                    <div class="welcome-status">
-
-                        <span></span>
-
-                        Sistema operativo
+                        </div>
 
                     </div>
 
@@ -428,226 +308,77 @@
                 </div>
 
 
+                <div class="assistant-info">
 
-                <!-- CHAT -->
+                    Consultá tus documentos
+                    y condiciones de cobertura
 
-                <section class="assistant">
-
-
-                    <div class="assistant-top">
-
-
-                        <div class="assistant-profile">
+                </div>
 
 
-                            <div class="assistant-avatar">
-
-                                ✦
-
-                            </div>
+            </div>
 
 
-                            <div>
 
-                                <h2>
+            <!-- CHAT -->
 
-                                    Asistente Oficina
-
-                                </h2>
-
-
-                                <div class="assistant-online">
-
-                                    <span></span>
-
-                                    Disponible
-
-                                </div>
-
-                            </div>
+            <div
+                id="chat"
+                class="chat-window"
+            >
 
 
-                        </div>
+                <div class="welcome">
 
 
-                        <div class="assistant-info">
-
-                            IA · Documentos · Consultas
-
-                        </div>
-
-
+                    <div class="welcome-icon">
+                        ✦
                     </div>
 
 
+                    <h2>
+                        ¿En qué puedo ayudarte?
+                    </h2>
 
-                    <!-- CHAT -->
 
-                    <div
-                        id="chat"
-                        class="chat-window"
-                    >
+                    <p>
 
+                        Consultá las pólizas,
+                        condiciones y documentación
+                        disponible en tu oficina.
 
-                        <div class="welcome">
+                    </p>
 
 
-                            <div class="welcome-icon">
+                    <div class="suggestions">
 
-                                ✦
 
-                            </div>
+                        <button
+                            onclick="usarSugerencia('¿Qué documentos tengo disponibles?')"
+                        >
 
+                            📄 Mis documentos
 
-                            <h2>
+                        </button>
 
-                                ¿En qué puedo ayudarte?
 
-                            </h2>
+                        <button
+                            onclick="usarSugerencia('Buscar información de una compañía')"
+                        >
 
+                            🏢 Compañías
 
-                            <p>
+                        </button>
 
-                                Consultá información de compañías,
-                                pólizas, documentos o cualquier
-                                cosa relacionada con tu oficina.
 
-                            </p>
+                        <button
+                            onclick="usarSugerencia('Necesito ayuda con una póliza')"
+                        >
 
+                            📋 Pólizas
 
-                            <div class="suggestions">
+                        </button>
 
-
-                                <button
-                                    onclick="usarSugerencia('¿Qué documentos tengo disponibles?')"
-                                >
-
-                                    📄 Documentos
-
-                                </button>
-
-
-                                <button
-                                    onclick="usarSugerencia('Buscar información de una compañía')"
-                                >
-
-                                    🏢 Compañías
-
-                                </button>
-
-
-                                <button
-                                    onclick="usarSugerencia('Necesito ayuda con una póliza')"
-                                >
-
-                                    📋 Pólizas
-
-                                </button>
-
-
-                            </div>
-
-
-                        </div>
-
-
-                    </div>
-
-
-
-                    <!-- INPUT -->
-
-                    <div class="chat-input-wrapper">
-
-
-                        <div class="chat-input">
-
-
-                            <input
-                                type="text"
-                                id="mensaje"
-                                placeholder="Escribí tu consulta..."
-                                autocomplete="off"
-                            >
-
-
-                            <button
-                                onclick="enviarMensaje()"
-                                class="send-button"
-                            >
-
-                                ↑
-
-                            </button>
-
-
-                        </div>
-
-
-                        <div class="chat-hint">
-
-                            Enter para enviar · F3 para buscar
-
-                        </div>
-
-
-                    </div>
-
-
-                </section>
-
-
-            </section>
-
-
-
-            <!-- ======================================
-                 COLUMNA DERECHA
-                 ====================================== -->
-
-            <aside class="right-column">
-
-
-                <!-- HORA / FECHA -->
-
-                <div class="info-card time-card">
-
-
-                    <div class="card-label">
-
-                        HOY
-
-                    </div>
-
-
-                    <div
-                        id="horaGrande"
-                        class="big-time"
-                    >
-
-                        00:00
-
-                    </div>
-
-
-                    <div
-                        id="fechaGrande"
-                        class="big-date"
-                    >
-
-                        Domingo 16 de agosto
-
-                    </div>
-
-
-                    <div class="card-line"></div>
-
-
-                    <div class="system-state">
-
-                        <span></span>
-
-                        Sistema funcionando
 
                     </div>
 
@@ -655,273 +386,260 @@
                 </div>
 
 
-
-                <!-- HERRAMIENTAS -->
-
-                <div class="info-card">
+            </div>
 
 
-                    <div class="card-header">
+
+            <!-- INPUT -->
+
+            <div class="chat-input-wrapper">
+
+
+                <div class="chat-input">
+
+
+                    <input
+                        type="text"
+                        id="mensaje"
+                        placeholder="Escribí tu consulta..."
+                        autocomplete="off"
+                    >
+
+
+                    <button
+                        onclick="enviarMensaje()"
+                        class="send-button"
+                    >
+
+                        ↑
+
+                    </button>
+
+
+                </div>
+
+
+                <div class="chat-hint">
+
+                    Enter para enviar · F3 para buscar archivos
+
+                </div>
+
+
+            </div>
+
+
+        </section>
+
+
+
+        <!-- =================================================
+             HERRAMIENTAS
+             ================================================= -->
+
+        <section class="quick-access">
+
+
+            <div class="section-heading">
+
+
+                <div>
+
+                    <h3>
+                        Herramientas
+                    </h3>
+
+                    <span>
+                        Accesos directos de la oficina
+                    </span>
+
+                </div>
+
+
+            </div>
+
+
+
+            <div class="access-grid">
+
+
+                <!-- WHATSAPP -->
+
+                <a
+                    href="https://web.whatsapp.com/"
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    class="access-card"
+                >
+
+                    <div class="access-icon whatsapp">
+                        ◉
+                    </div>
+
+                    <div>
 
                         <strong>
-
-                            Herramientas
-
+                            WhatsApp Web
                         </strong>
 
                         <span>
-
-                            Acceso rápido
-
+                            Mensajes
                         </span>
 
                     </div>
 
+                </a>
 
-                    <a
-                        href="https://drive.google.com/"
-                        target="_blank"
-                        class="tool-row"
-                    >
 
-                        <div class="tool-icon">
 
-                            ▣
+                <!-- NOSIS -->
 
-                        </div>
+                <a
+                    href="https://www.nosis.com/es/"
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    class="access-card"
+                >
 
+                    <div class="access-icon nosis">
+                        N
+                    </div>
 
-                        <div>
-
-                            <strong>
-
-                                Google Drive
-
-                            </strong>
-
-                            <span>
-
-                                Documentos
-
-                            </span>
-
-                        </div>
-
-
-                        <b>→</b>
-
-                    </a>
-
-
-                    <a
-                        href="https://photos.google.com/"
-                        target="_blank"
-                        class="tool-row"
-                    >
-
-                        <div class="tool-icon">
-
-                            ◎
-
-                        </div>
-
-
-                        <div>
-
-                            <strong>
-
-                                Google Fotos
-
-                            </strong>
-
-                            <span>
-
-                                Imágenes
-
-                            </span>
-
-                        </div>
-
-
-                        <b>→</b>
-
-                    </a>
-
-
-                    <a
-                        href="https://web.whatsapp.com/"
-                        target="_blank"
-                        class="tool-row"
-                    >
-
-                        <div class="tool-icon">
-
-                            ◉
-
-                        </div>
-
-
-                        <div>
-
-                            <strong>
-
-                                WhatsApp Web
-
-                            </strong>
-
-                            <span>
-
-                                Mensajes
-
-                            </span>
-
-                        </div>
-
-
-                        <b>→</b>
-
-                    </a>
-
-
-                    <a
-                        href="https://chatgpt.com/"
-                        target="_blank"
-                        class="tool-row"
-                    >
-
-                        <div class="tool-icon">
-
-                            ✦
-
-                        </div>
-
-
-                        <div>
-
-                            <strong>
-
-                                ChatGPT
-
-                            </strong>
-
-                            <span>
-
-                                Inteligencia artificial
-
-                            </span>
-
-                        </div>
-
-
-                        <b>→</b>
-
-                    </a>
-
-
-                </div>
-
-
-
-                <!-- ESTADO -->
-
-                <div class="info-card status-card">
-
-
-                    <div class="card-header">
+                    <div>
 
                         <strong>
-
-                            Estado
-
+                            Nosis
                         </strong>
+
+                        <span>
+                            Informes comerciales
+                        </span>
 
                     </div>
 
+                </a>
 
-                    <div class="status-row">
 
-                        <span class="status-dot"></span>
 
-                        Servidor local
+                <!-- ENVIOS YA -->
+
+                <a
+                    href="https://www.envios-ya.com.ar/"
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    class="access-card"
+                >
+
+                    <div class="access-icon envios">
+                        ↗
+                    </div>
+
+                    <div>
 
                         <strong>
-
-                            ONLINE
-
+                            Envíos Ya
                         </strong>
+
+                        <span>
+                            Avisos y mensajes
+                        </span>
 
                     </div>
 
+                </a>
 
-                    <div class="status-row">
 
-                        <span class="status-dot"></span>
 
-                        Documentos
+                <!-- DATACAR -->
+
+                <a
+                    href="https://www.datacar.com.ar/"
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    class="access-card"
+                >
+
+                    <div class="access-icon datacar">
+                        D
+                    </div>
+
+                    <div>
 
                         <strong>
-
-                            DISPONIBLE
-
+                            Datacar
                         </strong>
+
+                        <span>
+                            Historial vehicular
+                        </span>
 
                     </div>
 
+                </a>
 
-                    <div class="status-row">
 
-                        <span class="status-dot"></span>
 
-                        Asistente
+                <!-- GOOGLE DRIVE -->
+
+                <a
+                    href="https://drive.google.com/"
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    class="access-card"
+                >
+
+                    <div class="access-icon drive">
+                        ▣
+                    </div>
+
+                    <div>
 
                         <strong>
-
-                            ACTIVO
-
+                            Google Drive
                         </strong>
+
+                        <span>
+                            Documentos
+                        </span>
 
                     </div>
 
-
-                </div>
-
-
-            </aside>
-
-
-        </div>
+                </a>
 
 
 
-        <!-- ==========================================
-             FOOTER
-             ========================================== -->
+                <!-- GMAIL -->
 
-        <footer class="footer">
+                <a
+                    href="https://mail.google.com/"
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    class="access-card"
+                >
 
+                    <div class="access-icon gmail">
+                        @
+                    </div>
 
-            <div>
+                    <div>
 
-                ● Oficina Seguros
+                        <strong>
+                            Gmail
+                        </strong>
+
+                        <span>
+                            Correo electrónico
+                        </span>
+
+                    </div>
+
+                </a>
+
 
             </div>
 
 
-            <div>
-
-                Sistema privado · Acceso autorizado
-
-            </div>
-
-
-            <div>
-
-                F3 · Buscador
-
-            </div>
-
-
-        </footer>
+        </section>
 
 
     </main>
@@ -932,174 +650,8 @@
 
 
 <script
-    src="{{ url_for('static', filename='js/app.js') }}">
-</script>
-
-
-
-<script>
-
-
-// ==========================================
-// RELOJ
-// ==========================================
-
-function actualizarReloj() {
-
-
-    const ahora =
-        new Date();
-
-
-    const horas =
-        String(
-            ahora.getHours()
-        ).padStart(
-            2,
-            "0"
-        );
-
-
-    const minutos =
-        String(
-            ahora.getMinutes()
-        ).padStart(
-            2,
-            "0"
-        );
-
-
-    const segundos =
-        String(
-            ahora.getSeconds()
-        ).padStart(
-            2,
-            "0"
-        );
-
-
-    const hora =
-        horas +
-        ":" +
-        minutos;
-
-
-    const horaCompleta =
-        horas +
-        ":" +
-        minutos +
-        ":" +
-        segundos;
-
-
-    const horaActual =
-        document.getElementById(
-            "horaActual"
-        );
-
-
-    const horaGrande =
-        document.getElementById(
-            "horaGrande"
-        );
-
-
-    if (horaActual) {
-
-        horaActual.textContent =
-            hora;
-
-    }
-
-
-    if (horaGrande) {
-
-        horaGrande.textContent =
-            horaCompleta;
-
-    }
-
-
-    const dias = [
-
-        "Domingo",
-        "Lunes",
-        "Martes",
-        "Miércoles",
-        "Jueves",
-        "Viernes",
-        "Sábado"
-
-    ];
-
-
-    const meses = [
-
-        "enero",
-        "febrero",
-        "marzo",
-        "abril",
-        "mayo",
-        "junio",
-        "julio",
-        "agosto",
-        "septiembre",
-        "octubre",
-        "noviembre",
-        "diciembre"
-
-    ];
-
-
-    const fechaTexto =
-
-        dias[ahora.getDay()] +
-        " " +
-        ahora.getDate() +
-        " de " +
-        meses[ahora.getMonth()];
-
-
-    const fechaActual =
-        document.getElementById(
-            "fechaActual"
-        );
-
-
-    const fechaGrande =
-        document.getElementById(
-            "fechaGrande"
-        );
-
-
-    if (fechaActual) {
-
-        fechaActual.textContent =
-            fechaTexto;
-
-    }
-
-
-    if (fechaGrande) {
-
-        fechaGrande.textContent =
-            fechaTexto;
-
-    }
-
-}
-
-
-actualizarReloj();
-
-
-setInterval(
-    actualizarReloj,
-    1000
-);
-
-
-</script>
+    src="{{ url_for('static', filename='js/app.js') }}"
+></script>
 
 
 </body>
