@@ -12,6 +12,7 @@ from flask import (
 from pathlib import Path
 from functools import wraps
 from pypdf import PdfReader
+from datetime import datetime
 import re
 
 
@@ -145,6 +146,7 @@ def obtener_companias():
 
         return carpetas
 
+
     for elemento in DOCUMENTOS_DIR.iterdir():
 
         if elemento.is_dir():
@@ -152,6 +154,7 @@ def obtener_companias():
             carpetas.append(
                 elemento.name
             )
+
 
     return sorted(
         carpetas,
@@ -174,9 +177,11 @@ def extraer_texto_pdf(ruta):
             str(ruta)
         )
 
+
         for pagina in lector.pages:
 
             contenido = pagina.extract_text()
+
 
             if contenido:
 
@@ -185,6 +190,7 @@ def extraer_texto_pdf(ruta):
                     "\n"
                 )
 
+
     except Exception as error:
 
         print(
@@ -192,6 +198,7 @@ def extraer_texto_pdf(ruta):
             ruta,
             error
         )
+
 
     return texto
 
@@ -206,14 +213,17 @@ def buscar_en_documentos(consulta):
 
     consulta = consulta.lower().strip()
 
+
     if not consulta:
 
         return resultados
+
 
     palabras = re.findall(
         r"\w+",
         consulta
     )
+
 
     for archivo in DOCUMENTOS_DIR.rglob("*.pdf"):
 
@@ -221,13 +231,17 @@ def buscar_en_documentos(consulta):
             archivo
         )
 
+
         if not texto:
 
             continue
 
+
         texto_lower = texto.lower()
 
+
         coincidencias = 0
+
 
         for palabra in palabras:
 
@@ -235,15 +249,18 @@ def buscar_en_documentos(consulta):
 
                 continue
 
+
             coincidencias += (
                 texto_lower.count(
                     palabra
                 )
             )
 
+
         if coincidencias == 0:
 
             continue
+
 
         try:
 
@@ -251,7 +268,9 @@ def buscar_en_documentos(consulta):
                 DOCUMENTOS_DIR
             )
 
+
             partes = relativa.parts
+
 
             compania = (
                 partes[0]
@@ -259,13 +278,11 @@ def buscar_en_documentos(consulta):
                 else ""
             )
 
+
         except Exception:
 
-            relativa = Path(
-                archivo.name
-            )
-
             compania = ""
+
 
         resultados.append({
 
@@ -290,11 +307,13 @@ def buscar_en_documentos(consulta):
 
         })
 
+
     resultados.sort(
         key=lambda x:
             x["coincidencias"],
         reverse=True
     )
+
 
     return resultados
 
@@ -307,6 +326,7 @@ def buscar_en_documentos(consulta):
     "/",
     methods=["GET", "POST"]
 )
+
 def login():
 
     if "usuario" in session:
@@ -315,7 +335,9 @@ def login():
             url_for("documentos")
         )
 
+
     error = None
+
 
     if request.method == "POST":
 
@@ -324,10 +346,12 @@ def login():
             ""
         ).strip()
 
+
         password = request.form.get(
             "password",
             ""
         )
+
 
         if (
             usuario == USUARIO_CORRECTO
@@ -343,9 +367,11 @@ def login():
                 url_for("documentos")
             )
 
+
         error = (
             "Usuario o contraseña incorrectos."
         )
+
 
     return render_template(
         "login.html",
@@ -358,7 +384,9 @@ def login():
 # ==========================================================
 
 @app.route("/documentos")
+
 @requiere_login
+
 def documentos():
 
     return render_template(
@@ -375,13 +403,16 @@ def documentos():
 @app.route(
     "/carpeta/<path:carpeta>"
 )
+
 @requiere_login
+
 def ver_carpeta(carpeta):
 
     carpeta_path = (
         DOCUMENTOS_DIR /
         carpeta
     )
+
 
     if not carpeta_path.exists():
 
@@ -390,7 +421,9 @@ def ver_carpeta(carpeta):
             404
         )
 
+
     archivos = []
+
 
     for archivo in carpeta_path.rglob("*"):
 
@@ -419,6 +452,7 @@ def ver_carpeta(carpeta):
 
             })
 
+
     return render_template(
         "carpeta.html",
         carpeta=carpeta,
@@ -435,7 +469,9 @@ def ver_carpeta(carpeta):
 @app.route(
     "/archivo/<path:carpeta>/<path:archivo>"
 )
+
 @requiere_login
+
 def archivo(carpeta, archivo):
 
     carpeta_path = (
@@ -443,10 +479,12 @@ def archivo(carpeta, archivo):
         carpeta
     )
 
+
     archivo_path = (
         carpeta_path /
         archivo
     )
+
 
     if not archivo_path.exists():
 
@@ -454,6 +492,7 @@ def archivo(carpeta, archivo):
             "Archivo no encontrado",
             404
         )
+
 
     return send_from_directory(
         carpeta_path,
@@ -466,7 +505,9 @@ def archivo(carpeta, archivo):
 # ==========================================================
 
 @app.route("/buscar")
+
 @requiere_login
+
 def buscar():
 
     return render_template(
@@ -482,7 +523,9 @@ def buscar():
 @app.route(
     "/api/buscar"
 )
+
 @requiere_login
+
 def api_buscar():
 
     consulta = request.args.get(
@@ -490,7 +533,9 @@ def api_buscar():
         ""
     ).strip().lower()
 
+
     resultados = []
+
 
     if not consulta:
 
@@ -498,15 +543,18 @@ def api_buscar():
             resultados
         )
 
+
     for archivo in DOCUMENTOS_DIR.rglob("*"):
 
         if not archivo.is_file():
 
             continue
 
+
         if consulta not in archivo.name.lower():
 
             continue
+
 
         try:
 
@@ -514,13 +562,16 @@ def api_buscar():
                 DOCUMENTOS_DIR
             )
 
+
             partes = relativa.parts
+
 
             compania = (
                 partes[0]
                 if partes
                 else ""
             )
+
 
             resultados.append({
 
@@ -548,9 +599,11 @@ def api_buscar():
 
             })
 
+
         except Exception:
 
             pass
+
 
     return jsonify(
         resultados[:200]
@@ -565,12 +618,15 @@ def api_buscar():
     "/api/consultar_documentos",
     methods=["POST"]
 )
+
 @requiere_login
+
 def consultar_documentos():
 
     data = request.get_json(
         silent=True
     )
+
 
     if not data:
 
@@ -579,16 +635,20 @@ def consultar_documentos():
             "resultados": []
         })
 
+
     consulta = data.get(
         "consulta",
         ""
     ).strip()
 
+
     resultados = buscar_en_documentos(
         consulta
     )
 
+
     respuesta = []
+
 
     for resultado in resultados[:5]:
 
@@ -599,7 +659,9 @@ def consultar_documentos():
             consulta.lower()
         )
 
+
         posiciones = []
+
 
         for palabra in palabras:
 
@@ -607,11 +669,13 @@ def consultar_documentos():
                 palabra
             )
 
+
             if posicion >= 0:
 
                 posiciones.append(
                     posicion
                 )
+
 
         if posiciones:
 
@@ -623,15 +687,18 @@ def consultar_documentos():
 
             posicion = 0
 
+
         inicio = max(
             0,
             posicion - 250
         )
 
+
         fin = min(
             len(texto),
             posicion + 750
         )
+
 
         fragmento = (
             texto[inicio:fin]
@@ -640,6 +707,7 @@ def consultar_documentos():
                 " "
             )
         )
+
 
         respuesta.append({
 
@@ -657,6 +725,7 @@ def consultar_documentos():
 
         })
 
+
     return jsonify({
 
         "ok": True,
@@ -672,10 +741,13 @@ def consultar_documentos():
 # ==========================================================
 
 @app.route("/notas")
+
 @requiere_login
+
 def notas():
 
     contenido = ""
+
 
     if NOTAS_FILE.exists():
 
@@ -688,6 +760,7 @@ def notas():
         except Exception:
 
             contenido = ""
+
 
     return render_template(
         "notas.html",
@@ -704,12 +777,15 @@ def notas():
     "/api/notas",
     methods=["POST"]
 )
+
 @requiere_login
+
 def guardar_notas():
 
     data = request.get_json(
         silent=True
     )
+
 
     if not data:
 
@@ -717,10 +793,12 @@ def guardar_notas():
             "ok": False
         }), 400
 
+
     contenido = data.get(
         "contenido",
         ""
     )
+
 
     try:
 
@@ -729,9 +807,11 @@ def guardar_notas():
             encoding="utf-8"
         )
 
+
         return jsonify({
             "ok": True
         })
+
 
     except Exception:
 
@@ -748,156 +828,161 @@ def guardar_notas():
     "/api/chat",
     methods=["POST"]
 )
+
 @requiere_login
+
 def chat():
 
     data = request.get_json(
         silent=True
     )
 
+
     if not data:
 
         return jsonify({
+
             "respuesta":
                 "No recibí ningún mensaje."
+
         })
+
 
     mensaje = data.get(
         "mensaje",
         ""
     ).strip()
 
+
     if not mensaje:
 
         return jsonify({
+
             "respuesta":
                 "Escribime una consulta."
+
         })
 
-    # ======================================================
-    # BUSCAR EN PDF
-    # ======================================================
 
-    resultados_pdf = buscar_en_documentos(
+    # ------------------------------------------------------
+    # BUSCAR EN LOS PDF
+    # ------------------------------------------------------
+
+    resultados = buscar_en_documentos(
         mensaje
     )
 
-    contexto_pdf = ""
 
-    for resultado in resultados_pdf[:5]:
+    # ------------------------------------------------------
+    # SI ENCONTRAMOS INFORMACIÓN
+    # ------------------------------------------------------
 
-        contexto_pdf += (
-            "\n\n===== DOCUMENTO =====\n"
+    if resultados:
+
+        respuesta = (
+            "Encontré información relacionada "
+            "en tus documentos.\n\n"
         )
 
-        contexto_pdf += (
-            "ARCHIVO: "
-            + resultado.get(
-                "archivo",
-                ""
-            )
-            + "\n"
-        )
 
-        contexto_pdf += (
-            "COMPAÑIA: "
-            + resultado.get(
-                "compania",
-                ""
-            )
-            + "\n\n"
-        )
+        for resultado in resultados[:3]:
 
-        contexto_pdf += (
-            resultado.get(
-                "texto",
-                ""
-            )
-            + "\n"
-        )
+            texto = resultado["texto"]
 
-    # ======================================================
-    # BUSCAR EN GOOGLE SHEETS
-    # ======================================================
-
-    contexto_sheet = ""
-
-    try:
-
-        from servicios_ia import (
-            buscar_en_google_sheet
-        )
-
-        resultados_sheet = (
-            buscar_en_google_sheet(
-                mensaje
-            )
-        )
-
-        if resultados_sheet:
-
-            contexto_sheet = (
-                "\n\n===== GOOGLE SHEETS =====\n"
-                + resultados_sheet
+            palabras = re.findall(
+                r"\w+",
+                mensaje.lower()
             )
 
-    except Exception as error:
 
-        print(
-            "ERROR GOOGLE SHEETS:",
-            error
-        )
+            posiciones = []
 
-    # ======================================================
-    # CONTEXTO COMPLETO
-    # ======================================================
 
-    contexto = (
-        contexto_pdf
-        + contexto_sheet
-    )
+            for palabra in palabras:
 
-    # ======================================================
-    # GEMINI
-    # ======================================================
+                if len(palabra) < 3:
 
-    try:
+                    continue
 
-        from servicios_ia import (
-            consultar_gemini
-        )
 
-        respuesta = consultar_gemini(
-            mensaje,
-            contexto
-        )
+                posicion = (
+                    texto.lower().find(
+                        palabra
+                    )
+                )
 
-    except Exception as error:
 
-        print(
-            "ERROR CHAT GEMINI:",
-            error
-        )
+                if posicion >= 0:
 
-        if contexto:
+                    posiciones.append(
+                        posicion
+                    )
 
-            respuesta = (
-                "Encontré información "
-                "relacionada en la oficina.\n\n"
-                + contexto[:8000]
+
+            if posiciones:
+
+                posicion = min(
+                    posiciones
+                )
+
+            else:
+
+                posicion = 0
+
+
+            inicio = max(
+                0,
+                posicion - 150
             )
 
-        else:
 
-            respuesta = (
-                "No encontré información "
-                "relacionada en los documentos "
-                "ni en Google Sheets."
+            fin = min(
+                len(texto),
+                posicion + 650
             )
+
+
+            fragmento = (
+                texto[inicio:fin]
+                .replace(
+                    "\n",
+                    " "
+                )
+            )
+
+
+            respuesta += (
+
+                f"📄 "
+                f"{resultado['archivo']}\n"
+
+                f"🏢 "
+                f"{resultado['compania']}\n\n"
+
+                f"{fragmento}\n\n"
+
+                "────────────────────\n\n"
+
+            )
+
+
+    else:
+
+        respuesta = (
+            "No encontré coincidencias "
+            "en los documentos cargados.\n\n"
+            "Cuando conectemos la IA, "
+            "voy a poder interpretar la "
+            "pregunta y buscar información "
+            "de forma mucho más inteligente."
+        )
+
 
     return jsonify({
+
         "respuesta":
             respuesta
+
     })
 
 
@@ -906,6 +991,7 @@ def chat():
 # ==========================================================
 
 @app.route("/logout")
+
 def logout():
 
     session.clear()
@@ -941,12 +1027,14 @@ def crear_estructura():
 
     ]
 
+
     for compania in companias:
 
         carpeta = (
             DOCUMENTOS_DIR /
             compania
         )
+
 
         carpeta.mkdir(
             parents=True,
@@ -961,6 +1049,7 @@ def crear_estructura():
 if __name__ == "__main__":
 
     crear_estructura()
+
 
     print("")
     print(
@@ -981,8 +1070,13 @@ if __name__ == "__main__":
 
     print("")
 
+
     app.run(
+
         debug=True,
+
         host="127.0.0.1",
+
         port=5000
+
     )
