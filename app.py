@@ -1869,6 +1869,15 @@ def eliminar_usuario(usuario_id):
 @app.route("/api/manuales/<slug>", methods=["POST"])
 @requiere_admin
 def subir_manual(slug):
+    """
+    Agrega manuales de forma acumulativa.
+
+    - Acepta uno o varios archivos en el campo "manual".
+    - Cada PDF obtiene una clave R2 única, por lo que nunca reemplaza otro
+      manual salvo que el frontend envíe explícitamente "replace".
+    - Un fallo de un archivo no elimina los manuales que ya estaban guardados
+      ni los que se hayan completado antes en esta misma solicitud.
+    """
     compania = next(
         (c for c in MANUALES_COMPANIAS if slug_manual_compania(c) == slug),
         None,
@@ -1876,30 +1885,66 @@ def subir_manual(slug):
     if not compania:
         return jsonify(ok=False, error="Compañía no válida."), 404
 
-    archivo = request.files.get("manual")
-    if not archivo or not archivo.filename:
-        return jsonify(ok=False, error="Seleccioná un archivo PDF."), 400
+    archivos = [a for a in request.files.getlist("manual") if a and a.filename]
+    if not archivos:
+        # Compatibilidad con clientes antiguos que enviaban request.files.get().
+        archivo_unico = request.files.get("manual")
+        if archivo_unico and archivo_unico.filename:
+            archivos = [archivo_unico]
 
-    nombre_seguro = secure_filename(Path(archivo.filename).name)
-    if not nombre_seguro or Path(nombre_seguro).suffix.lower() != ".pdf":
-        return jsonify(ok=False, error="El archivo debe ser un PDF."), 400
-
-    # El límite de Flask también protege esta ruta. Repetimos una comprobación
-    # aquí para que el comportamiento quede claro y consistente.
-    archivo.stream.seek(0, os.SEEK_END)
-    tamaño = archivo.stream.tell()
-    archivo.stream.seek(0)
-
-    if tamaño <= 0:
-        return jsonify(ok=False, error="El PDF está vacío."), 400
-    if tamaño > 20 * 1024 * 1024:
-        return jsonify(ok=False, error="El PDF es demasiado grande. El máximo permitido es 20 MB."), 413
+    if not archivos:
+        return jsonify(ok=False, error="Seleccioná al menos un archivo PDF."), 400
 
     reemplazar = str(request.form.get("replace", "")).strip()
+    if reemplazar and len(archivos) != 1:
+        return jsonify(
+            ok=False,
+            error="El reemplazo de un manual debe hacerse con un solo PDF."
+        ), 400
+
+    # El límite de Flask protege cada petición. Además validamos cada archivo
+    # individualmente para devolver un error claro y evitar cargas parciales
+    # por formato/tamaño antes de escribir en R2.
+    archivos_preparados = []
+    for archivo in archivos:
+        nombre_seguro = secure_filename(Path(archivo.filename).name)
+        if not nombre_seguro or Path(nombre_seguro).suffix.lower() != ".pdf":
+            return jsonify(
+                ok=False,
+                error=f'El archivo "{archivo.filename}" no es un PDF válido.'
+            ), 400
+
+        try:
+            archivo.stream.seek(0, os.SEEK_END)
+            tamaño = archivo.stream.tell()
+            archivo.stream.seek(0)
+        except Exception:
+            return jsonify(
+                ok=False,
+                error=f'No se pudo leer el archivo "{archivo.filename}".'
+            ), 400
+
+        if tamaño <= 0:
+            return jsonify(
+                ok=False,
+                error=f'El PDF "{archivo.filename}" está vacío.'
+            ), 400
+
+        if tamaño > 20 * 1024 * 1024:
+            return jsonify(
+                ok=False,
+                error=(
+                    f'El PDF "{archivo.filename}" es demasiado grande. '
+                    "El máximo permitido es 20 MB por archivo."
+                )
+            ), 413
+
+        archivos_preparados.append((archivo, nombre_seguro, tamaño))
+
     r2_key_anterior = None
+    existente = None
 
     if reemplazar:
-        # El frontend conserva el nombre "replace", pero contiene el r2_key.
         prefijo = f"manuales/{slug}/"
         if not reemplazar.startswith(prefijo) or not reemplazar.lower().endswith(".pdf"):
             return jsonify(ok=False, error="El manual a reemplazar no es válido."), 400
@@ -1910,98 +1955,143 @@ def subir_manual(slug):
         r2_key_anterior = reemplazar
 
     import uuid
-    r2_key_nuevo = (
-        f"manuales/{slug}/"
-        f"{uuid.uuid4().hex}__{nombre_seguro}"
-    )
 
-    # Validamos el PDF antes de subirlo. No se guarda una copia permanente
-    # dentro del proyecto.
-    try:
-        archivo.stream.seek(0)
-        if archivo.stream.read(5) != b"%PDF-":
-            raise ValueError("El archivo no parece ser un PDF válido.")
-        archivo.stream.seek(0)
+    resultados = []
+    subidos_r2 = []
+
+    for archivo, nombre_seguro, tamaño in archivos_preparados:
+        r2_key_nuevo = (
+            f"manuales/{slug}/"
+            f"{uuid.uuid4().hex}__{nombre_seguro}"
+        )
+
+        # Validamos antes de persistir. Los PDFs siguen siendo privados en R2;
+        # no se crea una copia permanente local.
         try:
-            PdfReader(archivo.stream)
-        except Exception as exc:
-            raise ValueError(
-                "No se pudo leer el PDF. Verificá que no esté dañado."
-            ) from exc
-        archivo.stream.seek(0)
-    except ValueError as exc:
-        return jsonify(ok=False, error=str(exc)), 400
-    except Exception:
-        return jsonify(ok=False, error="No se pudo validar el PDF."), 400
-
-    try:
-        r2_subir_pdf(archivo.stream, r2_key_nuevo, tamaño)
-    except Exception as error:
-        print("ERROR SUBIENDO MANUAL A R2:", error)
-        return jsonify(
-            ok=False,
-            error="No se pudo guardar el PDF en Cloudflare R2."
-        ), 502
-
-    try:
-        if r2_key_anterior:
-            actualizar_manual(
-                r2_key_anterior,
-                nombre_seguro,
-                r2_key_nuevo,
-                tamaño,
-            )
-        else:
-            registrar_manual(
-                nombre_seguro,
-                r2_key_nuevo,
-                tamaño,
-            )
-    except Exception as error:
-        print("ERROR REGISTRANDO MANUAL EN NEON:", error)
-        # Compensación: no dejamos el objeto nuevo huérfano en R2.
-        try:
-            r2_eliminar_pdf(r2_key_nuevo)
-        except Exception as rollback_error:
-            print("ERROR ROLLBACK R2:", rollback_error)
-        return jsonify(
-            ok=False,
-            error="El PDF se subió, pero no se pudo registrar en PostgreSQL. No se completó la operación."
-        ), 502
-
-    # En un reemplazo, el nuevo registro ya está en Neon. Eliminamos el objeto
-    # anterior sólo después de que el cambio de base quedó confirmado.
-    if r2_key_anterior:
-        try:
-            r2_eliminar_pdf(r2_key_anterior)
-        except Exception as error:
-            # Compensación: si no pudimos borrar el objeto anterior, volvemos
-            # a dejar Neon apuntando al objeto anterior y eliminamos el nuevo.
-            print("ERROR ELIMINANDO EL PDF ANTERIOR DE R2:", error)
-            try:
-                actualizar_manual(
-                    r2_key_nuevo,
-                    existente["nombre"],
-                    r2_key_anterior,
-                    existente["tamaño"],
+            archivo.stream.seek(0)
+            if archivo.stream.read(5) != b"%PDF-":
+                raise ValueError(
+                    f'El archivo "{archivo.filename}" no parece ser un PDF válido.'
                 )
-            except Exception as rollback_db_error:
-                print("ERROR ROLLBACK NEON:", rollback_db_error)
+            archivo.stream.seek(0)
             try:
-                r2_eliminar_pdf(r2_key_nuevo)
-            except Exception as rollback_r2_error:
-                print("ERROR ROLLBACK R2:", rollback_r2_error)
+                PdfReader(archivo.stream)
+            except Exception as exc:
+                raise ValueError(
+                    f'No se pudo leer el PDF "{archivo.filename}". '
+                    "Verificá que no esté dañado."
+                ) from exc
+            archivo.stream.seek(0)
+        except ValueError as exc:
             return jsonify(
                 ok=False,
-                error="No se pudo completar el reemplazo porque el PDF anterior no pudo eliminarse de R2."
+                error=str(exc),
+                cargados=resultados,
+            ), 400
+        except Exception as exc:
+            print("ERROR VALIDANDO MANUAL:", exc)
+            return jsonify(
+                ok=False,
+                error=f'No se pudo validar el PDF "{archivo.filename}".',
+                cargados=resultados,
+            ), 400
+
+        try:
+            r2_subir_pdf(archivo.stream, r2_key_nuevo, tamaño)
+            subidos_r2.append(r2_key_nuevo)
+        except Exception as error:
+            print("ERROR SUBIENDO MANUAL A R2:", error)
+            # Si esta carga no pudo completarse, eliminamos sólo los objetos
+            # creados por esta petición que todavía no tienen registro.
+            for key in subidos_r2:
+                try:
+                    if not any(r.get("archivo") == key for r in resultados):
+                        r2_eliminar_pdf(key)
+                except Exception as rollback_error:
+                    print("ERROR ROLLBACK R2:", rollback_error)
+            return jsonify(
+                ok=False,
+                error=f'No se pudo guardar "{archivo.filename}" en Cloudflare R2.',
+                cargados=resultados,
             ), 502
 
-    # El caché temporal se identifica por r2_key, por lo que el reemplazo usa
-    # automáticamente una entrada nueva.
+        try:
+            if r2_key_anterior:
+                actualizar_manual(
+                    r2_key_anterior,
+                    nombre_seguro,
+                    r2_key_nuevo,
+                    tamaño,
+                )
+            else:
+                registrar_manual(
+                    nombre_seguro,
+                    r2_key_nuevo,
+                    tamaño,
+                )
+        except Exception as error:
+            print("ERROR REGISTRANDO MANUAL EN NEON:", error)
+            try:
+                r2_eliminar_pdf(r2_key_nuevo)
+            except Exception as rollback_error:
+                print("ERROR ROLLBACK R2:", rollback_error)
+
+            return jsonify(
+                ok=False,
+                error=(
+                    f'"{archivo.filename}" se subió a R2, pero no pudo '
+                    "registrarse en PostgreSQL. La operación no se completó."
+                ),
+                cargados=resultados,
+            ), 502
+
+        resultados.append({
+            "archivo": r2_key_nuevo,
+            "nombre": nombre_seguro,
+            "tamaño": tamaño,
+        })
+
+        # Sólo un reemplazo explícito elimina el objeto anterior. Una carga
+        # normal jamás toca los manuales existentes.
+        if r2_key_anterior:
+            try:
+                r2_eliminar_pdf(r2_key_anterior)
+            except Exception as error:
+                print("ERROR ELIMINANDO EL PDF ANTERIOR DE R2:", error)
+                try:
+                    actualizar_manual(
+                        r2_key_nuevo,
+                        existente["nombre"],
+                        r2_key_anterior,
+                        existente["tamaño"],
+                    )
+                except Exception as rollback_db_error:
+                    print("ERROR ROLLBACK NEON:", rollback_db_error)
+                try:
+                    r2_eliminar_pdf(r2_key_nuevo)
+                except Exception as rollback_r2_error:
+                    print("ERROR ROLLBACK R2:", rollback_r2_error)
+                return jsonify(
+                    ok=False,
+                    error=(
+                        "No se pudo completar el reemplazo porque el PDF "
+                        "anterior no pudo eliminarse de R2."
+                    ),
+                    cargados=[],
+                ), 502
+
+            # Evita que el siguiente elemento de una hipotética petición múltiple
+            # se interprete como otro reemplazo.
+            r2_key_anterior = None
+
     return jsonify(
         ok=True,
-        mensaje=f"Manual de {compania} cargado correctamente.",
-        archivo=r2_key_nuevo,
+        mensaje=(
+            f"{len(resultados)} manual(es) de {compania} "
+            "cargado(s) correctamente."
+        ),
+        archivos=resultados,
+        cantidad=len(resultados),
     )
 
 

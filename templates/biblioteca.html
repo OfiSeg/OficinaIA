@@ -72,26 +72,94 @@
   document.querySelectorAll('.upload input[data-slug]').forEach(input => {
     input.addEventListener('change', async () => {
       if (!input.files.length) return;
+
       const slug = input.dataset.slug;
-      const status = document.querySelector(`[data-status-for="${slug}"]`);
+      const card = input.closest('article');
+      const status = card?.querySelector('.upload-status');
       const files = Array.from(input.files);
-      status.textContent = `Guardando ${files.length} PDF${files.length === 1 ? '' : 's'}…`;
+
+      // Se envía cada archivo en una petición independiente. Así el límite de
+      // 20 MB de Flask se aplica por PDF y una carga de varios archivos no se
+      // convierte en una única petición gigante.
       input.disabled = true;
+
+      let exitosos = 0;
+      const errores = [];
+
       try {
         for (let n = 0; n < files.length; n++) {
           const file = files[n];
-          if (!file.name.toLowerCase().endsWith('.pdf')) throw new Error(`“${file.name}” no es un PDF.`);
-          status.textContent = `Guardando ${n + 1} de ${files.length}: ${file.name}`;
+          status.textContent = `Procesando ${n + 1} de ${files.length}: ${file.name}`;
+
+          if (!file.name.toLowerCase().endsWith('.pdf')) {
+            errores.push(`${file.name}: formato no permitido (sólo PDF).`);
+            continue;
+          }
+
+          if (file.size === 0) {
+            errores.push(`${file.name}: el archivo está vacío.`);
+            continue;
+          }
+
+          if (file.size > 20 * 1024 * 1024) {
+            errores.push(`${file.name}: supera el máximo de 20 MB.`);
+            continue;
+          }
+
           const fd = new FormData();
           fd.append('manual', file, file.name);
-          const response = await fetch(`/api/manuales/${encodeURIComponent(slug)}`, { method: 'POST', body: fd, credentials: 'same-origin' });
-          const data = await jsonResponse(response);
-          if (!response.ok || !data.ok) throw new Error(data.error || 'No se pudo guardar el manual.');
+
+          try {
+            const response = await fetch(
+              `/api/manuales/${encodeURIComponent(slug)}`,
+              {
+                method: 'POST',
+                body: fd,
+                credentials: 'same-origin'
+              }
+            );
+
+            const text = await response.text();
+            let data;
+            try {
+              data = JSON.parse(text);
+            } catch {
+              throw new Error(
+                `El servidor respondió ${response.status} sin JSON válido.`
+              );
+            }
+
+            if (!response.ok || !data.ok) {
+              throw new Error(data.error || 'No se pudo guardar el manual.');
+            }
+
+            exitosos++;
+          } catch (error) {
+            errores.push(`${file.name}: ${error.message}`);
+          }
         }
-        status.textContent = '✓ Manual(es) guardado(s) correctamente.';
-        setTimeout(() => location.reload(), 450);
+
+        if (errores.length === 0) {
+          status.textContent =
+            `✓ ${exitosos} manual${exitosos === 1 ? '' : 'es'} guardado${exitosos === 1 ? '' : 's'} correctamente.`;
+        } else if (exitosos > 0) {
+          status.textContent =
+            `✓ ${exitosos} guardado${exitosos === 1 ? '' : 's'}. ` +
+            `Fallaron ${errores.length}: ${errores.join(' | ')}`;
+        } else {
+          status.textContent = `Error: ${errores.join(' | ')}`;
+        }
+
+        // Siempre refrescamos si al menos un PDF quedó guardado, para que
+        // aparezca inmediatamente y se consulte desde el estado persistente.
+        if (exitosos > 0) {
+          setTimeout(() => location.reload(), 700);
+        } else {
+          input.disabled = false;
+          input.value = '';
+        }
       } catch (error) {
-        status.textContent = `Error: ${error.message}`;
+        status.textContent = `Error inesperado: ${error.message}`;
         input.disabled = false;
         input.value = '';
       }
