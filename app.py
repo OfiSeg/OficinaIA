@@ -19,6 +19,9 @@ import sqlite3
 from contextlib import closing
 from werkzeug.security import generate_password_hash, check_password_hash
 from werkzeug.utils import secure_filename
+from openpyxl import Workbook, load_workbook
+from openpyxl.utils import get_column_letter
+from docx import Document
 
 
 # ==========================================================
@@ -34,6 +37,10 @@ BASE_DIR = Path(__file__).resolve().parent
 DOCUMENTOS_DIR = BASE_DIR / "documentos"
 
 NOTAS_FILE = BASE_DIR / "notas.json"
+WORD_FILE = BASE_DIR / "documento_interno.docx"
+
+# Planilla interna editable de Oficina IA.
+EXCEL_FILE = BASE_DIR / "excel_interno.xlsx"
 
 DOCUMENTOS_DIR.mkdir(
     exist_ok=True
@@ -190,6 +197,24 @@ def nombre_compania(nombre):
         "atm":
             "ATM",
 
+        "federacion":
+            "Federación Patronal",
+
+        "rivadavia":
+            "Rivadavia",
+
+        "euroamerica":
+            "EuroAmérica",
+
+        "agrosalta":
+            "AgroSalta",
+
+        "triunfo":
+            "Triunfo",
+
+        "prof":
+            "PROF",
+
         "mercantil":
             "Mercantil Andina",
 
@@ -252,25 +277,27 @@ app.jinja_env.globals["nombre_compania"] = nombre_compania
 # ==========================================================
 
 def obtener_companias():
+    """Devuelve únicamente las compañías que forman parte de la biblioteca de Manuales."""
+    DOCUMENTOS_DIR.mkdir(parents=True, exist_ok=True)
 
-    carpetas = []
+    companias = [
+        "atm",
+        "mercantil_andina",
+        "federacion_patronal",
+        "san_cristobal",
+        "rivadavia",
+        "euroamerica",
+        "agrosalta",
+        "triunfo",
+        "prof",
+    ]
 
-    if not DOCUMENTOS_DIR.exists():
-
-        return carpetas
-
-    for elemento in DOCUMENTOS_DIR.iterdir():
-
-        if elemento.is_dir():
-
-            carpetas.append(
-                elemento.name
-            )
+    for compania in companias:
+        (DOCUMENTOS_DIR / compania).mkdir(parents=True, exist_ok=True)
 
     return sorted(
-        carpetas,
-        key=lambda x:
-            nombre_compania(x).lower()
+        companias,
+        key=lambda x: nombre_compania(x).lower()
     )
 
 
@@ -946,80 +973,196 @@ def consultar_documentos():
 
 
 # ==========================================================
-# NOTAS
 # ==========================================================
+# EXCEL Y WORD INTERNOS
+# ==========================================================
+
+def _fila_vacia(fila):
+    return not any(str(valor or "").strip() for valor in fila)
+
+
+def _limpiar_filas_excel(filas):
+    """Elimina filas completamente vacías. Conserva la primera fila como encabezado."""
+    if not isinstance(filas, list):
+        raise ValueError("La matriz no es válida.")
+    filas = filas[:500]
+    normalizadas = []
+    for fila in filas:
+        if not isinstance(fila, list):
+            continue
+        limpia = ["" if valor is None else str(valor) for valor in fila[:30]]
+        normalizadas.append(limpia)
+    if not normalizadas:
+        return []
+    encabezado = normalizadas[0]
+    cuerpo = [fila for fila in normalizadas[1:] if not _fila_vacia(fila)]
+    return [encabezado] + cuerpo
+
+
+def asegurar_excel_interno():
+    if not EXCEL_FILE.exists():
+        wb = Workbook()
+        ws = wb.active
+        ws.title = "Datos"
+        ws.append(["Dato", "Valor", "Observaciones"])
+        wb.save(EXCEL_FILE)
+
+
+def leer_excel_interno():
+    asegurar_excel_interno()
+    wb = load_workbook(EXCEL_FILE, data_only=False)
+    ws = wb.active
+    filas = [["" if value is None else str(value) for value in row] for row in ws.iter_rows(values_only=True)]
+    filas = _limpiar_filas_excel(filas)
+    columnas = max([len(f) for f in filas], default=1)
+    columnas = max(1, min(columnas, 30))
+    filas = [f[:columnas] + [""] * (columnas - len(f)) for f in filas]
+    return {"hoja": ws.title, "filas": filas, "columnas": columnas}
+
+
+def guardar_matriz_excel(filas, nombre_hoja="Datos"):
+    filas = _limpiar_filas_excel(filas)
+    max_cols = max([len(f) for f in filas], default=1)
+    max_cols = min(max_cols, 30)
+    wb = Workbook()
+    ws = wb.active
+    ws.title = (nombre_hoja or "Datos")[:31]
+    for r, fila in enumerate(filas, start=1):
+        for c, valor in enumerate(fila[:max_cols], start=1):
+            if str(valor or "").strip():
+                ws.cell(row=r, column=c, value=str(valor))
+    for c in range(1, max_cols + 1):
+        letra = get_column_letter(c)
+        valores = [str(ws.cell(r, c).value or "") for r in range(1, min(ws.max_row, 30) + 1)]
+        ancho = min(max([len(v) for v in valores] + [10]) + 2, 32)
+        ws.column_dimensions[letra].width = ancho
+    wb.save(EXCEL_FILE)
+
+
+def asegurar_word_interno():
+    if not WORD_FILE.exists():
+        doc = Document()
+        doc.add_paragraph("")
+        doc.save(WORD_FILE)
+
+
+def leer_word_interno():
+    asegurar_word_interno()
+    doc = Document(WORD_FILE)
+    return "\n\n".join(p.text for p in doc.paragraphs)
+
+
+def guardar_word_interno(contenido):
+    doc = Document()
+    for linea in str(contenido or "").splitlines():
+        doc.add_paragraph(linea)
+    doc.save(WORD_FILE)
+
 
 @app.route("/notas")
 @requiere_login
 def notas():
-
-    contenido = ""
-
-    if NOTAS_FILE.exists():
-
-        try:
-
-            contenido = NOTAS_FILE.read_text(
-                encoding="utf-8"
-            )
-
-        except Exception:
-
-            contenido = ""
-
-    return render_template(
-        "notas.html",
-        contenido=contenido,
-        usuario=session["usuario"],
-        carpetas=obtener_companias()
-    )
+    # Se conserva la URL para no romper marcadores antiguos; ahora muestra Excel + Word.
+    return render_template("notas.html", usuario=session["usuario"], carpetas=obtener_companias())
 
 
-# ==========================================================
-# GUARDAR NOTAS
-# ==========================================================
-
-@app.route(
-    "/api/notas",
-    methods=["POST"]
-)
+@app.route("/api/excel", methods=["GET"])
 @requiere_login
-def guardar_notas():
-
-    data = request.get_json(
-        silent=True
-    )
-
-    if not data:
-
-        return jsonify({
-            "ok": False
-        }), 400
-
-    contenido = data.get(
-        "contenido",
-        ""
-    )
-
+def api_excel():
     try:
-
-        NOTAS_FILE.write_text(
-            contenido,
-            encoding="utf-8"
-        )
-
-        return jsonify({
-            "ok": True
-        })
-
-    except Exception:
-
-        return jsonify({
-            "ok": False
-        }), 500
+        return jsonify({"ok": True, **leer_excel_interno()})
+    except Exception as error:
+        print("ERROR LEYENDO EXCEL INTERNO:", error)
+        return jsonify({"ok": False, "error": "No se pudo leer la planilla."}), 500
 
 
-# ==========================================================
+@app.route("/api/excel", methods=["POST"])
+@requiere_login
+def api_excel_guardar():
+    data = request.get_json(silent=True) or {}
+    try:
+        guardar_matriz_excel(data.get("filas", []), data.get("hoja", "Datos"))
+        return jsonify({"ok": True, **leer_excel_interno()})
+    except Exception as error:
+        print("ERROR GUARDANDO EXCEL INTERNO:", error)
+        return jsonify({"ok": False, "error": "No se pudo guardar la planilla."}), 500
+
+
+@app.route("/api/excel/limpiar", methods=["POST"])
+@requiere_login
+def api_excel_limpiar():
+    try:
+        datos = leer_excel_interno()
+        guardar_matriz_excel(datos["filas"], datos["hoja"])
+        return jsonify({"ok": True, **leer_excel_interno()})
+    except Exception as error:
+        print("ERROR LIMPIANDO EXCEL:", error)
+        return jsonify({"ok": False, "error": "No se pudieron eliminar las filas vacías."}), 500
+
+
+@app.route("/api/excel/importar", methods=["POST"])
+@requiere_login
+def api_excel_importar():
+    archivo = request.files.get("archivo")
+    if not archivo or not archivo.filename:
+        return jsonify({"ok": False, "error": "No se recibió ningún archivo."}), 400
+    nombre = secure_filename(archivo.filename)
+    if not nombre.lower().endswith((".xlsx", ".xlsm")):
+        return jsonify({"ok": False, "error": "Usá un archivo Excel .xlsx o .xlsm."}), 400
+    temporal = EXCEL_FILE.with_suffix(".upload.xlsx")
+    try:
+        archivo.save(temporal)
+        wb = load_workbook(temporal, data_only=False)
+        if not wb.sheetnames:
+            raise ValueError("El Excel no contiene hojas.")
+        ws = wb[wb.sheetnames[0]]
+        filas = [["" if value is None else str(value) for value in row] for row in ws.iter_rows(values_only=True)]
+        guardar_matriz_excel(filas, ws.title)
+        return jsonify({"ok": True, **leer_excel_interno()})
+    except Exception as error:
+        print("ERROR IMPORTANDO EXCEL:", error)
+        return jsonify({"ok": False, "error": "No se pudo importar el Excel."}), 400
+    finally:
+        try: temporal.unlink(missing_ok=True)
+        except Exception: pass
+
+
+@app.route("/excel/exportar")
+@requiere_login
+def excel_exportar():
+    asegurar_excel_interno()
+    return send_from_directory(EXCEL_FILE.parent, EXCEL_FILE.name, as_attachment=True, download_name="OficinaIA.xlsx")
+
+
+@app.route("/api/word", methods=["GET"])
+@requiere_login
+def api_word():
+    try:
+        return jsonify({"ok": True, "contenido": leer_word_interno()})
+    except Exception as error:
+        print("ERROR LEYENDO WORD:", error)
+        return jsonify({"ok": False, "error": "No se pudo leer el documento."}), 500
+
+
+@app.route("/api/word", methods=["POST"])
+@requiere_login
+def api_word_guardar():
+    data = request.get_json(silent=True) or {}
+    try:
+        guardar_word_interno(data.get("contenido", ""))
+        return jsonify({"ok": True})
+    except Exception as error:
+        print("ERROR GUARDANDO WORD:", error)
+        return jsonify({"ok": False, "error": "No se pudo guardar el documento."}), 500
+
+
+@app.route("/word/exportar")
+@requiere_login
+def word_exportar():
+    asegurar_word_interno()
+    return send_from_directory(WORD_FILE.parent, WORD_FILE.name, as_attachment=True, download_name="OficinaIA.docx")
+
+
 # CHAT
 # ==========================================================
 
@@ -1381,38 +1524,22 @@ def logout():
 # ==========================================================
 
 def crear_estructura():
-
+    # Las compañías de documentos deben coincidir exactamente con las 9
+    # compañías habilitadas en la sección Manuales.
     companias = [
-
-        "ATM",
-
-        "MercantilAndina",
-
-        "SanCristobal",
-
-        "FederacionPatronal",
-
-        "LaSegunda",
-
-        "RioUruguay",
-
-        "SancorSeguros",
-
-        "Provincia"
-
+        "atm",
+        "mercantil_andina",
+        "federacion_patronal",
+        "san_cristobal",
+        "rivadavia",
+        "euroamerica",
+        "agrosalta",
+        "triunfo",
+        "prof",
     ]
 
     for compania in companias:
-
-        carpeta = (
-            DOCUMENTOS_DIR /
-            compania
-        )
-
-        carpeta.mkdir(
-            parents=True,
-            exist_ok=True
-        )
+        (DOCUMENTOS_DIR / compania).mkdir(parents=True, exist_ok=True)
 
 
 # ==========================================================
