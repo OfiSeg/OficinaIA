@@ -37,6 +37,9 @@ from storage_r2 import (
     eliminar_pdf as r2_eliminar_pdf,
     descargar_pdf_temporal,
     obtener_objeto_stream,
+    EXCEL_INTERNO_R2_KEY,
+    subir_excel_interno,
+    descargar_excel_interno,
 )
 from openpyxl import Workbook, load_workbook
 from openpyxl.utils import get_column_letter
@@ -1156,13 +1159,65 @@ def _limpiar_columnas_excel(filas):
     return [[(fila[c] if c < len(fila) else "") for c in columnas_vivas] for fila in filas]
 
 
+def _r2_excel_configurado():
+    """Indica si R2 tiene las credenciales necesarias para persistir el Excel."""
+    return all(
+        os.getenv(nombre)
+        for nombre in (
+            "R2_ENDPOINT_URL",
+            "R2_ACCESS_KEY_ID",
+            "R2_SECRET_ACCESS_KEY",
+            "R2_BUCKET_NAME",
+        )
+    )
+
+
+def _crear_excel_inicial():
+    wb = Workbook()
+    ws = wb.active
+    ws.title = "Datos"
+    ws.append(["Dato", "Valor", "Observaciones"])
+    wb.save(EXCEL_FILE)
+
+
 def asegurar_excel_interno():
+    """
+    Mantiene una copia local de trabajo del Excel, pero utiliza R2 como
+    almacenamiento persistente cuando está configurado.
+
+    - Si existe una copia en R2, se descarga y pasa a ser la copia local.
+    - Si R2 todavía no tiene el archivo, conserva/crea la copia local y la sube.
+    - Si R2 no está configurado o está temporalmente caído, se puede seguir
+      trabajando con la copia local existente, dejando el problema registrado.
+    """
+    if _r2_excel_configurado():
+        try:
+            descargado = descargar_excel_interno(EXCEL_FILE, EXCEL_INTERNO_R2_KEY)
+            if descargado:
+                return
+
+            # Primera instalación: si ya existe un Excel local (por ejemplo,
+            # el que venía con la aplicación), lo convertimos en la copia
+            # persistente inicial de R2.
+            if not EXCEL_FILE.exists():
+                _crear_excel_inicial()
+
+            subir_excel_interno(EXCEL_FILE, EXCEL_INTERNO_R2_KEY)
+            return
+        except Exception as error:
+            if EXCEL_FILE.exists():
+                print("ADVERTENCIA EXCEL R2:", error)
+                print("Se utilizará temporalmente la copia local del Excel.")
+                return
+            raise RuntimeError(
+                "No se pudo recuperar el Excel interno desde Cloudflare R2 "
+                "y tampoco existe una copia local."
+            ) from error
+
     if not EXCEL_FILE.exists():
-        wb = Workbook()
-        ws = wb.active
-        ws.title = "Datos"
-        ws.append(["Dato", "Valor", "Observaciones"])
-        wb.save(EXCEL_FILE)
+        _crear_excel_inicial()
+
+
 
 
 def leer_excel_interno():
@@ -1198,6 +1253,15 @@ def guardar_matriz_excel(filas, nombre_hoja="Datos"):
         ws.column_dimensions[letra].width = ancho
     wb.save(EXCEL_FILE)
 
+    # R2 es la persistencia permanente. Si la sincronización falla, elevamos
+    # el error para que la API no informe falsamente que el guardado fue
+    # exitoso y quede registrado en los logs de Render.
+    if _r2_excel_configurado():
+        try:
+            subir_excel_interno(EXCEL_FILE, EXCEL_INTERNO_R2_KEY)
+        except Exception as error:
+            print("ERROR SINCRONIZANDO EXCEL INTERNO CON R2:", error)
+            raise
 
 def asegurar_word_interno():
     if not WORD_FILE.exists():

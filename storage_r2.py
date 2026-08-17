@@ -120,3 +120,66 @@ def obtener_objeto_stream(r2_key: str):
         )
     except (BotoCoreError, ClientError) as exc:
         raise RuntimeError("No se pudo obtener el PDF desde Cloudflare R2.") from exc
+
+
+# ==========================================================
+# EXCEL INTERNO
+# ==========================================================
+
+EXCEL_INTERNO_R2_KEY = "excel/excel_interno.xlsx"
+
+
+def existe_objeto(r2_key: str) -> bool:
+    """Indica si un objeto existe en R2 sin descargarlo."""
+    try:
+        _cliente().head_object(Bucket=_bucket(), Key=r2_key)
+        return True
+    except ClientError as exc:
+        error_code = str(exc.response.get("Error", {}).get("Code", ""))
+        if error_code in {"404", "NoSuchKey", "NotFound"}:
+            return False
+        raise RuntimeError("No se pudo comprobar el objeto en Cloudflare R2.") from exc
+    except BotoCoreError as exc:
+        raise RuntimeError("No se pudo comprobar el objeto en Cloudflare R2.") from exc
+
+
+def subir_excel_interno(archivo: Path, r2_key: str = EXCEL_INTERNO_R2_KEY) -> None:
+    """Sube el Excel interno al mismo bucket R2 utilizado por los manuales."""
+    try:
+        with Path(archivo).open("rb") as fileobj:
+            _cliente().upload_fileobj(
+                fileobj,
+                _bucket(),
+                r2_key,
+                ExtraArgs={
+                    "ContentType": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                },
+            )
+    except (BotoCoreError, ClientError, OSError) as exc:
+        raise RuntimeError("No se pudo guardar el Excel interno en Cloudflare R2.") from exc
+
+
+def descargar_excel_interno(destino: Path, r2_key: str = EXCEL_INTERNO_R2_KEY) -> bool:
+    """
+    Descarga el Excel interno desde R2 al filesystem local.
+    Devuelve True si se descargó y False si el objeto no existe.
+    """
+    destino = Path(destino)
+    temporal = destino.with_suffix(destino.suffix + ".r2tmp")
+    try:
+        respuesta = _cliente().get_object(Bucket=_bucket(), Key=r2_key)
+        with temporal.open("wb") as salida:
+            body = respuesta["Body"]
+            for bloque in iter(lambda: body.read(1024 * 1024), b""):
+                salida.write(bloque)
+        temporal.replace(destino)
+        return True
+    except ClientError as exc:
+        temporal.unlink(missing_ok=True)
+        error_code = str(exc.response.get("Error", {}).get("Code", ""))
+        if error_code in {"404", "NoSuchKey", "NotFound"}:
+            return False
+        raise RuntimeError("No se pudo descargar el Excel interno desde Cloudflare R2.") from exc
+    except (BotoCoreError, OSError) as exc:
+        temporal.unlink(missing_ok=True)
+        raise RuntimeError("No se pudo descargar el Excel interno desde Cloudflare R2.") from exc
