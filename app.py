@@ -58,6 +58,20 @@ load_dotenv(BASE_DIR / '.env')
 
 app.config['MAX_CONTENT_LENGTH'] = 20 * 1024 * 1024
 
+# Las rutas /api/* siempre devuelven JSON, incluso ante errores inesperados.
+# Evita que el frontend intente hacer JSON.parse() sobre una página HTML de Flask
+# y termine mostrando "Unexpected token < ...".
+@app.errorhandler(Exception)
+def manejar_error_global(error):
+    if request.path.startswith("/api/"):
+        print(f"ERROR API {request.method} {request.path}: {type(error).__name__}: {error}")
+        return jsonify({
+            "ok": False,
+            "error": "Ocurrió un error interno al procesar la solicitud."
+        }), 500
+    raise error
+
+
 DOCUMENTOS_DIR = BASE_DIR / "documentos"
 
 NOTAS_FILE = BASE_DIR / "notas.json"
