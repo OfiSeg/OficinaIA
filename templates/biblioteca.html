@@ -1,9 +1,9 @@
 {% extends 'base.html' %}
-{% block title %}Manuales y pólizas · OficinaIA{% endblock %}
+{% block title %}Manuales y pólizas · {{config_global.nombre_oficina}}{% endblock %}
 {% block content %}
 <div class="page">
   <header class="top">
-    <div><span>BIBLIOTECA DE CONOCIMIENTO</span><h1>Manuales y pólizas</h1><p>Los PDFs quedan guardados en OficinaIA y están disponibles para la IA.</p></div>
+    <div><span>BIBLIOTECA DE CONOCIMIENTO</span><h1>Manuales y pólizas</h1><p>Los PDFs quedan almacenados de forma privada y están disponibles para la IA.</p></div>
     <strong class="count">{{ polizas|length }} pólizas · {{ manuales|sum(attribute='cantidad') }} manuales</strong>
   </header>
 
@@ -13,7 +13,7 @@
   </div>
 
   <section id="manualesPanel" class="panel library-panel">
-    <div class="section-head"><div><h2>Manuales por compañía</h2><small>Podés acumular varios PDFs por compañía. Se guardan en <code>manuales_companias/</code>.</small></div></div>
+    <div class="section-head"><div><h2>Manuales por compañía</h2><small>Podés acumular varios PDFs por compañía. Se guardan de forma privada y permanente.</small></div></div>
     <div class="manual-grid">
       {% for m in manuales %}
       <article>

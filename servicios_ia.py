@@ -3,8 +3,10 @@ import os
 import csv
 import io
 import urllib.request
-
+from pathlib import Path
 from google import genai
+from google.genai import types
+from openpyxl import load_workbook
 
 
 # ==========================================================
@@ -23,6 +25,9 @@ MODELOS_GEMINI = [
     "gemini-3.5-flash",
     "gemini-3.1-flash-lite",
 ]
+
+BASE_DIR = Path(__file__).resolve().parent
+EXCEL_INTERNO = BASE_DIR / "excel_interno.xlsx"
 
 
 # ==========================================================
@@ -101,164 +106,101 @@ def obtener_datos_sheet():
 # BUSCAR EN GOOGLE SHEETS
 # ==========================================================
 
-def buscar_en_sheet(pregunta):
+def _texto_fila(fila):
+    return " ".join(str(v or "") for v in fila.values()).strip()
 
-    datos = obtener_datos_sheet()
+def _coincidencia_identificador(pregunta, fila):
+    """Devuelve True si la consulta contiene un identificador fuerte de esa fila."""
+    q = _normalizar_texto(pregunta)
+    for campo in ("PATENTE", "NUMERO", "NRO", "POLIZA", "PÓLIZA"):
+        valor = str(fila.get(campo, "")).strip()
+        if valor and _normalizar_texto(valor) in q:
+            return True
+    return False
 
+def _cargar_excel_interno():
+    if not EXCEL_INTERNO.exists():
+        return []
+    try:
+        wb = load_workbook(EXCEL_INTERNO, read_only=True, data_only=True)
+        ws = wb.active
+        rows = list(ws.iter_rows(values_only=True))
+        if not rows:
+            return []
+        headers = [str(x or "").strip().upper() for x in rows[0]]
+        datos = []
+        for row in rows[1:]:
+            fila = {
+                headers[i] if i < len(headers) and headers[i] else f"COLUMNA_{i+1}":
+                str(row[i] or "").strip()
+                for i in range(min(len(headers), len(row)))
+            }
+            if any(fila.values()):
+                datos.append(fila)
+        wb.close()
+        return datos
+    except Exception as error:
+        print("ERROR EXCEL INTERNO:", error)
+        return []
+
+def _buscar_en_registros(pregunta, datos, etiqueta):
     if not datos:
-        return ""
+        return []
 
-    pregunta_lower = pregunta.lower()
+    q = _normalizar_texto(pregunta)
+    palabras = [p for p in re.findall(r"[a-z0-9]+", q) if len(p) >= 3]
+    cliente_exacto = buscar_cliente_exactamente(pregunta, datos) if any("CLIENTE" in f for f in datos) else None
 
-    # Sacamos palabras muy cortas y signos de puntuación
-    palabras = re.findall(
-        r"[a-záéíóúñ0-9]+",
-        pregunta_lower
-    )
+    # Identificador fuerte: restringimos el contexto únicamente a las filas
+    # que contienen ese identificador. Esto evita mezclar pólizas/patentes.
+    identificadas = [f for f in datos if _coincidencia_identificador(pregunta, f)]
+    if identificadas:
+        return [(1000, f) for f in identificadas]
 
-    palabras = [
-        palabra
-        for palabra in palabras
-        if len(palabra) >= 3
-    ]
-
-    resultados = []
-
-    for fila in datos:
-
-        cliente = fila.get(
-            "CLIENTE",
-            ""
-        ).lower()
-
-        numero = fila.get(
-            "NUMERO",
-            ""
-        ).lower()
-
-        vehiculo = fila.get(
-            "VEHICULO",
-            ""
-        ).lower()
-
-        patente = fila.get(
-            "PATENTE",
-            ""
-        ).lower()
-
-        compania = fila.get(
-            "COMPAÑIA",
-            ""
-        ).lower()
-
-        texto_fila = " ".join(
-            str(valor).lower()
-            for valor in fila.values()
-        )
-
-        coincidencias = 0
-
-        # Coincidencia por palabras de la pregunta
-        for palabra in palabras:
-
-            if palabra in texto_fila:
-
-                coincidencias += 1
-
-        # Coincidencia especial con el nombre completo
-        if cliente:
-
-            nombre_cliente = " ".join(
-                cliente.split()
-            )
-
-            partes_nombre = [
-                parte
-                for parte in cliente.split()
-                if len(parte) >= 3
-            ]
-
-            coincidencias_nombre = sum(
-                1
-                for parte in partes_nombre
-                if parte in pregunta_lower
-            )
-
-            if (
-                partes_nombre
-                and
-                coincidencias_nombre == len(partes_nombre)
-            ):
-
-                coincidencias += 10
-
-        # Coincidencia por patente
-        if patente and patente in pregunta_lower:
-
-            coincidencias += 10
-
-        # Coincidencia por número de póliza
-        if numero and numero in pregunta_lower:
-
-            coincidencias += 10
-
-        if coincidencias > 0:
-
-            resultados.append(
-                (
-                    coincidencias,
-                    fila
-                )
-            )
-
-    # Ordenamos los resultados por relevancia
-    resultados.sort(
-        key=lambda x: x[0],
-        reverse=True
-    )
-
-    # Si la consulta identifica inequívocamente a un cliente, devolvemos TODAS
-    # sus filas. Esto es crítico para preguntas de cartera, vehículos, pólizas
-    # y conteos: antes el corte [:10] volvía a truncar estos resultados aunque
-    # hubiéramos encontrado correctamente todas las filas del cliente.
-    cliente_exacto = buscar_cliente_exactamente(pregunta, datos)
-    es_cliente_exacto = bool(cliente_exacto)
     if cliente_exacto:
         cliente_norm = _normalizar_texto(cliente_exacto)
         filas_cliente = [
-            fila for fila in datos
-            if _normalizar_texto(fila.get('CLIENTE', '')) == cliente_norm
+            f for f in datos
+            if _normalizar_texto(f.get("CLIENTE", "")) == cliente_norm
         ]
         if filas_cliente:
-            resultados = [(1000, fila) for fila in filas_cliente]
+            return [(900, f) for f in filas_cliente]
 
+    resultados = []
+    for fila in datos:
+        texto = _normalizar_texto(_texto_fila(fila))
+        coincidencias = sum(1 for palabra in palabras if palabra in texto)
+        if coincidencias:
+            resultados.append((coincidencias, fila))
+    resultados.sort(key=lambda x: x[0], reverse=True)
+    return resultados[:50]
+
+def buscar_en_sheet(pregunta):
+    datos = obtener_datos_sheet()
+    resultados = _buscar_en_registros(pregunta, datos, "Google Sheets")
     if not resultados:
         return ""
 
-    # Para búsquedas generales enviamos más evidencia que antes (50 filas).
-    # Para un cliente identificado, enviamos todas sus filas para que Gemini
-    # pueda responder sobre la cartera completa y no solamente sobre las
-    # primeras 10 operaciones.
-    limite_filas = len(resultados) if es_cliente_exacto else min(len(resultados), 50)
-
-    contexto = ""
-
-    for _, fila in resultados[:limite_filas]:
-
-        contexto += (
-            "REGISTRO DE CLIENTE:\n"
-        )
-
+    contexto = "FUENTE: Excel externo / Google Sheets\n"
+    for _, fila in resultados:
+        contexto += "REGISTRO DE CLIENTE:\n"
         for campo, valor in fila.items():
+            contexto += f"{campo}: {valor}\n"
+        contexto += "\n--------------------\n"
+    return contexto
 
-            contexto += (
-                f"{campo}: {valor}\n"
-            )
+def buscar_en_excel_interno(pregunta):
+    datos = _cargar_excel_interno()
+    resultados = _buscar_en_registros(pregunta, datos, "Excel interno")
+    if not resultados:
+        return ""
 
-        contexto += (
-            "\n--------------------\n"
-        )
-
+    contexto = "FUENTE: Excel interno de OficinaIA\n"
+    for _, fila in resultados:
+        contexto += "REGISTRO INTERNO:\n"
+        for campo, valor in fila.items():
+            contexto += f"{campo}: {valor}\n"
+        contexto += "\n--------------------\n"
     return contexto
 
 
@@ -347,193 +289,337 @@ def respuesta_deterministica_vehiculos(pregunta, datos=None):
 # CONSULTAR GEMINI
 # ==========================================================
 
-def consultar_gemini(
-    pregunta,
-    contexto="",
-    historial=None
-):
+def _pregunta_requiere_internet(pregunta):
+    q = _normalizar_texto(pregunta)
+    claves = (
+        "internet", "web", "online", "actual", "actualizado", "hoy",
+        "precio actual", "sitio web", "pagina oficial", "buscar en internet",
+        "contrasta", "contrastar", "publica", "publico", "publica"
+    )
+    return any(c in q for c in claves)
 
+def _tokens_relevancia(texto):
+    return [p for p in re.findall(r"[a-z0-9]+", _normalizar_texto(texto)) if len(p) >= 3]
+
+
+def _puntuar_fuente(pregunta, contenido, prioridad=0):
+    """Puntúa una fuente por relevancia, sin confundir cantidad con calidad."""
+    q = _normalizar_texto(pregunta)
+    tokens = set(_tokens_relevancia(q))
+    texto = _normalizar_texto(contenido)
+    if not tokens or not texto:
+        return prioridad
+
+    score = prioridad
+    score += sum(1 for token in tokens if token in texto)
+
+    # Identificadores concretos pesan mucho más que coincidencias generales.
+    for patron in (
+        r"\b[a-z]{2,4}\d{2,6}\b",          # patente/código
+        r"\b\d{5,12}\b",                   # número/póliza
+    ):
+        for identificador in re.findall(patron, q):
+            if identificador in texto:
+                score += 30
+
+    if len(q) >= 12 and q in texto:
+        score += 25
+    return score
+
+
+def _documentos_desde_contexto(contexto):
+    """
+    Convierte los fragmentos recuperados de PDFs en fuentes individuales.
+    Así Gemini no recibe 7 documentos sólo porque todos tuvieron alguna
+    coincidencia: cada archivo compite como una fuente propia.
+    """
+    fuentes = {}
+
+    # PDF adjunto: es la fuente explícita que el usuario puso en el chat.
+    adjunto = re.search(
+        r"===== PDF ADJUNTADO EN EL CHAT =====(.*?)===== FIN PDF ADJUNTADO =====",
+        contexto or "",
+        flags=re.S,
+    )
+    if adjunto:
+        bloque = adjunto.group(1).strip()
+        m = re.search(r"ARCHIVO:\s*([^\n]+)", bloque)
+        nombre = m.group(1).strip() if m else "PDF adjunto"
+        fuentes[f"PDF adjunto \"{nombre}\""] = bloque
+
+    # Fragmentos de documentación normal.
+    bloques = re.findall(
+        r"===== FRAGMENTO DE DOCUMENTO =====(.*?)(?=^===== FRAGMENTO DE DOCUMENTO =====|\Z)",
+        contexto or "",
+        flags=re.S | re.M,
+    )
+    for bloque in bloques:
+        m = re.search(r"ARCHIVO:\s*([^\n]+)", bloque)
+        if not m:
+            continue
+        nombre = m.group(1).strip()
+        clave = f'Manual/documento "{nombre}"'
+        fuentes[clave] = fuentes.get(clave, "") + "\n" + bloque.strip()
+
+    return fuentes
+
+
+def _seleccionar_fuentes(pregunta, contexto_interno, contexto_externo, contexto):
+    """
+    Selecciona como máximo 2 fuentes reales para el contexto de Gemini.
+    La información puede contener muchas filas/chunks dentro de una misma
+    fuente; lo que limitamos es la cantidad de fuentes distintas.
+    """
+    candidatos = []
+
+    if contexto_interno:
+        candidatos.append({
+            "nombre": "Excel interno",
+            "contenido": contexto_interno,
+            "prioridad": 80,
+        })
+
+    if contexto_externo:
+        candidatos.append({
+            "nombre": "Excel externo / Google Sheets",
+            "contenido": contexto_externo,
+            "prioridad": 75,
+        })
+
+    for nombre, contenido in _documentos_desde_contexto(contexto).items():
+        # Un PDF adjunto tiene prioridad porque fue elegido explícitamente
+        # por el usuario en esta consulta.
+        prioridad = 110 if nombre.startswith("PDF adjunto") else 65
+        candidatos.append({
+            "nombre": nombre,
+            "contenido": contenido,
+            "prioridad": prioridad,
+        })
+
+    if not candidatos:
+        return [], []
+
+    for candidato in candidatos:
+        candidato["score"] = _puntuar_fuente(
+            pregunta,
+            candidato["contenido"],
+            candidato["prioridad"],
+        )
+
+    candidatos.sort(key=lambda x: x["score"], reverse=True)
+
+    # Una fuente claramente dominante es preferible a una segunda marginal.
+    seleccionados = [candidatos[0]]
+    if len(candidatos) > 1:
+        primera = candidatos[0]
+        segunda = candidatos[1]
+        diferencia = primera["score"] - segunda["score"]
+        if segunda["score"] >= max(3, primera["score"] * 0.55) or diferencia <= 4:
+            seleccionados.append(segunda)
+
+    # Nunca más de dos fuentes.
+    seleccionados = seleccionados[:2]
+
+    nombres = [x["nombre"] for x in seleccionados]
+    bloques = []
+    for fuente in seleccionados:
+        bloques.append(
+            f"===== FUENTE SELECCIONADA: {fuente['nombre']} =====\n"
+            f"{fuente['contenido'].strip()}\n"
+            f"===== FIN FUENTE: {fuente['nombre']} ====="
+        )
+    return nombres, bloques
+
+
+def _agregar_fuentes(respuesta, fuentes, uso_web=False):
+    texto = str(respuesta or "").strip()
+    if not texto:
+        return texto
+
+    # El modelo ya recibe instrucciones de citar las fuentes seleccionadas.
+    # Este respaldo sólo agrega las que realmente se seleccionaron, nunca
+    # todas las fuentes consultadas durante el ranking.
+    existentes = _normalizar_texto(texto)
+    faltantes = [
+        fuente for fuente in fuentes
+        if _normalizar_texto(fuente) not in existentes
+    ]
+
+    if uso_web and not any(
+        palabra in existentes
+        for palabra in ("internet", "informacion publica", "sitio oficial")
+    ):
+        if len(fuentes) < 2:
+            faltantes.append("Información pública de Internet")
+
+    if not faltantes:
+        return texto
+    return texto + "\n\n**Fuentes:** " + " · ".join(faltantes)
+
+
+def consultar_gemini(pregunta, contexto="", historial=None):
     cliente = obtener_cliente_gemini()
-
     if cliente is None:
+        return "La IA todavía no está configurada. Falta GEMINI_API_KEY."
 
-        return (
-            "La IA todavía no está configurada. "
-            "Falta GEMINI_API_KEY."
-        )
-
-    # Las consultas cuantitativas sobre datos estructurados no deben quedar
-    # a criterio del LLM. Se resuelven directamente contra Sheets para evitar
-    # respuestas contradictorias, conteos inventados o pérdida de registros.
     datos_sheet_crudos = obtener_datos_sheet()
-    respuesta_vehiculos = respuesta_deterministica_vehiculos(
-        pregunta, datos_sheet_crudos
-    )
+    respuesta_vehiculos = respuesta_deterministica_vehiculos(pregunta, datos_sheet_crudos)
     if respuesta_vehiculos:
-        print("RESPUESTA DETERMINISTICA SHEETS: cantidad de vehículos")
-        return respuesta_vehiculos
+        return _agregar_fuentes(
+            respuesta_vehiculos,
+            ["Excel externo / Google Sheets"],
+        )
 
-    datos_sheet = buscar_en_sheet(
-        pregunta
+    # Recuperación completa de los Excel: se buscan todos los registros
+    # relevantes, no sólo las primeras 10 filas.
+    contexto_interno = buscar_en_excel_interno(pregunta)
+    contexto_externo = (
+        ""
+        if "FUENTE: Excel externo / Google Sheets" in contexto
+        else buscar_en_sheet(pregunta)
     )
 
-    contexto_total = ""
+    fuentes_seleccionadas, bloques_fuente = _seleccionar_fuentes(
+        pregunta,
+        contexto_interno,
+        contexto_externo,
+        contexto,
+    )
 
-    if datos_sheet:
-
-        contexto_total += (
-            "=== PLANILLA DE ASEGURADOS ===\n"
-            "Los siguientes datos provienen directamente "
-            "de la planilla de clientes de la oficina.\n"
-            "DEBÉS utilizarlos para responder la pregunta.\n\n"
-        )
-
-        contexto_total += datos_sheet
-
-        contexto_total += (
-            "\n=== FIN PLANILLA ===\n"
-        )
-
-    if contexto:
-
-        contexto_total += (
-            "\n\n=== DOCUMENTACIÓN DE LA OFICINA ===\n"
-        )
-
-        contexto_total += contexto
-
-        contexto_total += (
-            "\n=== FIN DOCUMENTACIÓN ===\n"
-        )
-
+    contexto_total = "\n\n".join(bloques_fuente)
     if not contexto_total:
-
         contexto_total = (
-            "No se encontró información en la planilla "
-            "ni en la documentación disponible."
+            "No se encontró información suficientemente relevante en los "
+            "datos internos ni en la documentación disponible."
         )
 
     historial = historial or []
     historial_texto = ""
     for turno in historial[-10:]:
-        rol = "PRODUCTOR" if turno.get("rol") == "user" else "ASISTENTE"
+        rol = "USUARIO" if turno.get("rol") == "user" else "ASISTENTE"
         contenido = str(turno.get("contenido", "")).strip()
         if contenido:
-            historial_texto += f"{rol}: {contenido}\\n"
+            historial_texto += f"{rol}: {contenido}\n"
+
+    uso_web = _pregunta_requiere_internet(pregunta)
 
     prompt = f"""
-Sos el asistente interno de Oficina IA, una oficina de seguros de Argentina.
+Sos el asistente interno de OficinaIA, una oficina de seguros de Argentina.
 
-Tu prioridad absoluta es responder con información correcta y verificable a partir
-de las fuentes que te proporciona el sistema. No sos un chatbot genérico.
+OBJETIVO PRINCIPAL
+Respondé la pregunta completa, no solamente la primera parte que puedas
+contestar. Primero identificá mentalmente todos los puntos solicitados y
+verificá que la respuesta cubra cada uno. Sé preciso, directo y útil.
 
-REGLAS DE FUENTES Y EVIDENCIA:
+SELECCIÓN DE INFORMACIÓN
+- Usá principalmente la información interna de OficinaIA.
+- El contexto que recibís abajo ya fue seleccionado por relevancia.
+- Priorizá una sola fuente cuando sea suficiente.
+- Como regla general, utilizá como máximo 2 fuentes distintas.
+- No menciones ni inventes fuentes que no estén en "FUENTES SELECCIONADAS".
+- Si una fuente contiene toda la información necesaria, no agregues otra.
+- No repitas el mismo dato porque aparezca en dos fuentes.
+- Si dos fuentes se contradicen, explicá la diferencia y no inventes cuál es correcta.
+- Internet sólo complementa la información interna cuando la pregunta lo pide,
+  necesita actualidad o resulta realmente necesario.
 
-1. La sección "DOCUMENTACIÓN DE LA OFICINA" contiene fragmentos recuperados de PDFs
-   disponibles en la oficina. Esos fragmentos son la fuente principal para preguntas
-   sobre procedimientos, coberturas, requisitos, condiciones, códigos, servicios,
-   exclusiones y demás información documental.
+REGLA CRÍTICA: NO MEZCLES REGISTROS
+Si la consulta contiene una patente, número de póliza, cliente u otro
+identificador concreto, respondé únicamente con los registros que correspondan
+a ese identificador. No uses otro asegurado, póliza o patente como ejemplo.
+Si hay varios registros del mismo identificador, podés utilizarlos todos.
+Si la consulta es general o pide una comparación, sí podés combinar registros.
 
-2. La sección "PLANILLA DE ASEGURADOS" contiene datos operativos de clientes.
-   Cuando una pregunta se refiere a una persona, póliza, patente, vehículo,
-   compañía, número o medio de pago, utilizá esos datos si están disponibles.
+COMPLETITUD
+Si la pregunta tiene varios puntos, contestalos todos en la misma respuesta.
+Por ejemplo, si pide medio de pago + documentación + procedimiento + condiciones,
+cubrir cada uno si la evidencia está disponible.
+No cortes una respuesta válida por hacerla breve.
+No agregues relleno, introducciones genéricas ni información no solicitada.
 
-3. No afirmes que un dato está en un manual si ese dato no aparece realmente en los
-   fragmentos proporcionados.
+EXCEL Y REGISTROS
+Cuando una consulta depende de varias filas, utilizá todas las filas relevantes
+que hayan sido recuperadas para ese caso. No supongas que una cantidad fija de
+filas representa todo el resultado.
+No mezcles clientes, pólizas o patentes distintas.
 
-4. No inventes datos faltantes. Si no encontrás una respuesta suficiente en las
-   fuentes, decilo claramente.
+DOCUMENTOS
+Cuando uses un PDF/manual, indicá el nombre del archivo y, si está disponible,
+la página relevante. No cites documentos sólo porque fueron consultados:
+citá únicamente los que realmente sustentan la respuesta.
 
-5. Si la información encontrada es parcial, indicá qué parte sí está respaldada
-   y qué parte no pudo verificarse.
+NO INVENTAR
+Si la evidencia no alcanza para confirmar un dato, decilo claramente.
+Ejemplo: "No encontré información suficiente en los documentos disponibles
+para confirmar ese dato."
+Nunca completes datos faltantes con suposiciones.
 
-6. Si dos fuentes contienen información contradictoria, NO elijas arbitrariamente.
-   Explicá la contradicción y mencioná el archivo y página cuando estén disponibles.
+FUENTES
+Al final incluí una línea breve de **Fuentes:** con sólo las fuentes realmente
+utilizadas. Idealmente será una fuente; como máximo, dos, salvo que sea
+estrictamente necesario para resolver la consulta.
+No listes fuentes irrelevantes.
 
-7. Cuando uses documentación, citá de forma natural el origen:
-   "Según [archivo], página [número]..."
-   No inventes nombres de archivos ni números de página.
+ESTILO
+- Español argentino claro y profesional.
+- Pregunta simple: respuesta directa.
+- Pregunta compleja: respuesta ordenada por puntos cuando ayude.
+- No uses siempre la misma estructura.
+- Evitá repeticiones y explicaciones innecesarias.
 
-8. No vuelques grandes cantidades de texto del manual. Sintetizá la información
-   relevante y respondé directamente.
+HISTORIAL
+{historial_texto or "Sin historial relevante."}
 
-9. Si la pregunta pide un procedimiento, presentalo paso a paso cuando el material
-   lo permita.
-
-10. Priorizá precisión sobre creatividad. Si no hay evidencia suficiente, reconocelo.
-
-CALIDAD DE LA RESPUESTA:
-
-- Sé concreto, profesional y práctico.
-- Evitá respuestas vagas como "depende", "generalmente", "consultá el manual"
-  cuando los fragmentos recuperados contienen la respuesta.
-- Respondé exactamente lo que pregunta el productor.
-- No agregues advertencias genéricas innecesarias.
-- No expliques estas instrucciones.
-- Respondé en español argentino claro.
-
-CONTEXTO DE CONVERSACIÓN:
-
-El historial sirve para resolver referencias como "eso", "esas", "el anterior",
-"ese cliente", etc. El historial NO reemplaza a las fuentes documentales para
-datos técnicos: verificá esos datos contra la documentación o planilla actual.
-
-HISTORIAL RECIENTE:
-{historial_texto or "No hay historial previo relevante."}
-
-PREGUNTA ACTUAL:
+PREGUNTA
 {pregunta}
 
-FUENTES DISPONIBLES:
+FUENTES SELECCIONADAS
 {contexto_total}
 """
 
-
     ultimo_error = None
-
     for modelo in MODELOS_GEMINI:
-
         try:
-
             print(
                 "CONSULTANDO GEMINI:",
-                modelo
+                modelo,
+                "web=",
+                uso_web,
+                "fuentes=",
+                fuentes_seleccionadas,
             )
+            config_kwargs = {
+                "temperature": 0.15,
+                # 1400 era demasiado bajo para consultas complejas y podía
+                # truncar respuestas válidas. Dejamos margen sin fomentar
+                # respuestas innecesariamente largas mediante el prompt.
+                "max_output_tokens": 4096,
+            }
+            if uso_web:
+                config_kwargs["tools"] = [
+                    types.Tool(google_search=types.GoogleSearch())
+                ]
 
+            config = types.GenerateContentConfig(**config_kwargs)
             respuesta = cliente.models.generate_content(
                 model=modelo,
-                contents=prompt
+                contents=prompt,
+                config=config,
             )
-
-            texto = getattr(
-                respuesta,
-                "text",
-                None
-            )
-
+            texto = getattr(respuesta, "text", None)
             if texto:
-
-                return texto.strip()
+                return _agregar_fuentes(
+                    texto.strip(),
+                    fuentes_seleccionadas,
+                    uso_web=uso_web,
+                )
 
         except Exception as error:
-
             ultimo_error = error
+            print("ERROR GEMINI", modelo, ":", error)
 
-            print(
-                "ERROR GEMINI",
-                modelo,
-                ":",
-                error
-            )
+    print("GEMINI TODOS LOS MODELOS FALLARON:", ultimo_error)
+    return "Gemini no está disponible en este momento. Intentá nuevamente en unos segundos."
 
-    print(
-        "GEMINI TODOS LOS MODELOS FALLARON:",
-        ultimo_error
-    )
-
-    return (
-        "Gemini no está disponible en este momento. "
-        "Intentá nuevamente en unos segundos."
-    )
 # Compatibilidad con el nombre utilizado por el chat de la aplicación.
 buscar_en_google_sheet = buscar_en_sheet

@@ -7,6 +7,8 @@ from flask import (
     session,
     jsonify,
     send_from_directory,
+    Response,
+    stream_with_context,
 )
 
 from pathlib import Path
@@ -15,14 +17,30 @@ from pypdf import PdfReader
 import re
 import unicodedata
 import os
+import json
 import sqlite3
 from contextlib import closing
 from werkzeug.security import generate_password_hash, check_password_hash
 from werkzeug.utils import secure_filename
+from dotenv import load_dotenv
+
+from database_pg import (
+    inicializar_postgres,
+    listar_manuales,
+    registrar_manual,
+    actualizar_manual,
+    eliminar_manual as eliminar_manual_pg,
+    obtener_manual_por_r2_key,
+)
+from storage_r2 import (
+    subir_pdf as r2_subir_pdf,
+    eliminar_pdf as r2_eliminar_pdf,
+    descargar_pdf_temporal,
+    obtener_objeto_stream,
+)
 from openpyxl import Workbook, load_workbook
 from openpyxl.utils import get_column_letter
 from docx import Document
-
 
 # ==========================================================
 # CONFIGURACIÓN
@@ -33,6 +51,9 @@ app = Flask(__name__)
 app.secret_key = os.getenv("FLASK_SECRET_KEY", "OFICINA_SEGUROS_CAMBIAR_CLAVE")
 
 BASE_DIR = Path(__file__).resolve().parent
+load_dotenv(BASE_DIR / '.env')
+
+app.config['MAX_CONTENT_LENGTH'] = 20 * 1024 * 1024
 
 DOCUMENTOS_DIR = BASE_DIR / "documentos"
 
@@ -50,6 +71,19 @@ CONFIG_FILE = BASE_DIR / "configuracion.json"
 DB_FILE = BASE_DIR / "oficina.db"
 ROLES_VALIDOS = {"admin", "usuario"}
 USUARIO_ADMIN_PRINCIPAL = "admin"
+
+# Accesos directos a plataformas de compañías. Se muestran solo los nombres.
+CIAS_LINKS = [
+    ("Self", "https://online.fedpat.com.ar/self/index.jsp"),
+    ("ATM", "https://extranet.atmseguros.com.ar/ATM_COM_PROD/servlet/ar.com.glmsa.seguros.comercial.hlogin"),
+    ("Rivadavia", "https://www.sistemas.segurosrivadavia.com/sistemas/login/login_intra_pas.php?u=P"),
+    ("Triunfo", "https://www.triunfonet.com.ar/gauswebtriunfo/servlet/hlogon"),
+    ("Prof", "https://pasnet.profseguros.seg.ar/Default.aspx"),
+    ("Ags", "https://www.agsnet.com.ar/ingreprod.php"),
+    ("San Cristobal", "https://productores.sancristobal.com.ar/"),
+    ("Mercantil Andina", "https://servicios.mercantilandina.com.ar/sigmav3/"),
+    ("EuroAmerica", "https://pas.euroamericaseguros.seg.ar/login"),
+]
 
 MANUALES_DIR = BASE_DIR / "manuales_companias"
 POLIZAS_DIR = BASE_DIR / "polizas"
@@ -83,30 +117,47 @@ def slug_manual_compania(nombre):
     return equivalencias[nombre]
 
 def manuales_companias():
-    """Lista los manuales persistidos sin mover ni sobrescribir archivos existentes."""
+    """
+    Lista los manuales almacenados en Neon/R2 agrupados por compañía.
+    Mantiene exactamente la estructura que espera la interfaz actual.
+    """
+    filas = listar_manuales()
+    agrupados = {slug_manual_compania(nombre): [] for nombre in MANUALES_COMPANIAS}
+
+    for fila in filas:
+        r2_key = str(fila.get("r2_key") or "")
+        partes = r2_key.split("/")
+        if len(partes) < 3 or partes[0] != "manuales":
+            continue
+        slug = partes[1]
+        if slug not in agrupados:
+            continue
+
+        fecha = fila.get("fecha_subida")
+        if fecha:
+            fecha_texto = fecha.strftime("%d/%m/%Y %H:%M")
+        else:
+            fecha_texto = ""
+
+        agrupados[slug].append({
+            "nombre": fila.get("nombre") or "manual.pdf",
+            # La interfaz sigue llamando a este campo "archivo", pero ahora
+            # contiene el r2_key privado, no una ruta local.
+            "archivo": r2_key,
+            "fecha": fecha_texto,
+            "tamaño": round((fila.get("tamaño") or 0) / 1024, 1),
+        })
+
     resultado = []
-    MANUALES_DIR.mkdir(exist_ok=True)
     for nombre in MANUALES_COMPANIAS:
         slug = slug_manual_compania(nombre)
-        archivos = []
-        legacy = MANUALES_DIR / f"{slug}.pdf"
-        if legacy.is_file():
-            archivos.append(legacy)
-        archivos.extend(a for a in MANUALES_DIR.glob(f"{slug}__*.pdf") if a.is_file())
-        archivos = sorted(archivos, key=lambda a: a.stat().st_mtime, reverse=True)
+        archivos = agrupados[slug]
         resultado.append({
             "nombre": nombre,
             "slug": slug,
             "cargado": bool(archivos),
             "cantidad": len(archivos),
-            "archivos": [
-                {
-                    "nombre": (a.name.split("__", 1)[1] if "__" in a.name else a.name),
-                    "archivo": a.name,
-                    "fecha": __import__("datetime").datetime.fromtimestamp(a.stat().st_mtime).strftime("%d/%m/%Y %H:%M"),
-                }
-                for a in archivos
-            ],
+            "archivos": archivos,
         })
     return resultado
 
@@ -172,10 +223,36 @@ def requiere_admin(func):
         return func(*args, **kwargs)
     return wrapper
 
-@app.context_processor
+def cargar_configuracion():
+    config = {
+        "nombre_oficina": "Oficina Seguros",
+        "notificaciones": True,
+        "color_principal": "#122033",
+        "color_acento": "#0d8b7c",
+        "color_fondo": "#f7f9fb",
+        "color_sidebar": "#ffffff",
+        "color_botones": "#122033",
+    }
+    try:
+        if CONFIG_FILE.exists():
+            datos = json.loads(CONFIG_FILE.read_text(encoding="utf-8"))
+            if isinstance(datos, dict):
+                config.update(datos)
+    except Exception:
+        pass
+    return config
+
 def contexto_usuario():
     u=obtener_usuario(session.get("usuario", "")) if session.get("usuario") else None
-    return {"usuario_rol": u["rol"] if u else None, "usuario_es_admin": bool(u and u["rol"] == "admin")}
+    config = cargar_configuracion()
+    return {
+        "usuario_rol": u["rol"] if u else None,
+        "usuario_es_admin": bool(u and u["rol"] == "admin"),
+        "config_global": config,
+        "cias_links": CIAS_LINKS,
+    }
+
+app.context_processor(contexto_usuario)
 
 
 # ==========================================================
@@ -504,42 +581,31 @@ def _puntuar_chunk(consulta, chunk):
     return puntuacion
 
 
-def _archivos_pdf_consultables():
-    archivos = []
-
-    if DOCUMENTOS_DIR.exists():
-        archivos.extend(
-            p for p in DOCUMENTOS_DIR.rglob("*.pdf")
-            if p.is_file()
-        )
-
-    if MANUALES_DIR.exists():
-        archivos.extend(
-            p for p in MANUALES_DIR.glob("*.pdf")
-            if p.is_file()
-        )
-    if POLIZAS_DIR.exists():
-        archivos.extend(
-            p for p in POLIZAS_DIR.glob("*.pdf")
-            if p.is_file()
-        )
-
-    # Evitar duplicados si por alguna razón ambas rutas apuntan al mismo archivo.
-    vistos = set()
-    unicos = []
-    for archivo in archivos:
-        clave = str(archivo.resolve())
-        if clave not in vistos:
-            vistos.add(clave)
-            unicos.append(archivo)
-
-    return unicos
+def _manuales_r2_por_ruta():
+    """Relaciona el archivo temporal local con sus metadatos de Neon."""
+    mapa = {}
+    try:
+        for fila in listar_manuales():
+            r2_key = str(fila.get("r2_key") or "")
+            try:
+                path = descargar_pdf_temporal(r2_key)
+            except Exception as error:
+                print(f"ERROR PREPARANDO MANUAL R2 {r2_key}: {error}")
+                continue
+            mapa[str(path.resolve())] = fila
+    except Exception as error:
+        print("ERROR CONSULTANDO MANUALES R2:", error)
+    return mapa
 
 
-def buscar_en_documentos(consulta, limite=12):
+def buscar_en_documentos(consulta, limite=16):
     """
-    Busca en TODOS los PDFs disponibles y devuelve sólo los fragmentos más
-    relevantes, en vez de mandar documentos completos al modelo.
+    Recuperación por relevancia de PDFs.
+    - Busca en todos los documentos disponibles.
+    - Prioriza los fragmentos con mayor coincidencia.
+    - Mantiene como máximo 2 documentos/fuentes distintas por consulta.
+    - Puede devolver varios fragmentos del mismo documento para no perder
+      contexto cuando la respuesta requiere información distribuida.
     """
     resultados = []
     tokens = _tokens_busqueda(consulta)
@@ -547,7 +613,22 @@ def buscar_en_documentos(consulta, limite=12):
     if not tokens:
         return resultados
 
-    for archivo in _archivos_pdf_consultables():
+    r2_por_ruta = _manuales_r2_por_ruta()
+
+    archivos_locales = []
+    if DOCUMENTOS_DIR.exists():
+        archivos_locales.extend(
+            p for p in DOCUMENTOS_DIR.rglob("*.pdf") if p.is_file()
+        )
+    if POLIZAS_DIR.exists():
+        archivos_locales.extend(
+            p for p in POLIZAS_DIR.glob("*.pdf") if p.is_file()
+        )
+
+    archivos = archivos_locales + [Path(ruta) for ruta in r2_por_ruta]
+    cantidad_archivos = len(archivos)
+
+    for archivo in archivos:
         paginas = extraer_paginas_pdf(archivo)
         if not paginas:
             continue
@@ -560,17 +641,28 @@ def buscar_en_documentos(consulta, limite=12):
                 continue
 
             try:
-                if archivo.parent.resolve() == MANUALES_DIR.resolve():
-                    slug = archivo.name.split("__", 1)[0]
-                    compania = next((c for c in MANUALES_COMPANIAS if slug_manual_compania(c) == slug), "")
-                    nombre_archivo = archivo.name.split("__", 1)[1] if "__" in archivo.name else archivo.name
+                ruta_clave = str(archivo.resolve())
+
+                if ruta_clave in r2_por_ruta:
+                    fila = r2_por_ruta[ruta_clave]
+                    r2_key = str(fila.get("r2_key") or "")
+                    partes = r2_key.split("/")
+                    slug = partes[1] if len(partes) > 1 else ""
+                    compania = next(
+                        (c for c in MANUALES_COMPANIAS
+                         if slug_manual_compania(c) == slug),
+                        "",
+                    )
+                    nombre_archivo = fila.get("nombre") or archivo.name
                     tipo = "manual"
-                    ruta_relativa = archivo.name
+                    ruta_relativa = r2_key
+
                 elif archivo.parent.resolve() == POLIZAS_DIR.resolve():
                     nombre_archivo = archivo.name
                     compania = "Biblioteca de pólizas"
                     tipo = "poliza"
                     ruta_relativa = archivo.name
+
                 else:
                     relativa = archivo.relative_to(DOCUMENTOS_DIR)
                     partes = relativa.parts
@@ -579,6 +671,7 @@ def buscar_en_documentos(consulta, limite=12):
                     nombre_archivo = archivo.name
                     tipo = "documento"
                     ruta_relativa = str(relativa)
+
             except Exception:
                 compania = ""
                 nombre_archivo = archivo.name
@@ -592,7 +685,7 @@ def buscar_en_documentos(consulta, limite=12):
                 "coincidencias": puntuacion,
                 "texto": chunk["texto"],
                 "pagina": chunk["pagina"],
-                "tipo": tipo
+                "tipo": tipo,
             })
 
     resultados.sort(
@@ -603,14 +696,37 @@ def buscar_en_documentos(consulta, limite=12):
         reverse=True
     )
 
-    # Diversificar: no queremos que los 12 resultados sean todos del mismo PDF.
     seleccionados = []
     por_archivo = {}
+    archivos_permitidos = []
+
+    # Elegimos primero los documentos con mejor fragmento. Después dejamos
+    # que cada documento aporte varios fragmentos, evitando mezclar una
+    # cantidad grande de manuales sólo porque contienen alguna palabra común.
     for resultado in resultados:
         clave = resultado["ruta"]
+        if clave not in archivos_permitidos:
+            if len(archivos_permitidos) >= 2:
+                continue
+            archivos_permitidos.append(clave)
+
         cantidad = por_archivo.get(clave, 0)
-        if cantidad >= 4:
+        # Consultas simples necesitan poco contexto; las complejas pueden
+        # necesitar varios fragmentos del mismo documento.
+        tokens_consulta = _tokens_busqueda(consulta)
+        es_compleja = len(tokens_consulta) >= 8 or any(
+            palabra in _normalizar_busqueda(consulta)
+            for palabra in (
+                "como", "cómo", "procedimiento", "documentacion",
+                "documentación", "requisitos", "condiciones", "pasos",
+                "explicame", "explicame", "detalle", "completo",
+            )
+        )
+        max_por_archivo = 8 if es_compleja else 4
+
+        if cantidad >= max_por_archivo:
             continue
+
         seleccionados.append(resultado)
         por_archivo[clave] = cantidad + 1
         if len(seleccionados) >= limite:
@@ -618,7 +734,7 @@ def buscar_en_documentos(consulta, limite=12):
 
     print(
         f"RETRIEVAL PDF: consulta={consulta!r} "
-        f"archivos={len(_archivos_pdf_consultables())} "
+        f"archivos={cantidad_archivos} "
         f"fragmentos={len(seleccionados)}"
     )
 
@@ -997,23 +1113,47 @@ def consultar_documentos():
 def _fila_vacia(fila):
     return not any(str(valor or "").strip() for valor in fila)
 
-
-def _limpiar_filas_excel(filas):
-    """Elimina filas completamente vacías. Conserva la primera fila como encabezado."""
+def _normalizar_matriz_excel(filas):
+    """Normaliza la matriz sin eliminar filas intencionalmente creadas por el usuario."""
     if not isinstance(filas, list):
         raise ValueError("La matriz no es válida.")
-    filas = filas[:500]
     normalizadas = []
-    for fila in filas:
+    for fila in filas[:500]:
         if not isinstance(fila, list):
             continue
-        limpia = ["" if valor is None else str(valor) for valor in fila[:30]]
-        normalizadas.append(limpia)
+        normalizadas.append(["" if valor is None else str(valor) for valor in fila[:30]])
+    return normalizadas
+
+def _limpiar_filas_excel(filas, conservar_vacias=False):
+    """
+    Limpieza explícita de filas vacías.
+    Por defecto conserva filas vacías para que una fila nueva pueda existir
+    y guardarse antes de que el usuario empiece a escribir.
+    """
+    normalizadas = _normalizar_matriz_excel(filas)
     if not normalizadas:
         return []
+    if conservar_vacias:
+        return normalizadas
     encabezado = normalizadas[0]
     cuerpo = [fila for fila in normalizadas[1:] if not _fila_vacia(fila)]
     return [encabezado] + cuerpo
+
+def _limpiar_columnas_excel(filas):
+    """Elimina sólo columnas completamente vacías cuando el usuario lo solicita."""
+    filas = _normalizar_matriz_excel(filas)
+    if not filas:
+        return []
+    max_cols = max((len(f) for f in filas), default=0)
+    if not max_cols:
+        return filas
+    columnas_vivas = []
+    for c in range(max_cols):
+        if any(str(f[c] if c < len(f) else "").strip() for f in filas):
+            columnas_vivas.append(c)
+    if not columnas_vivas:
+        return [[""]]
+    return [[(fila[c] if c < len(fila) else "") for c in columnas_vivas] for fila in filas]
 
 
 def asegurar_excel_interno():
@@ -1030,7 +1170,7 @@ def leer_excel_interno():
     wb = load_workbook(EXCEL_FILE, data_only=False)
     ws = wb.active
     filas = [["" if value is None else str(value) for value in row] for row in ws.iter_rows(values_only=True)]
-    filas = _limpiar_filas_excel(filas)
+    filas = _limpiar_filas_excel(filas, conservar_vacias=True)
     columnas = max([len(f) for f in filas], default=1)
     columnas = max(1, min(columnas, 30))
     filas = [f[:columnas] + [""] * (columnas - len(f)) for f in filas]
@@ -1038,16 +1178,19 @@ def leer_excel_interno():
 
 
 def guardar_matriz_excel(filas, nombre_hoja="Datos"):
-    filas = _limpiar_filas_excel(filas)
+    filas = _limpiar_filas_excel(filas, conservar_vacias=True)
     max_cols = max([len(f) for f in filas], default=1)
     max_cols = min(max_cols, 30)
     wb = Workbook()
     ws = wb.active
     ws.title = (nombre_hoja or "Datos")[:31]
+    # Materializar TODAS las celdas de la matriz, incluso las vacías.
+    # Esto permite que filas/columnas nuevas completamente vacías sobrevivan
+    # al guardado y no dependan de si contienen datos.
     for r, fila in enumerate(filas, start=1):
-        for c, valor in enumerate(fila[:max_cols], start=1):
-            if str(valor or "").strip():
-                ws.cell(row=r, column=c, value=str(valor))
+        for c in range(1, max_cols + 1):
+            valor = fila[c - 1] if c - 1 < len(fila) else ""
+            ws.cell(row=r, column=c, value="" if valor is None else str(valor))
     for c in range(1, max_cols + 1):
         letra = get_column_letter(c)
         valores = [str(ws.cell(r, c).value or "") for r in range(1, min(ws.max_row, 30) + 1)]
@@ -1110,11 +1253,24 @@ def api_excel_guardar():
 def api_excel_limpiar():
     try:
         datos = leer_excel_interno()
-        guardar_matriz_excel(datos["filas"], datos["hoja"])
+        filas_limpias = _limpiar_filas_excel(datos["filas"], conservar_vacias=False)
+        guardar_matriz_excel(filas_limpias, datos["hoja"])
         return jsonify({"ok": True, **leer_excel_interno()})
     except Exception as error:
         print("ERROR LIMPIANDO EXCEL:", error)
         return jsonify({"ok": False, "error": "No se pudieron eliminar las filas vacías."}), 500
+
+
+@app.route("/api/excel/limpiar-columnas", methods=["POST"])
+@requiere_login
+def api_excel_limpiar_columnas():
+    try:
+        datos = leer_excel_interno()
+        filas_limpias = _limpiar_columnas_excel(datos["filas"])
+        guardar_matriz_excel(filas_limpias, datos["hoja"])
+        return jsonify({"ok": True, **leer_excel_interno()})
+    except Exception:
+        return jsonify({"ok": False, "error": "No se pudieron eliminar las columnas vacías."}), 500
 
 
 @app.route("/api/excel/importar", methods=["POST"])
@@ -1567,11 +1723,7 @@ def ver_poliza(nombre):
 @app.route("/configuracion")
 @requiere_login
 def configuracion():
-    config={"nombre_oficina":"Oficina Seguros","notificaciones":True}
-    if CONFIG_FILE.exists():
-        try:
-            import json; config.update(json.loads(CONFIG_FILE.read_text(encoding="utf-8")))
-        except Exception: pass
+    config = cargar_configuracion()
     usuarios=[]
     if usuario_es_admin():
         with closing(conectar_db()) as db:
@@ -1582,18 +1734,33 @@ def configuracion():
 @requiere_login
 def guardar_configuracion():
     data=request.get_json(silent=True) or {}
-    config={"nombre_oficina":"Oficina Seguros","notificaciones":True}
-    if CONFIG_FILE.exists():
-        try:
-            import json; config.update(json.loads(CONFIG_FILE.read_text(encoding="utf-8")))
-        except Exception: pass
+    config=cargar_configuracion()
     nombre=str(data.get("nombre_oficina",config["nombre_oficina"])).strip()
-    if not nombre: return jsonify(ok=False,error="El nombre de la oficina no puede estar vacío."),400
-    config["nombre_oficina"]=nombre; config["notificaciones"]=bool(data.get("notificaciones",config["notificaciones"]))
+    if not nombre:
+        return jsonify(ok=False,error="El nombre de la oficina no puede estar vacío."),400
+
+    colores = {
+        "color_principal": data.get("color_principal", config["color_principal"]),
+        "color_acento": data.get("color_acento", config["color_acento"]),
+        "color_fondo": data.get("color_fondo", config["color_fondo"]),
+        "color_sidebar": data.get("color_sidebar", config["color_sidebar"]),
+        "color_botones": data.get("color_botones", config["color_botones"]),
+    }
+    for clave, valor in colores.items():
+        valor = str(valor).strip()
+        if not re.fullmatch(r"#[0-9a-fA-F]{6}", valor):
+            return jsonify(ok=False,error=f"El color {clave} no es válido."),400
+        colores[clave] = valor.upper()
+
+    config["nombre_oficina"]=nombre
+    config["notificaciones"]=bool(data.get("notificaciones",config["notificaciones"]))
+    config.update(colores)
     try:
-        import json; CONFIG_FILE.write_text(json.dumps(config,ensure_ascii=False,indent=2),encoding="utf-8")
-        return jsonify(ok=True)
-    except Exception: return jsonify(ok=False,error="No se pudo guardar la configuración."),500
+        CONFIG_FILE.write_text(json.dumps(config,ensure_ascii=False,indent=2),encoding="utf-8")
+        return jsonify(ok=True, config=config)
+    except Exception:
+        return jsonify(ok=False,error="No se pudo guardar la configuración."),500
+
 
 @app.route("/api/usuarios", methods=["POST"])
 @requiere_admin
@@ -1638,7 +1805,10 @@ def eliminar_usuario(usuario_id):
 @app.route("/api/manuales/<slug>", methods=["POST"])
 @requiere_admin
 def subir_manual(slug):
-    compania = next((c for c in MANUALES_COMPANIAS if slug_manual_compania(c) == slug), None)
+    compania = next(
+        (c for c in MANUALES_COMPANIAS if slug_manual_compania(c) == slug),
+        None,
+    )
     if not compania:
         return jsonify(ok=False, error="Compañía no válida."), 404
 
@@ -1650,71 +1820,220 @@ def subir_manual(slug):
     if not nombre_seguro or Path(nombre_seguro).suffix.lower() != ".pdf":
         return jsonify(ok=False, error="El archivo debe ser un PDF."), 400
 
-    reemplazar = str(request.form.get("replace", "")).strip()
-    if reemplazar:
-        destino = (MANUALES_DIR / Path(reemplazar).name).resolve()
-        base = MANUALES_DIR.resolve()
-        if base not in destino.parents or destino.suffix.lower() != ".pdf" or not destino.exists() or not destino.name.startswith(slug + "__"):
-            # También permitimos reemplazar un archivo legacy existente de esa compañía.
-            legacy = (MANUALES_DIR / f"{slug}.pdf").resolve()
-            if destino != legacy or not legacy.exists():
-                return jsonify(ok=False, error="El manual a reemplazar no es válido."), 400
-    else:
-        base_nombre = Path(nombre_seguro).stem[:90] or "manual"
-        destino = MANUALES_DIR / f"{slug}__{base_nombre}.pdf"
-        n = 2
-        while destino.exists():
-            destino = MANUALES_DIR / f"{slug}__{base_nombre}_{n}.pdf"
-            n += 1
+    # El límite de Flask también protege esta ruta. Repetimos una comprobación
+    # aquí para que el comportamiento quede claro y consistente.
+    archivo.stream.seek(0, os.SEEK_END)
+    tamaño = archivo.stream.tell()
+    archivo.stream.seek(0)
 
-    temporal = MANUALES_DIR / f".{slug}_{__import__('time').time_ns()}.uploading"
+    if tamaño <= 0:
+        return jsonify(ok=False, error="El PDF está vacío."), 400
+    if tamaño > 20 * 1024 * 1024:
+        return jsonify(ok=False, error="El PDF es demasiado grande. El máximo permitido es 20 MB."), 413
+
+    reemplazar = str(request.form.get("replace", "")).strip()
+    r2_key_anterior = None
+
+    if reemplazar:
+        # El frontend conserva el nombre "replace", pero contiene el r2_key.
+        prefijo = f"manuales/{slug}/"
+        if not reemplazar.startswith(prefijo) or not reemplazar.lower().endswith(".pdf"):
+            return jsonify(ok=False, error="El manual a reemplazar no es válido."), 400
+
+        existente = obtener_manual_por_r2_key(reemplazar)
+        if not existente:
+            return jsonify(ok=False, error="El manual a reemplazar no existe."), 404
+        r2_key_anterior = reemplazar
+
+    import uuid
+    r2_key_nuevo = (
+        f"manuales/{slug}/"
+        f"{uuid.uuid4().hex}__{nombre_seguro}"
+    )
+
+    # Validamos el PDF antes de subirlo. No se guarda una copia permanente
+    # dentro del proyecto.
     try:
-        archivo.save(temporal)
-        with temporal.open("rb") as f:
-            if f.read(5) != b"%PDF-":
-                raise ValueError("El archivo no parece ser un PDF válido.")
+        archivo.stream.seek(0)
+        if archivo.stream.read(5) != b"%PDF-":
+            raise ValueError("El archivo no parece ser un PDF válido.")
+        archivo.stream.seek(0)
         try:
-            PdfReader(str(temporal))
+            PdfReader(archivo.stream)
         except Exception as exc:
-            raise ValueError("No se pudo leer el PDF. Verificá que no esté dañado.") from exc
-        temporal.replace(destino)
+            raise ValueError(
+                "No se pudo leer el PDF. Verificá que no esté dañado."
+            ) from exc
+        archivo.stream.seek(0)
     except ValueError as exc:
-        temporal.unlink(missing_ok=True)
         return jsonify(ok=False, error=str(exc)), 400
     except Exception:
-        temporal.unlink(missing_ok=True)
-        return jsonify(ok=False, error="No se pudo guardar el manual."), 500
+        return jsonify(ok=False, error="No se pudo validar el PDF."), 400
 
-    return jsonify(ok=True, mensaje=f"Manual de {compania} cargado correctamente.", archivo=destino.name)
+    try:
+        r2_subir_pdf(archivo.stream, r2_key_nuevo, tamaño)
+    except Exception as error:
+        print("ERROR SUBIENDO MANUAL A R2:", error)
+        return jsonify(
+            ok=False,
+            error="No se pudo guardar el PDF en Cloudflare R2."
+        ), 502
+
+    try:
+        if r2_key_anterior:
+            actualizar_manual(
+                r2_key_anterior,
+                nombre_seguro,
+                r2_key_nuevo,
+                tamaño,
+            )
+        else:
+            registrar_manual(
+                nombre_seguro,
+                r2_key_nuevo,
+                tamaño,
+            )
+    except Exception as error:
+        print("ERROR REGISTRANDO MANUAL EN NEON:", error)
+        # Compensación: no dejamos el objeto nuevo huérfano en R2.
+        try:
+            r2_eliminar_pdf(r2_key_nuevo)
+        except Exception as rollback_error:
+            print("ERROR ROLLBACK R2:", rollback_error)
+        return jsonify(
+            ok=False,
+            error="El PDF se subió, pero no se pudo registrar en PostgreSQL. No se completó la operación."
+        ), 502
+
+    # En un reemplazo, el nuevo registro ya está en Neon. Eliminamos el objeto
+    # anterior sólo después de que el cambio de base quedó confirmado.
+    if r2_key_anterior:
+        try:
+            r2_eliminar_pdf(r2_key_anterior)
+        except Exception as error:
+            # Compensación: si no pudimos borrar el objeto anterior, volvemos
+            # a dejar Neon apuntando al objeto anterior y eliminamos el nuevo.
+            print("ERROR ELIMINANDO EL PDF ANTERIOR DE R2:", error)
+            try:
+                actualizar_manual(
+                    r2_key_nuevo,
+                    existente["nombre"],
+                    r2_key_anterior,
+                    existente["tamaño"],
+                )
+            except Exception as rollback_db_error:
+                print("ERROR ROLLBACK NEON:", rollback_db_error)
+            try:
+                r2_eliminar_pdf(r2_key_nuevo)
+            except Exception as rollback_r2_error:
+                print("ERROR ROLLBACK R2:", rollback_r2_error)
+            return jsonify(
+                ok=False,
+                error="No se pudo completar el reemplazo porque el PDF anterior no pudo eliminarse de R2."
+            ), 502
+
+    # El caché temporal se identifica por r2_key, por lo que el reemplazo usa
+    # automáticamente una entrada nueva.
+    return jsonify(
+        ok=True,
+        mensaje=f"Manual de {compania} cargado correctamente.",
+        archivo=r2_key_nuevo,
+    )
+
 
 @app.route("/api/manuales/<slug>/<path:nombre_archivo>", methods=["DELETE"])
 @requiere_admin
 def eliminar_manual(slug, nombre_archivo):
     if slug not in {slug_manual_compania(c) for c in MANUALES_COMPANIAS}:
         return jsonify(ok=False, error="Compañía no válida."), 404
-    archivo = (MANUALES_DIR / Path(nombre_archivo).name).resolve()
-    base = MANUALES_DIR.resolve()
-    if base not in archivo.parents or archivo.suffix.lower() != ".pdf" or not archivo.exists():
-        return jsonify(ok=False, error="Manual no encontrado."), 404
-    if archivo.name != f"{slug}.pdf" and not archivo.name.startswith(slug + "__"):
+
+    r2_key = str(nombre_archivo or "").strip()
+    prefijo = f"manuales/{slug}/"
+    if not r2_key.startswith(prefijo) or not r2_key.lower().endswith(".pdf"):
         return jsonify(ok=False, error="Manual no válido para esa compañía."), 400
+
+    existente = obtener_manual_por_r2_key(r2_key)
+    if not existente:
+        return jsonify(ok=False, error="Manual no encontrado."), 404
+
+    # Primero quitamos el registro de Neon. Si R2 falla, restauramos el
+    # registro para que la operación quede atómica desde el punto de vista
+    # de la aplicación.
     try:
-        archivo.unlink()
-    except Exception:
-        return jsonify(ok=False, error="No se pudo eliminar el manual."), 500
+        eliminado = eliminar_manual_pg(r2_key)
+        if not eliminado:
+            return jsonify(ok=False, error="Manual no encontrado."), 404
+    except Exception as error:
+        print("ERROR ELIMINANDO MANUAL DE NEON:", error)
+        return jsonify(
+            ok=False,
+            error="No se pudo actualizar PostgreSQL. El PDF no fue eliminado."
+        ), 502
+
+    try:
+        r2_eliminar_pdf(r2_key)
+    except Exception as error:
+        print("ERROR ELIMINANDO MANUAL DE R2:", error)
+        try:
+            registrar_manual(
+                existente["nombre"],
+                existente["r2_key"],
+                existente["tamaño"],
+            )
+        except Exception as rollback_error:
+            print("ERROR RESTAURANDO MANUAL EN NEON:", rollback_error)
+        return jsonify(
+            ok=False,
+            error="No se pudo eliminar el PDF de Cloudflare R2. El manual se mantuvo registrado."
+        ), 502
+
     return jsonify(ok=True)
+
 
 @app.route("/manuales/<slug>/<path:nombre_archivo>")
 @requiere_login
 def ver_manual(slug, nombre_archivo):
     if slug not in {slug_manual_compania(c) for c in MANUALES_COMPANIAS}:
         return ("Manual no encontrado", 404)
-    archivo = (MANUALES_DIR / nombre_archivo).resolve()
-    base = MANUALES_DIR.resolve()
-    es_archivo_compania = archivo.name == f"{slug}.pdf" or archivo.name.startswith(slug + "__")
-    if base not in archivo.parents or not archivo.exists() or archivo.suffix.lower() != ".pdf" or not es_archivo_compania:
+
+    r2_key = str(nombre_archivo or "").strip()
+    prefijo = f"manuales/{slug}/"
+    if not r2_key.startswith(prefijo) or not r2_key.lower().endswith(".pdf"):
         return ("Manual no encontrado", 404)
-    return send_from_directory(MANUALES_DIR, archivo.name, mimetype="application/pdf", as_attachment=False)
+
+    existente = obtener_manual_por_r2_key(r2_key)
+    if not existente:
+        return ("Manual no encontrado", 404)
+
+    try:
+        objeto = obtener_objeto_stream(r2_key)
+        body = objeto["Body"]
+        content_length = objeto.get("ContentLength")
+
+        @stream_with_context
+        def generar():
+            try:
+                while True:
+                    bloque = body.read(1024 * 1024)
+                    if not bloque:
+                        break
+                    yield bloque
+            finally:
+                body.close()
+
+        headers = {
+            "Content-Type": "application/pdf",
+            "Content-Disposition": f'inline; filename="{existente["nombre"]}"',
+            "Cache-Control": "private, max-age=300",
+        }
+        if content_length is not None:
+            headers["Content-Length"] = str(content_length)
+
+        return Response(generar(), headers=headers)
+
+    except Exception as error:
+        print("ERROR SIRVIENDO MANUAL R2:", error)
+        return ("No se pudo abrir el manual.", 502)
 
 
 # ==========================================================
@@ -1737,6 +2056,11 @@ def logout():
 
 def crear_estructura():
     MANUALES_DIR.mkdir(parents=True, exist_ok=True)
+    try:
+        inicializar_postgres()
+        print('NEON POSTGRESQL: tabla manuales verificada.')
+    except Exception as error:
+        print('NEON POSTGRESQL: no se pudo verificar la tabla manuales:', error)
     POLIZAS_DIR.mkdir(parents=True, exist_ok=True)
     # Las compañías de documentos deben coincidir exactamente con las 9
     # compañías habilitadas en la sección Manuales.
@@ -1761,6 +2085,12 @@ def crear_estructura():
 # ==========================================================
 
 inicializar_base_datos()
+
+try:
+    inicializar_postgres()
+    print('NEON POSTGRESQL: tabla manuales verificada.')
+except Exception as error:
+    print('NEON POSTGRESQL: no se pudo verificar la tabla manuales al iniciar:', error)
 
 
 if __name__ == "__main__":
