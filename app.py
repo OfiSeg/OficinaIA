@@ -608,31 +608,62 @@ def _puntuar_chunk(consulta, chunk):
     return puntuacion
 
 
-def _manuales_r2_por_ruta():
-    """Relaciona el archivo temporal local con sus metadatos de Neon."""
+def _manuales_r2_por_ruta(consulta="", max_manuales=12):
+    """
+    Prepara únicamente una cantidad acotada de manuales R2 por consulta.
+
+    Antes se descargaban TODOS los PDFs de R2 antes de comenzar la búsqueda.
+    Eso podía convertir una consulta normal en una operación larga y pesada:
+    N PDFs -> N descargas -> N extracciones con PyMuPDF dentro del mismo
+    request. En Render, además, podía coincidir con otra petición y agotar
+    memoria/timeout del worker.
+
+    Se mantienen los mismos datos en R2/Neon. Sólo se evita descargar y
+    procesar manuales que no son candidatos razonables para esa consulta.
+    """
     mapa = {}
     try:
-        for fila in listar_manuales():
+        manuales = listar_manuales()
+
+        tokens = set(_tokens_busqueda(consulta))
+        candidatos = []
+
+        for fila in manuales:
+            nombre = str(fila.get("nombre") or "")
             r2_key = str(fila.get("r2_key") or "")
+            texto_nombre = _normalizar_busqueda(f"{nombre} {r2_key}")
+            score = sum(1 for token in tokens if token in texto_nombre)
+
+            # Los manuales con coincidencia en nombre/ruta van primero.
+            candidatos.append((score, nombre, fila))
+
+        candidatos.sort(key=lambda x: (x[0], x[1].lower()), reverse=True)
+
+        for score, _, fila in candidatos[:max_manuales]:
+            r2_key = str(fila.get("r2_key") or "")
+            if not r2_key:
+                continue
+
             try:
                 path = descargar_pdf_temporal(r2_key)
             except Exception as error:
                 print(f"ERROR PREPARANDO MANUAL R2 {r2_key}: {error}")
                 continue
+
             mapa[str(path.resolve())] = fila
+
     except Exception as error:
         print("ERROR CONSULTANDO MANUALES R2:", error)
+
     return mapa
 
 
 def buscar_en_documentos(consulta, limite=16):
     """
     Recuperación por relevancia de PDFs.
-    - Busca en todos los documentos disponibles.
-    - Prioriza los fragmentos con mayor coincidencia.
-    - Mantiene como máximo 2 documentos/fuentes distintas por consulta.
-    - Puede devolver varios fragmentos del mismo documento para no perder
-      contexto cuando la respuesta requiere información distribuida.
+    - Conserva la selección final de hasta 2 documentos distintos.
+    - Procesa los documentos R2 de forma acotada para evitar que una consulta
+      descargue/extraga todos los manuales del bucket.
     """
     resultados = []
     tokens = _tokens_busqueda(consulta)
@@ -640,7 +671,7 @@ def buscar_en_documentos(consulta, limite=16):
     if not tokens:
         return resultados
 
-    r2_por_ruta = _manuales_r2_por_ruta()
+    r2_por_ruta = _manuales_r2_por_ruta(consulta, max_manuales=12)
 
     archivos_locales = []
     if DOCUMENTOS_DIR.exists():
@@ -727,9 +758,6 @@ def buscar_en_documentos(consulta, limite=16):
     por_archivo = {}
     archivos_permitidos = []
 
-    # Elegimos primero los documentos con mejor fragmento. Después dejamos
-    # que cada documento aporte varios fragmentos, evitando mezclar una
-    # cantidad grande de manuales sólo porque contienen alguna palabra común.
     for resultado in resultados:
         clave = resultado["ruta"]
         if clave not in archivos_permitidos:
@@ -738,15 +766,13 @@ def buscar_en_documentos(consulta, limite=16):
             archivos_permitidos.append(clave)
 
         cantidad = por_archivo.get(clave, 0)
-        # Consultas simples necesitan poco contexto; las complejas pueden
-        # necesitar varios fragmentos del mismo documento.
         tokens_consulta = _tokens_busqueda(consulta)
         es_compleja = len(tokens_consulta) >= 8 or any(
             palabra in _normalizar_busqueda(consulta)
             for palabra in (
                 "como", "cómo", "procedimiento", "documentacion",
                 "documentación", "requisitos", "condiciones", "pasos",
-                "explicame", "explicame", "detalle", "completo",
+                "explicame", "detalle", "completo",
             )
         )
         max_por_archivo = 8 if es_compleja else 4
@@ -761,7 +787,7 @@ def buscar_en_documentos(consulta, limite=16):
 
     print(
         f"RETRIEVAL PDF: consulta={consulta!r} "
-        f"archivos={cantidad_archivos} "
+        f"archivos_procesados={cantidad_archivos} "
         f"fragmentos={len(seleccionados)}"
     )
 

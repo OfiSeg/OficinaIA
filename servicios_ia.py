@@ -175,8 +175,8 @@ def _buscar_en_registros(pregunta, datos, etiqueta):
     resultados.sort(key=lambda x: x[0], reverse=True)
     return resultados[:50]
 
-def buscar_en_sheet(pregunta):
-    datos = obtener_datos_sheet()
+def buscar_en_sheet(pregunta, datos=None):
+    datos = datos if datos is not None else obtener_datos_sheet()
     resultados = _buscar_en_registros(pregunta, datos, "Google Sheets")
     if not resultados:
         return ""
@@ -476,7 +476,7 @@ def consultar_gemini(pregunta, contexto="", historial=None):
     contexto_externo = (
         ""
         if "FUENTE: Excel externo / Google Sheets" in contexto
-        else buscar_en_sheet(pregunta)
+        else buscar_en_sheet(pregunta, datos_sheet_crudos)
     )
 
     fuentes_seleccionadas, bloques_fuente = _seleccionar_fuentes(

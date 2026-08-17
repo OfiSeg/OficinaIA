@@ -81,7 +81,7 @@ def eliminar_pdf(r2_key: str) -> None:
 def descargar_pdf_temporal(r2_key: str) -> Path:
     """
     Descarga un PDF de R2 a la carpeta temporal del sistema para que el
-    lector de pypdf pueda procesarlo.
+    lector de PDF pueda procesarlo.
 
     No se utiliza una carpeta del proyecto: es caché temporal del servidor.
     Si el mismo r2_key ya está descargado, se reutiliza.
