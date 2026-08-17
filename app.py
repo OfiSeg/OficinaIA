@@ -52,7 +52,9 @@ ROLES_VALIDOS = {"admin", "usuario"}
 USUARIO_ADMIN_PRINCIPAL = "admin"
 
 MANUALES_DIR = BASE_DIR / "manuales_companias"
+POLIZAS_DIR = BASE_DIR / "polizas"
 MANUALES_DIR.mkdir(exist_ok=True)
+POLIZAS_DIR.mkdir(exist_ok=True)
 
 MANUALES_COMPANIAS = [
     "Mercantil Andina",
@@ -121,6 +123,21 @@ def conectar_db():
 def inicializar_base_datos():
     with closing(conectar_db()) as db:
         db.execute("CREATE TABLE IF NOT EXISTS usuarios (id INTEGER PRIMARY KEY AUTOINCREMENT, usuario TEXT UNIQUE NOT NULL, password TEXT NOT NULL)")
+        db.execute("""CREATE TABLE IF NOT EXISTS conversaciones (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            usuario TEXT NOT NULL,
+            titulo TEXT NOT NULL DEFAULT 'Nueva conversación',
+            creado_en TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            actualizado_en TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+        )""")
+        db.execute("""CREATE TABLE IF NOT EXISTS mensajes (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            conversacion_id INTEGER NOT NULL,
+            rol TEXT NOT NULL,
+            contenido TEXT NOT NULL,
+            creado_en TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            FOREIGN KEY(conversacion_id) REFERENCES conversaciones(id) ON DELETE CASCADE
+        )""")
         columnas = {fila[1] for fila in db.execute("PRAGMA table_info(usuarios)").fetchall()}
         if "email" not in columnas: db.execute("ALTER TABLE usuarios ADD COLUMN email TEXT NOT NULL DEFAULT ''")
         if "rol" not in columnas: db.execute("ALTER TABLE usuarios ADD COLUMN rol TEXT NOT NULL DEFAULT 'usuario'")
@@ -501,6 +518,11 @@ def _archivos_pdf_consultables():
             p for p in MANUALES_DIR.glob("*.pdf")
             if p.is_file()
         )
+    if POLIZAS_DIR.exists():
+        archivos.extend(
+            p for p in POLIZAS_DIR.glob("*.pdf")
+            if p.is_file()
+        )
 
     # Evitar duplicados si por alguna razón ambas rutas apuntan al mismo archivo.
     vistos = set()
@@ -540,19 +562,14 @@ def buscar_en_documentos(consulta, limite=12):
             try:
                 if archivo.parent.resolve() == MANUALES_DIR.resolve():
                     slug = archivo.name.split("__", 1)[0]
-                    compania = next(
-                        (
-                            c for c in MANUALES_COMPANIAS
-                            if slug_manual_compania(c) == slug
-                        ),
-                        ""
-                    )
-                    nombre_archivo = (
-                        archivo.name.split("__", 1)[1]
-                        if "__" in archivo.name
-                        else archivo.name
-                    )
+                    compania = next((c for c in MANUALES_COMPANIAS if slug_manual_compania(c) == slug), "")
+                    nombre_archivo = archivo.name.split("__", 1)[1] if "__" in archivo.name else archivo.name
                     tipo = "manual"
+                    ruta_relativa = archivo.name
+                elif archivo.parent.resolve() == POLIZAS_DIR.resolve():
+                    nombre_archivo = archivo.name
+                    compania = "Biblioteca de pólizas"
+                    tipo = "poliza"
                     ruta_relativa = archivo.name
                 else:
                     relativa = archivo.relative_to(DOCUMENTOS_DIR)
@@ -1163,6 +1180,58 @@ def word_exportar():
     return send_from_directory(WORD_FILE.parent, WORD_FILE.name, as_attachment=True, download_name="OficinaIA.docx")
 
 
+
+# ==========================================================
+# CONVERSACIONES PERSISTENTES
+# ==========================================================
+
+def _crear_conversacion(usuario, titulo="Nueva conversación"):
+    with closing(conectar_db()) as db:
+        cur = db.execute(
+            "INSERT INTO conversaciones (usuario,titulo) VALUES (?,?)",
+            (usuario, titulo[:100] or "Nueva conversación")
+        )
+        db.commit()
+        return cur.lastrowid
+
+@app.route("/api/chats", methods=["GET"])
+@requiere_login
+def listar_chats():
+    with closing(conectar_db()) as db:
+        rows = db.execute(
+            "SELECT id,titulo,creado_en,actualizado_en FROM conversaciones WHERE usuario=? ORDER BY actualizado_en DESC, id DESC",
+            (session["usuario"],)
+        ).fetchall()
+        return jsonify({"ok": True, "chats":[dict(r) for r in rows]})
+
+@app.route("/api/chats", methods=["POST"])
+@requiere_login
+def crear_chat():
+    data=request.get_json(silent=True) or {}
+    titulo=str(data.get("titulo","Nueva conversación")).strip()[:100] or "Nueva conversación"
+    cid=_crear_conversacion(session["usuario"], titulo)
+    return jsonify({"ok":True,"id":cid,"titulo":titulo})
+
+@app.route("/api/chats/<int:chat_id>", methods=["GET"])
+@requiere_login
+def obtener_chat(chat_id):
+    with closing(conectar_db()) as db:
+        chat=db.execute("SELECT id,titulo FROM conversaciones WHERE id=? AND usuario=?",(chat_id,session["usuario"])).fetchone()
+        if not chat: return jsonify({"ok":False,"error":"Conversación no encontrada."}),404
+        mensajes=db.execute("SELECT id,rol,contenido,creado_en FROM mensajes WHERE conversacion_id=? ORDER BY id",(chat_id,)).fetchall()
+        return jsonify({"ok":True,"chat":dict(chat),"mensajes":[dict(x) for x in mensajes]})
+
+@app.route("/api/chats/<int:chat_id>", methods=["DELETE"])
+@requiere_login
+def eliminar_chat(chat_id):
+    with closing(conectar_db()) as db:
+        row=db.execute("SELECT id FROM conversaciones WHERE id=? AND usuario=?",(chat_id,session["usuario"])).fetchone()
+        if not row: return jsonify({"ok":False,"error":"Conversación no encontrada."}),404
+        db.execute("DELETE FROM mensajes WHERE conversacion_id=?",(chat_id,))
+        db.execute("DELETE FROM conversaciones WHERE id=?",(chat_id,))
+        db.commit()
+    return jsonify({"ok":True})
+
 # CHAT
 # ==========================================================
 
@@ -1189,6 +1258,23 @@ def chat():
         ""
     ).strip()
 
+    chat_id = data.get("chat_id")
+    try:
+        chat_id = int(chat_id) if chat_id else None
+    except (TypeError, ValueError):
+        chat_id = None
+
+    with closing(conectar_db()) as db:
+        if chat_id:
+            valido = db.execute("SELECT id FROM conversaciones WHERE id=? AND usuario=?",(chat_id,session["usuario"])).fetchone()
+            if not valido:
+                chat_id = None
+        if not chat_id:
+            titulo = " ".join(mensaje.split())[:58] or "Nueva conversación"
+            cur=db.execute("INSERT INTO conversaciones (usuario,titulo) VALUES (?,?)",(session["usuario"],titulo))
+            chat_id=cur.lastrowid
+            db.commit()
+
     historial = data.get("historial") or []
     if not isinstance(historial, list):
         historial = []
@@ -1207,6 +1293,11 @@ def chat():
             "respuesta":
                 "Escribime una consulta."
         })
+
+    with closing(conectar_db()) as db:
+        db.execute("INSERT INTO mensajes (conversacion_id,rol,contenido) VALUES (?,?,?)",(chat_id,"user",mensaje))
+        db.execute("UPDATE conversaciones SET actualizado_en=CURRENT_TIMESTAMP WHERE id=?",(chat_id,))
+        db.commit()
 
     # ======================================================
     # BUSCAR EN PDF
@@ -1333,9 +1424,14 @@ def chat():
                 "ni en Google Sheets."
             )
 
+    with closing(conectar_db()) as db:
+        db.execute("INSERT INTO mensajes (conversacion_id,rol,contenido) VALUES (?,?,?)",(chat_id,"assistant",str(respuesta)))
+        db.execute("UPDATE conversaciones SET actualizado_en=CURRENT_TIMESTAMP WHERE id=?",(chat_id,))
+        db.commit()
+
     return jsonify({
-        "respuesta":
-            respuesta
+        "respuesta": respuesta,
+        "chat_id": chat_id
     })
 
 
@@ -1346,11 +1442,65 @@ def chat():
 @app.route("/manuales")
 @requiere_login
 def manuales():
-    return render_template(
-        "manuales.html",
-        manuales=manuales_companias(),
-        usuario=session["usuario"],
+    return redirect(url_for("biblioteca"))
+
+
+@app.route("/biblioteca")
+@requiere_login
+def biblioteca():
+    polizas = sorted(
+        [{"archivo":p.name, "nombre":p.name, "fecha":__import__("datetime").datetime.fromtimestamp(p.stat().st_mtime).strftime("%d/%m/%Y %H:%M"),
+          "tamaño":round(p.stat().st_size/1024,1)} for p in POLIZAS_DIR.glob("*.pdf") if p.is_file()],
+        key=lambda x:x["fecha"], reverse=True
     )
+    return render_template("biblioteca.html", manuales=manuales_companias(), polizas=polizas,
+                           usuario=session["usuario"], usuario_rol=session.get("rol","usuario"),
+                           usuario_es_admin=usuario_es_admin())
+
+@app.route("/api/polizas", methods=["POST"])
+@requiere_admin
+def subir_poliza():
+    archivo=request.files.get("poliza")
+    if not archivo or not archivo.filename:
+        return jsonify(ok=False,error="Seleccioná un archivo PDF."),400
+    nombre=secure_filename(Path(archivo.filename).name)
+    if not nombre.lower().endswith(".pdf"):
+        return jsonify(ok=False,error="El archivo debe ser un PDF."),400
+    destino=POLIZAS_DIR/nombre
+    if destino.exists():
+        stem=destino.stem; suf=destino.suffix; n=2
+        while destino.exists():
+            destino=POLIZAS_DIR/f"{stem}_{n}{suf}"; n+=1
+    temporal=POLIZAS_DIR/f".upload_{__import__('time').time_ns()}.tmp"
+    try:
+        archivo.save(temporal)
+        if temporal.read_bytes()[:5] != b"%PDF-": raise ValueError("El archivo no parece ser un PDF válido.")
+        PdfReader(str(temporal))
+        temporal.replace(destino)
+        return jsonify(ok=True,archivo=destino.name)
+    except ValueError as e:
+        temporal.unlink(missing_ok=True); return jsonify(ok=False,error=str(e)),400
+    except Exception:
+        temporal.unlink(missing_ok=True); return jsonify(ok=False,error="No se pudo guardar la póliza."),500
+
+@app.route("/api/polizas/<path:nombre>", methods=["DELETE"])
+@requiere_admin
+def eliminar_poliza(nombre):
+    archivo=(POLIZAS_DIR/Path(nombre).name).resolve()
+    base=POLIZAS_DIR.resolve()
+    if base not in archivo.parents or not archivo.exists() or archivo.suffix.lower()!=".pdf":
+        return jsonify(ok=False,error="Póliza no encontrada."),404
+    archivo.unlink()
+    return jsonify(ok=True)
+
+@app.route("/polizas/<path:nombre>")
+@requiere_login
+def ver_poliza(nombre):
+    archivo=(POLIZAS_DIR/Path(nombre).name).resolve()
+    base=POLIZAS_DIR.resolve()
+    if base not in archivo.parents or not archivo.exists() or archivo.suffix.lower()!=".pdf":
+        return ("Póliza no encontrada",404)
+    return send_from_directory(POLIZAS_DIR,archivo.name,mimetype="application/pdf",as_attachment=False)
 
 @app.route("/configuracion")
 @requiere_login
@@ -1524,6 +1674,8 @@ def logout():
 # ==========================================================
 
 def crear_estructura():
+    MANUALES_DIR.mkdir(parents=True, exist_ok=True)
+    POLIZAS_DIR.mkdir(parents=True, exist_ok=True)
     # Las compañías de documentos deben coincidir exactamente con las 9
     # compañías habilitadas en la sección Manuales.
     companias = [
