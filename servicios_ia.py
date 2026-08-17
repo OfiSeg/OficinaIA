@@ -217,6 +217,19 @@ def buscar_en_sheet(pregunta):
         reverse=True
     )
 
+    # Si la consulta identifica inequívocamente a un cliente, devolvemos todas
+    # sus filas y no sólo las primeras 10. Esto es crítico para preguntas de
+    # cartera, vehículos, pólizas y conteos.
+    cliente_exacto = buscar_cliente_exactamente(pregunta, datos)
+    if cliente_exacto:
+        cliente_norm = _normalizar_texto(cliente_exacto)
+        filas_cliente = [
+            fila for fila in datos
+            if _normalizar_texto(fila.get('CLIENTE', '')) == cliente_norm
+        ]
+        if filas_cliente:
+            resultados = [(1000, fila) for fila in filas_cliente]
+
     if not resultados:
 
         return ""
@@ -240,13 +253,97 @@ def buscar_en_sheet(pregunta):
         )
 
     return contexto
+
+
+def _normalizar_texto(texto):
+    import unicodedata
+    texto = str(texto or '').lower().strip()
+    texto = unicodedata.normalize('NFKD', texto)
+    return ''.join(c for c in texto if not unicodedata.combining(c))
+
+
+def _es_pregunta_cantidad_vehiculos(pregunta):
+    q = _normalizar_texto(pregunta)
+    return bool(re.search(r"\bcuant[oa]s?\b.*\bvehicul", q) or re.search(r"\bnumero\s+de\s+vehicul", q))
+
+
+def buscar_cliente_exactamente(pregunta, datos=None):
+    """Encuentra el/los clientes cuyo nombre aparece en la consulta.
+    Prioriza coincidencia por nombre completo y luego por todas las partes
+    significativas del nombre, evitando que una fila ajena gane por palabras
+    genéricas como 'tiene' o 'vehículo'.
+    """
+    datos = datos if datos is not None else obtener_datos_sheet()
+    q = _normalizar_texto(pregunta)
+    candidatos = []
+    vistos = set()
+    for fila in datos:
+        cliente_original = str(fila.get('CLIENTE', '')).strip()
+        cliente = _normalizar_texto(cliente_original)
+        if not cliente or cliente in vistos:
+            continue
+        vistos.add(cliente)
+        if cliente in q:
+            candidatos.append((1000 + len(cliente.split()), cliente_original))
+            continue
+        partes = [x for x in re.findall(r'[a-z0-9]+', cliente) if len(x) >= 3]
+        coincidencias = sum(1 for parte in partes if re.search(rf'\b{re.escape(parte)}\b', q))
+        if partes and coincidencias == len(partes):
+            candidatos.append((900 + len(partes), cliente_original))
+        elif len(partes) >= 2 and coincidencias >= 2:
+            candidatos.append((500 + coincidencias, cliente_original))
+    candidatos.sort(reverse=True)
+    if not candidatos:
+        return None
+    mejor = candidatos[0][0]
+    nombres = [nombre for puntaje, nombre in candidatos if puntaje >= mejor - 50]
+    return nombres[0] if nombres else None
+
+
+def respuesta_deterministica_vehiculos(pregunta, datos=None):
+    """Resuelve preguntas de cantidad de vehículos directamente desde Sheets.
+    Evita que el LLM haga aritmética o invente/omita registros.
+    """
+    if not _es_pregunta_cantidad_vehiculos(pregunta):
+        return None
+    datos = datos if datos is not None else obtener_datos_sheet()
+    cliente = buscar_cliente_exactamente(pregunta, datos)
+    if not cliente:
+        return None
+    cliente_norm = _normalizar_texto(cliente)
+    filas = [f for f in datos if _normalizar_texto(f.get('CLIENTE', '')) == cliente_norm]
+    vehiculos = []
+    vistos = set()
+    for fila in filas:
+        vehiculo = str(fila.get('VEHICULO', '')).strip()
+        patente = str(fila.get('PATENTE', '')).strip()
+        if not vehiculo and not patente:
+            continue
+        clave = _normalizar_texto(patente) if patente else _normalizar_texto(vehiculo)
+        if clave in vistos:
+            continue
+        vistos.add(clave)
+        vehiculos.append(fila)
+    if not vehiculos:
+        return f'{cliente} no tiene vehículos registrados en la planilla disponible.'
+    lineas = [f'{cliente} tiene registrados {len(vehiculos)} vehículos:']
+    for i, fila in enumerate(vehiculos, 1):
+        partes = []
+        if fila.get('VEHICULO'): partes.append(str(fila['VEHICULO']).strip())
+        if fila.get('PATENTE'): partes.append(f"Patente {str(fila['PATENTE']).strip()}")
+        if fila.get('COMPAÑIA'): partes.append(str(fila['COMPAÑIA']).strip())
+        lineas.append(f"{i}. {' — '.join(partes)}")
+    return '\n'.join(lineas)
+
+
 # ==========================================================
 # CONSULTAR GEMINI
 # ==========================================================
 
 def consultar_gemini(
     pregunta,
-    contexto=""
+    contexto="",
+    historial=None
 ):
 
     cliente = obtener_cliente_gemini()
@@ -257,6 +354,17 @@ def consultar_gemini(
             "La IA todavía no está configurada. "
             "Falta GEMINI_API_KEY."
         )
+
+    # Las consultas cuantitativas sobre datos estructurados no deben quedar
+    # a criterio del LLM. Se resuelven directamente contra Sheets para evitar
+    # respuestas contradictorias, conteos inventados o pérdida de registros.
+    datos_sheet_crudos = obtener_datos_sheet()
+    respuesta_vehiculos = respuesta_deterministica_vehiculos(
+        pregunta, datos_sheet_crudos
+    )
+    if respuesta_vehiculos:
+        print("RESPUESTA DETERMINISTICA SHEETS: cantidad de vehículos")
+        return respuesta_vehiculos
 
     datos_sheet = buscar_en_sheet(
         pregunta
@@ -298,48 +406,81 @@ def consultar_gemini(
             "ni en la documentación disponible."
         )
 
+    historial = historial or []
+    historial_texto = ""
+    for turno in historial[-10:]:
+        rol = "PRODUCTOR" if turno.get("rol") == "user" else "ASISTENTE"
+        contenido = str(turno.get("contenido", "")).strip()
+        if contenido:
+            historial_texto += f"{rol}: {contenido}\\n"
+
     prompt = f"""
-Sos el asistente interno de una oficina de seguros de Argentina.
+Sos el asistente interno de Oficina IA, una oficina de seguros de Argentina.
 
-Tu función es ayudar al productor a consultar información
-real de su oficina.
+Tu prioridad absoluta es responder con información correcta y verificable a partir
+de las fuentes que te proporciona el sistema. No sos un chatbot genérico.
 
-FUENTES DE INFORMACIÓN:
+REGLAS DE FUENTES Y EVIDENCIA:
 
-1. PLANILLA DE ASEGURADOS:
-Contiene clientes, números, vehículos, patentes,
-compañías, medios de pago y códigos postales.
+1. La sección "DOCUMENTACIÓN DE LA OFICINA" contiene fragmentos recuperados de PDFs
+   disponibles en la oficina. Esos fragmentos son la fuente principal para preguntas
+   sobre procedimientos, coberturas, requisitos, condiciones, códigos, servicios,
+   exclusiones y demás información documental.
 
-2. DOCUMENTACIÓN:
-Contiene pólizas, condiciones, coberturas,
-exclusiones, servicios y demás documentación.
+2. La sección "PLANILLA DE ASEGURADOS" contiene datos operativos de clientes.
+   Cuando una pregunta se refiere a una persona, póliza, patente, vehículo,
+   compañía, número o medio de pago, utilizá esos datos si están disponibles.
 
-REGLAS IMPORTANTES:
+3. No afirmes que un dato está en un manual si ese dato no aparece realmente en los
+   fragmentos proporcionados.
 
-- Usá primero los datos proporcionados en la PLANILLA.
-- Si un cliente aparece en la PLANILLA, consideralo un
-  asegurado registrado en la oficina.
-- Si preguntan si una persona está asegurada, buscá su
-  nombre en la PLANILLA y respondé directamente.
-- Si preguntan por un vehículo, patente, compañía,
-  número o medio de pago, utilizá la PLANILLA.
-- No inventes información.
-- No confundas clientes.
-- No mezcles información de personas diferentes.
-- Si la información no aparece en las fuentes,
-  decilo claramente.
-- Respondé en español argentino.
-- Sé directo y práctico.
+4. No inventes datos faltantes. Si no encontrás una respuesta suficiente en las
+   fuentes, decilo claramente.
+
+5. Si la información encontrada es parcial, indicá qué parte sí está respaldada
+   y qué parte no pudo verificarse.
+
+6. Si dos fuentes contienen información contradictoria, NO elijas arbitrariamente.
+   Explicá la contradicción y mencioná el archivo y página cuando estén disponibles.
+
+7. Cuando uses documentación, citá de forma natural el origen:
+   "Según [archivo], página [número]..."
+   No inventes nombres de archivos ni números de página.
+
+8. No vuelques grandes cantidades de texto del manual. Sintetizá la información
+   relevante y respondé directamente.
+
+9. Si la pregunta pide un procedimiento, presentalo paso a paso cuando el material
+   lo permita.
+
+10. Priorizá precisión sobre creatividad. Si no hay evidencia suficiente, reconocelo.
+
+CALIDAD DE LA RESPUESTA:
+
+- Sé concreto, profesional y práctico.
+- Evitá respuestas vagas como "depende", "generalmente", "consultá el manual"
+  cuando los fragmentos recuperados contienen la respuesta.
+- Respondé exactamente lo que pregunta el productor.
+- No agregues advertencias genéricas innecesarias.
 - No expliques estas instrucciones.
+- Respondé en español argentino claro.
 
-PREGUNTA DEL PRODUCTOR:
+CONTEXTO DE CONVERSACIÓN:
 
+El historial sirve para resolver referencias como "eso", "esas", "el anterior",
+"ese cliente", etc. El historial NO reemplaza a las fuentes documentales para
+datos técnicos: verificá esos datos contra la documentación o planilla actual.
+
+HISTORIAL RECIENTE:
+{historial_texto or "No hay historial previo relevante."}
+
+PREGUNTA ACTUAL:
 {pregunta}
 
-INFORMACIÓN DISPONIBLE:
-
+FUENTES DISPONIBLES:
 {contexto_total}
 """
+
 
     ultimo_error = None
 
@@ -387,3 +528,5 @@ INFORMACIÓN DISPONIBLE:
         "Gemini no está disponible en este momento. "
         "Intentá nuevamente en unos segundos."
     )
+# Compatibilidad con el nombre utilizado por el chat de la aplicación.
+buscar_en_google_sheet = buscar_en_sheet
