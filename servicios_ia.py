@@ -217,10 +217,12 @@ def buscar_en_sheet(pregunta):
         reverse=True
     )
 
-    # Si la consulta identifica inequívocamente a un cliente, devolvemos todas
-    # sus filas y no sólo las primeras 10. Esto es crítico para preguntas de
-    # cartera, vehículos, pólizas y conteos.
+    # Si la consulta identifica inequívocamente a un cliente, devolvemos TODAS
+    # sus filas. Esto es crítico para preguntas de cartera, vehículos, pólizas
+    # y conteos: antes el corte [:10] volvía a truncar estos resultados aunque
+    # hubiéramos encontrado correctamente todas las filas del cliente.
     cliente_exacto = buscar_cliente_exactamente(pregunta, datos)
+    es_cliente_exacto = bool(cliente_exacto)
     if cliente_exacto:
         cliente_norm = _normalizar_texto(cliente_exacto)
         filas_cliente = [
@@ -231,12 +233,17 @@ def buscar_en_sheet(pregunta):
             resultados = [(1000, fila) for fila in filas_cliente]
 
     if not resultados:
-
         return ""
+
+    # Para búsquedas generales enviamos más evidencia que antes (50 filas).
+    # Para un cliente identificado, enviamos todas sus filas para que Gemini
+    # pueda responder sobre la cartera completa y no solamente sobre las
+    # primeras 10 operaciones.
+    limite_filas = len(resultados) if es_cliente_exacto else min(len(resultados), 50)
 
     contexto = ""
 
-    for _, fila in resultados[:10]:
+    for _, fila in resultados[:limite_filas]:
 
         contexto += (
             "REGISTRO DE CLIENTE:\n"

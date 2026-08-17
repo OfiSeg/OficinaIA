@@ -1242,23 +1242,30 @@ def eliminar_chat(chat_id):
 @requiere_login
 def chat():
 
-    data = request.get_json(
-        silent=True
-    )
+    # El chat acepta JSON para consultas normales y multipart/form-data
+    # cuando el usuario adjunta un PDF. El PDF se procesa en memoria y no
+    # se guarda como documento permanente.
+    if request.is_json:
+        data = request.get_json(silent=True) or {}
+        mensaje = str(data.get("mensaje", "")).strip()
+        chat_id = data.get("chat_id")
+        historial = data.get("historial") or []
+        archivo_pdf = None
+    else:
+        data = request.form
+        mensaje = str(data.get("mensaje", "")).strip()
+        chat_id = data.get("chat_id")
+        historial_raw = data.get("historial", "[]")
+        try:
+            import json
+            historial = json.loads(historial_raw)
+        except Exception:
+            historial = []
+        archivo_pdf = request.files.get("pdf")
 
-    if not data:
+    if not data and not archivo_pdf:
+        return jsonify({"respuesta": "No recibí ningún mensaje."})
 
-        return jsonify({
-            "respuesta":
-                "No recibí ningún mensaje."
-        })
-
-    mensaje = data.get(
-        "mensaje",
-        ""
-    ).strip()
-
-    chat_id = data.get("chat_id")
     try:
         chat_id = int(chat_id) if chat_id else None
     except (TypeError, ValueError):
@@ -1275,7 +1282,6 @@ def chat():
             chat_id=cur.lastrowid
             db.commit()
 
-    historial = data.get("historial") or []
     if not isinstance(historial, list):
         historial = []
 
@@ -1287,6 +1293,56 @@ def chat():
         and str(x.get("contenido", "")).strip()
     ][-10:]
 
+    contexto_pdf_adjunto = ""
+    nombre_pdf_adjunto = ""
+    if archivo_pdf and archivo_pdf.filename:
+        nombre_pdf_adjunto = secure_filename(archivo_pdf.filename) or "documento.pdf"
+        if not nombre_pdf_adjunto.lower().endswith(".pdf"):
+            return jsonify({"ok": False, "error": "El archivo adjunto debe ser un PDF."}), 400
+
+        try:
+            archivo_pdf.stream.seek(0, os.SEEK_END)
+            tamaño = archivo_pdf.stream.tell()
+            archivo_pdf.stream.seek(0)
+            if tamaño > 20 * 1024 * 1024:
+                return jsonify({"ok": False, "error": "El PDF es demasiado grande. El máximo permitido es 20 MB."}), 413
+
+            lector = PdfReader(archivo_pdf.stream)
+            paginas = []
+            total_chars = 0
+            max_paginas = min(len(lector.pages), 60)
+            for numero in range(max_paginas):
+                texto = lector.pages[numero].extract_text() or ""
+                texto = re.sub(r"[ \t]+", " ", texto).strip()
+                if not texto:
+                    continue
+                restante = 60000 - total_chars
+                if restante <= 0:
+                    break
+                texto = texto[:restante]
+                paginas.append(f"PÁGINA {numero + 1}\n{texto}")
+                total_chars += len(texto)
+
+            if not paginas:
+                return jsonify({
+                    "ok": False,
+                    "error": "El PDF parece ser escaneado o no contiene texto seleccionable. En esta versión puedo leer PDFs con texto."
+                }), 422
+
+            contexto_pdf_adjunto = (
+                "\n\n===== PDF ADJUNTADO EN EL CHAT =====\n"
+                f"ARCHIVO: {nombre_pdf_adjunto}\n"
+                f"PÁGINAS PROCESADAS: {max_paginas}\n\n"
+                + "\n\n".join(paginas)
+                + "\n===== FIN PDF ADJUNTADO =====\n"
+            )
+        except Exception as error:
+            print("ERROR PDF ADJUNTO:", error)
+            return jsonify({"ok": False, "error": "No pude leer ese PDF. Verificá que el archivo no esté dañado."}), 422
+
+    if not mensaje and archivo_pdf:
+        mensaje = "Analizá el PDF que acabo de adjuntar y explicame de qué trata."
+
     if not mensaje:
 
         return jsonify({
@@ -1295,7 +1351,10 @@ def chat():
         })
 
     with closing(conectar_db()) as db:
-        db.execute("INSERT INTO mensajes (conversacion_id,rol,contenido) VALUES (?,?,?)",(chat_id,"user",mensaje))
+        mensaje_guardado = mensaje
+        if nombre_pdf_adjunto:
+            mensaje_guardado = f"[PDF adjunto: {nombre_pdf_adjunto}]\n{mensaje}"
+        db.execute("INSERT INTO mensajes (conversacion_id,rol,contenido) VALUES (?,?,?)",(chat_id,"user",mensaje_guardado))
         db.execute("UPDATE conversaciones SET actualizado_en=CURRENT_TIMESTAMP WHERE id=?",(chat_id,))
         db.commit()
 
@@ -1381,7 +1440,8 @@ def chat():
     # ======================================================
 
     contexto = (
-        contexto_pdf
+        contexto_pdf_adjunto
+        + contexto_pdf
         + contexto_sheet
     )
 
@@ -1431,7 +1491,8 @@ def chat():
 
     return jsonify({
         "respuesta": respuesta,
-        "chat_id": chat_id
+        "chat_id": chat_id,
+        "archivo_adjunto": nombre_pdf_adjunto or None
     })
 
 
@@ -1442,6 +1503,7 @@ def chat():
 @app.route("/manuales")
 @requiere_login
 def manuales():
+    # Mantener /manuales como ruta principal para compatibilidad con favoritos y enlaces antiguos.
     return redirect(url_for("biblioteca"))
 
 

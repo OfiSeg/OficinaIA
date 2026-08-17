@@ -1,13 +1,165 @@
 {% extends 'base.html' %}
 {% block title %}Manuales y pólizas · OficinaIA{% endblock %}
 {% block content %}
-<div class="page"><header class="top"><div><span>BIBLIOTECA DE CONOCIMIENTO</span><h1>Manuales y pólizas</h1><p>Los PDFs quedan guardados en OficinaIA y pasan a estar disponibles para la IA.</p></div><strong class="count">{{ polizas|length }} pólizas · {{ manuales|sum(attribute='cantidad') }} manuales</strong></header>
-<div class="library-tabs"><button class="library-tab active" data-target="manualesPanel">📘 Manuales</button><button class="library-tab" data-target="polizasPanel">📄 Pólizas</button></div>
-<section id="manualesPanel" class="panel library-panel"><div class="section-head"><div><h2>Manuales por compañía</h2><small>Podés acumular varios PDFs por compañía.</small></div></div><div class="manual-grid">{% for m in manuales %}<article><header><b>{{m.nombre[0]}}</b><span><strong>{{m.nombre}}</strong><small>{{m.cantidad}} archivo{% if m.cantidad!=1 %}s{% endif %}</small></span><i class="{{'ok' if m.cargado else ''}}">{{'Disponible' if m.cargado else 'Vacío'}}</i></header><div class="manual-files">{% for a in m.archivos %}<div><a href="{{url_for('ver_manual',slug=m.slug,nombre_archivo=a.archivo)}}" target="_blank"><b>PDF</b><span><strong>{{a.nombre}}</strong><small>{{a.fecha}}</small></span></a>{% if usuario_es_admin %}<label>↻<input type="file" accept=".pdf" data-slug="{{m.slug}}" data-replace="{{a.archivo}}"></label><button data-slug="{{m.slug}}" data-file="{{a.archivo}}">×</button>{% endif %}</div>{% else %}<small class="no-manual">Todavía no hay manuales.</small>{% endfor %}</div>{% if usuario_es_admin %}<label class="upload">＋ Agregar manual<input type="file" multiple accept=".pdf" data-slug="{{m.slug}}"></label>{% endif %}</article>{% endfor %}</div></section>
-<section id="polizasPanel" class="panel library-panel hidden"><div class="section-head"><div><h2>Pólizas</h2><small>Biblioteca persistente de PDFs consultables por la IA.</small></div>{% if usuario_es_admin %}<label class="btn-primary file-btn">＋ Cargar póliza<input id="polizaUpload" type="file" accept=".pdf"></label>{% endif %}</div><div id="polizaStatus" class="upload-status"></div><div class="policy-list">{% for p in polizas %}<div class="policy-row"><a href="{{url_for('ver_poliza',nombre=p.archivo)}}" target="_blank"><b>PDF</b><span><strong>{{p.nombre}}</strong><small>{{p.fecha}} · {{p.tamaño}} KB</small></span></a>{% if usuario_es_admin %}<button class="delete-policy" data-file="{{p.archivo}}">×</button>{% endif %}</div>{% else %}<div class="empty"><b>Aún no hay pólizas cargadas</b><small>Subí el primer PDF para incorporarlo al conocimiento de la IA.</small></div>{% endfor %}</div></section>
+<div class="page">
+  <header class="top">
+    <div><span>BIBLIOTECA DE CONOCIMIENTO</span><h1>Manuales y pólizas</h1><p>Los PDFs quedan guardados en OficinaIA y están disponibles para la IA.</p></div>
+    <strong class="count">{{ polizas|length }} pólizas · {{ manuales|sum(attribute='cantidad') }} manuales</strong>
+  </header>
+
+  <div class="library-tabs">
+    <button type="button" class="library-tab active" data-target="manualesPanel">📘 Manuales</button>
+    <button type="button" class="library-tab" data-target="polizasPanel">📄 Pólizas</button>
+  </div>
+
+  <section id="manualesPanel" class="panel library-panel">
+    <div class="section-head"><div><h2>Manuales por compañía</h2><small>Podés acumular varios PDFs por compañía. Se guardan en <code>manuales_companias/</code>.</small></div></div>
+    <div class="manual-grid">
+      {% for m in manuales %}
+      <article>
+        <header><b>{{m.nombre[0]}}</b><span><strong>{{m.nombre}}</strong><small>{{m.cantidad}} archivo{% if m.cantidad != 1 %}s{% endif %}</small></span><i class="{{'ok' if m.cargado else ''}}">{{'Disponible' if m.cargado else 'Vacío'}}</i></header>
+        <div class="manual-files">
+          {% for a in m.archivos %}
+          <div>
+            <a href="{{url_for('ver_manual',slug=m.slug,nombre_archivo=a.archivo)}}" target="_blank" rel="noopener"><b>PDF</b><span><strong>{{a.nombre}}</strong><small>{{a.fecha}}</small></span></a>
+            {% if usuario_es_admin %}
+            <label title="Reemplazar manual">↻<input type="file" accept="application/pdf,.pdf" data-slug="{{m.slug}}" data-replace="{{a.archivo}}"></label>
+            <button type="button" title="Eliminar manual" data-slug="{{m.slug}}" data-file="{{a.archivo}}">×</button>
+            {% endif %}
+          </div>
+          {% else %}<small class="no-manual">Todavía no hay manuales.</small>{% endfor %}
+        </div>
+        {% if usuario_es_admin %}
+        <label class="upload">＋ Agregar manual
+          <input type="file" multiple accept="application/pdf,.pdf" data-slug="{{m.slug}}">
+        </label>
+        <small class="upload-status" data-status-for="{{m.slug}}"></small>
+        {% endif %}
+      </article>
+      {% endfor %}
+    </div>
+  </section>
+
+  <section id="polizasPanel" class="panel library-panel hidden">
+    <div class="section-head"><div><h2>Pólizas</h2><small>Biblioteca persistente de PDFs consultables por la IA.</small></div>{% if usuario_es_admin %}<label class="btn-primary file-btn">＋ Cargar póliza<input id="polizaUpload" type="file" accept="application/pdf,.pdf"></label>{% endif %}</div>
+    <div id="polizaStatus" class="upload-status"></div>
+    <div class="policy-list">
+      {% for p in polizas %}<div class="policy-row"><a href="{{url_for('ver_poliza',nombre=p.archivo)}}" target="_blank" rel="noopener"><b>PDF</b><span><strong>{{p.nombre}}</strong><small>{{p.fecha}} · {{p.tamaño}} KB</small></span></a>{% if usuario_es_admin %}<button type="button" class="delete-policy" data-file="{{p.archivo}}">×</button>{% endif %}</div>
+      {% else %}<div class="empty"><b>Aún no hay pólizas cargadas</b><small>Subí el primer PDF para incorporarlo al conocimiento de la IA.</small></div>{% endfor %}
+    </div>
+  </section>
 </div>
 {% endblock %}
-{% block scripts %}<script>
-document.querySelectorAll('.library-tab').forEach(b=>b.onclick=()=>{document.querySelectorAll('.library-tab').forEach(x=>x.classList.remove('active'));document.querySelectorAll('.library-panel').forEach(x=>x.classList.add('hidden'));b.classList.add('active');document.getElementById(b.dataset.target).classList.remove('hidden')});
-(async()=>{for(const i of document.querySelectorAll('.upload input[data-slug]'))i.onchange=async()=>{if(!i.files.length)return;const st=document.getElementById('polizaStatus')||document.querySelector('.upload-status');st.textContent='Guardando manual…';for(const f of i.files){const fd=new FormData();fd.append('manual',f);const r=await fetch('/api/manuales/'+encodeURIComponent(i.dataset.slug),{method:'POST',body:fd});const j=await r.json();if(!r.ok)throw Error(j.error)}location.reload()};for(const i of document.querySelectorAll('input[data-replace]'))i.onchange=async()=>{const fd=new FormData();fd.append('manual',i.files[0]);fd.append('replace',i.dataset.replace);const r=await fetch('/api/manuales/'+encodeURIComponent(i.dataset.slug),{method:'POST',body:fd});const j=await r.json();if(!r.ok)alert(j.error);else location.reload()};for(const b of document.querySelectorAll('.manual-files button'))b.onclick=async()=>{if(!confirm('¿Eliminar este manual?'))return;const r=await fetch('/api/manuales/'+encodeURIComponent(b.dataset.slug)+'/'+encodeURIComponent(b.dataset.file),{method:'DELETE'});if(r.ok)location.reload()};const pi=document.getElementById('polizaUpload');if(pi)pi.onchange=async()=>{if(!pi.files.length)return;const fd=new FormData();fd.append('poliza',pi.files[0]);const st=document.getElementById('polizaStatus');st.textContent='Guardando póliza…';const r=await fetch('/api/polizas',{method:'POST',body:fd});const j=await r.json();if(!r.ok){st.textContent=j.error;return}location.reload()};for(const b of document.querySelectorAll('.delete-policy'))b.onclick=async()=>{if(!confirm('¿Eliminar esta póliza?'))return;const r=await fetch('/api/polizas/'+encodeURIComponent(b.dataset.file),{method:'DELETE'});if(r.ok)location.reload()}})().catch(e=>alert(e.message));
-</script>{% endblock %}
+
+{% block scripts %}
+<script>
+(() => {
+  const jsonResponse = async (response) => {
+    const text = await response.text();
+    try { return JSON.parse(text); }
+    catch { throw new Error(`El servidor respondió ${response.status}. ${text.slice(0,180)}`); }
+  };
+
+  document.querySelectorAll('.library-tab').forEach(btn => {
+    btn.addEventListener('click', () => {
+      document.querySelectorAll('.library-tab').forEach(x => x.classList.remove('active'));
+      document.querySelectorAll('.library-panel').forEach(x => x.classList.add('hidden'));
+      btn.classList.add('active');
+      document.getElementById(btn.dataset.target).classList.remove('hidden');
+    });
+  });
+
+  document.querySelectorAll('.upload input[data-slug]').forEach(input => {
+    input.addEventListener('change', async () => {
+      if (!input.files.length) return;
+      const slug = input.dataset.slug;
+      const status = document.querySelector(`[data-status-for="${slug}"]`);
+      const files = Array.from(input.files);
+      status.textContent = `Guardando ${files.length} PDF${files.length === 1 ? '' : 's'}…`;
+      input.disabled = true;
+      try {
+        for (let n = 0; n < files.length; n++) {
+          const file = files[n];
+          if (!file.name.toLowerCase().endsWith('.pdf')) throw new Error(`“${file.name}” no es un PDF.`);
+          status.textContent = `Guardando ${n + 1} de ${files.length}: ${file.name}`;
+          const fd = new FormData();
+          fd.append('manual', file, file.name);
+          const response = await fetch(`/api/manuales/${encodeURIComponent(slug)}`, { method: 'POST', body: fd, credentials: 'same-origin' });
+          const data = await jsonResponse(response);
+          if (!response.ok || !data.ok) throw new Error(data.error || 'No se pudo guardar el manual.');
+        }
+        status.textContent = '✓ Manual(es) guardado(s) correctamente.';
+        setTimeout(() => location.reload(), 450);
+      } catch (error) {
+        status.textContent = `Error: ${error.message}`;
+        input.disabled = false;
+        input.value = '';
+      }
+    });
+  });
+
+  document.querySelectorAll('input[data-replace]').forEach(input => {
+    input.addEventListener('change', async () => {
+      if (!input.files.length) return;
+      const status = input.closest('article')?.querySelector('.upload-status');
+      if (status) status.textContent = 'Reemplazando manual…';
+      input.disabled = true;
+      try {
+        const fd = new FormData();
+        fd.append('manual', input.files[0], input.files[0].name);
+        fd.append('replace', input.dataset.replace);
+        const response = await fetch(`/api/manuales/${encodeURIComponent(input.dataset.slug)}`, { method: 'POST', body: fd, credentials: 'same-origin' });
+        const data = await jsonResponse(response);
+        if (!response.ok || !data.ok) throw new Error(data.error || 'No se pudo reemplazar el manual.');
+        if (status) status.textContent = '✓ Manual reemplazado.';
+        setTimeout(() => location.reload(), 450);
+      } catch (error) {
+        if (status) status.textContent = `Error: ${error.message}`;
+        input.disabled = false;
+        input.value = '';
+      }
+    });
+  });
+
+  document.querySelectorAll('.manual-files button[data-file]').forEach(button => {
+    button.addEventListener('click', async () => {
+      if (!confirm('¿Eliminar este manual?')) return;
+      button.disabled = true;
+      try {
+        const response = await fetch(`/api/manuales/${encodeURIComponent(button.dataset.slug)}/${encodeURIComponent(button.dataset.file)}`, { method: 'DELETE', credentials: 'same-origin' });
+        const data = await jsonResponse(response);
+        if (!response.ok || !data.ok) throw new Error(data.error || 'No se pudo eliminar el manual.');
+        location.reload();
+      } catch (error) { alert(error.message); button.disabled = false; }
+    });
+  });
+
+  const policyInput = document.getElementById('polizaUpload');
+  if (policyInput) policyInput.addEventListener('change', async () => {
+    if (!policyInput.files.length) return;
+    const status = document.getElementById('polizaStatus');
+    const file = policyInput.files[0];
+    status.textContent = 'Guardando póliza…';
+    policyInput.disabled = true;
+    try {
+      const fd = new FormData(); fd.append('poliza', file, file.name);
+      const response = await fetch('/api/polizas', { method: 'POST', body: fd, credentials: 'same-origin' });
+      const data = await jsonResponse(response);
+      if (!response.ok || !data.ok) throw new Error(data.error || 'No se pudo guardar la póliza.');
+      status.textContent = '✓ Póliza guardada correctamente.';
+      setTimeout(() => location.reload(), 450);
+    } catch (error) { status.textContent = `Error: ${error.message}`; policyInput.disabled = false; policyInput.value = ''; }
+  });
+
+  document.querySelectorAll('.delete-policy').forEach(button => button.addEventListener('click', async () => {
+    if (!confirm('¿Eliminar esta póliza?')) return;
+    try {
+      const response = await fetch(`/api/polizas/${encodeURIComponent(button.dataset.file)}`, { method: 'DELETE', credentials: 'same-origin' });
+      const data = await jsonResponse(response);
+      if (!response.ok || !data.ok) throw new Error(data.error || 'No se pudo eliminar la póliza.');
+      location.reload();
+    } catch (error) { alert(error.message); }
+  }));
+})();
+</script>
+{% endblock %}
