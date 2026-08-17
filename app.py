@@ -13,7 +13,7 @@ from flask import (
 
 from pathlib import Path
 from functools import wraps
-from pypdf import PdfReader
+import fitz  # PyMuPDF
 import re
 import unicodedata
 import os
@@ -402,12 +402,13 @@ def obtener_companias():
 # EXTRACCIÓN Y RETRIEVAL DE PDF
 # ==========================================================
 
-# Límites de seguridad para el entorno de Render.
-# pypdf puede consumir mucha memoria al procesar PDFs grandes o complejos.
-# No mantenemos el texto completo de todos los manuales en RAM.
-MAX_PDF_PAGES_INDEX = 120
-MAX_PDF_TEXT_CHARS_INDEX = 180_000
-MAX_R2_PDFS_PER_QUERY = 12
+# Límites de memoria para Render.
+MAX_PDF_PAGES_INDEX = 80
+MAX_PDF_TEXT_CHARS_INDEX = 120_000
+MAX_PDF_FILE_SIZE_BYTES = 15 * 1024 * 1024
+MAX_PDF_PAGES_CHAT = 30
+MAX_PDF_TEXT_CHARS_CHAT = 40_000
+_PDF_CACHE = {}  # Se conserva por compatibilidad; no se utiliza para retener PDFs.
 
 _STOPWORDS_ES = {
     "para", "como", "cual", "cuál", "que", "qué", "del", "las", "los",
@@ -448,82 +449,74 @@ def _raiz_simple(token):
 
 def extraer_paginas_pdf(ruta):
     """
-    Extrae texto de un PDF de forma acotada para evitar que un manual grande
-    derribe el worker de Render por falta de memoria.
-
-    Importante: no se cachea el texto completo de todos los PDFs. El caché
-    anterior podía acumular cientos de MB entre manuales y terminar en
-    SIGKILL/OOM.
+    Extrae texto de un PDF de forma controlada para Render.
+    Usa PyMuPDF en lugar de pypdf porque consume menos memoria en PDFs
+    complejos. No conserva todos los PDFs procesados en una caché global.
     """
     ruta = Path(ruta)
-
     try:
-        tamaño = ruta.stat().st_size
+        if not ruta.exists() or not ruta.is_file():
+            return []
+        if ruta.stat().st_size > MAX_PDF_FILE_SIZE_BYTES:
+            print(f"PDF OMITIDO POR TAMAÑO: {ruta}")
+            return []
     except OSError:
-        return []
-
-    if tamaño <= 0:
-        return []
-
-    # MAX_CONTENT_LENGTH protege las subidas, pero R2 puede contener archivos
-    # cargados antes de ese límite. Evitamos intentar indexar uno enorme.
-    if tamaño > 20 * 1024 * 1024:
-        print(f"PDF OMITIDO POR TAMAÑO ({tamaño / 1024 / 1024:.1f} MB): {ruta}")
         return []
 
     paginas = []
     total_chars = 0
-    lector = None
 
     try:
-        # strict=False es más tolerante con PDFs reales y evita abortar por
-        # pequeños problemas estructurales del archivo.
-        lector = PdfReader(str(ruta), strict=False)
-        total_paginas = min(len(lector.pages), MAX_PDF_PAGES_INDEX)
+        documento = fitz.open(str(ruta))
+        try:
+            total_paginas = min(documento.page_count, MAX_PDF_PAGES_INDEX)
 
-        for numero in range(total_paginas):
-            if total_chars >= MAX_PDF_TEXT_CHARS_INDEX:
-                break
+            for indice in range(total_paginas):
+                if total_chars >= MAX_PDF_TEXT_CHARS_INDEX:
+                    break
 
-            try:
-                contenido = lector.pages[numero].extract_text() or ""
-            except Exception as error:
-                print(f"ERROR EXTRAYENDO PÁGINA {numero + 1} DE PDF {ruta}: {error}")
-                continue
+                try:
+                    pagina = documento.load_page(indice)
+                    contenido = pagina.get_text("text", sort=True) or ""
+                    # Liberamos la referencia de página inmediatamente.
+                    del pagina
+                except Exception as error:
+                    print(
+                        f"ERROR EXTRAYENDO PÁGINA {indice + 1} DE PDF {ruta}: {error}"
+                    )
+                    continue
 
-            contenido = re.sub(r"[ \t]+", " ", contenido)
-            contenido = re.sub(r"\n{3,}", "\n\n", contenido).strip()
+                contenido = re.sub(r"[ \t]+", " ", contenido)
+                contenido = re.sub(r"\n{3,}", "\n\n", contenido).strip()
 
-            if not contenido:
-                continue
+                if not contenido:
+                    continue
 
-            restante = MAX_PDF_TEXT_CHARS_INDEX - total_chars
-            contenido = contenido[:restante]
-            paginas.append({
-                "pagina": numero + 1,
-                "texto": contenido
-            })
-            total_chars += len(contenido)
+                restante = MAX_PDF_TEXT_CHARS_INDEX - total_chars
+                if len(contenido) > restante:
+                    contenido = contenido[:restante]
+
+                if contenido:
+                    paginas.append({
+                        "pagina": indice + 1,
+                        "texto": contenido
+                    })
+                    total_chars += len(contenido)
+
+        finally:
+            documento.close()
+
+        if not paginas:
+            print(
+                f"PDF SIN TEXTO EXTRAÍBLE: {ruta}. "
+                "Si es un PDF escaneado, necesita OCR para poder consultarse."
+            )
 
     except Exception as error:
-        print("ERROR LEYENDO PDF:", ruta, error)
+        print("ERROR LEYENDO PDF CON PYMUPDF:", ruta, error)
         paginas = []
-    finally:
-        # Liberamos referencias al objeto pypdf antes de pasar al siguiente
-        # manual. Esto es especialmente importante en Render con poca RAM.
-        lector = None
-
-    if not paginas:
-        print(
-            f"PDF SIN TEXTO EXTRAÍBLE: {ruta}. "
-            "Si es un PDF escaneado, necesita OCR para poder consultarse."
-        )
-
-    if total_paginas == MAX_PDF_PAGES_INDEX:
-        print(f"PDF LIMITADO A {MAX_PDF_PAGES_INDEX} PÁGINAS PARA INDEXACIÓN: {ruta}")
 
     return paginas
-
 
 def extraer_texto_pdf(ruta):
     """Compatibilidad con las funciones existentes que necesitan texto completo."""
@@ -615,28 +608,12 @@ def _puntuar_chunk(consulta, chunk):
     return puntuacion
 
 
-def _manuales_r2_por_ruta(consulta=""):
-    """
-    Descarga sólo un número acotado de manuales R2 por consulta.
-    Prioriza nombre/compañía cuando la pregunta menciona alguno.
-    """
+def _manuales_r2_por_ruta():
+    """Relaciona el archivo temporal local con sus metadatos de Neon."""
     mapa = {}
     try:
-        filas = listar_manuales()
-        q = _normalizar_busqueda(consulta)
-
-        def prioridad(fila):
-            nombre = _normalizar_busqueda(fila.get("nombre") or "")
-            r2_key = _normalizar_busqueda(fila.get("r2_key") or "")
-            texto = f"{nombre} {r2_key}"
-            return sum(1 for token in _tokens_busqueda(consulta) if token in texto)
-
-        filas = sorted(filas, key=prioridad, reverse=True)[:MAX_R2_PDFS_PER_QUERY]
-
-        for fila in filas:
+        for fila in listar_manuales():
             r2_key = str(fila.get("r2_key") or "")
-            if not r2_key:
-                continue
             try:
                 path = descargar_pdf_temporal(r2_key)
             except Exception as error:
@@ -663,7 +640,7 @@ def buscar_en_documentos(consulta, limite=16):
     if not tokens:
         return resultados
 
-    r2_por_ruta = _manuales_r2_por_ruta(consulta)
+    r2_por_ruta = _manuales_r2_por_ruta()
 
     archivos_locales = []
     if DOCUMENTOS_DIR.exists():
@@ -1574,21 +1551,49 @@ def chat():
             if tamaño > 20 * 1024 * 1024:
                 return jsonify({"ok": False, "error": "El PDF es demasiado grande. El máximo permitido es 20 MB."}), 413
 
-            lector = PdfReader(archivo_pdf.stream)
+            datos_pdf = archivo_pdf.stream.read()
+            archivo_pdf.stream.seek(0)
+
+            if len(datos_pdf) > MAX_PDF_FILE_SIZE_BYTES:
+                return jsonify({
+                    "ok": False,
+                    "error": "El PDF es demasiado grande para procesarlo en el chat."
+                }), 413
+
             paginas = []
             total_chars = 0
-            max_paginas = min(len(lector.pages), 60)
-            for numero in range(max_paginas):
-                texto = lector.pages[numero].extract_text() or ""
-                texto = re.sub(r"[ \t]+", " ", texto).strip()
-                if not texto:
-                    continue
-                restante = 60000 - total_chars
-                if restante <= 0:
-                    break
-                texto = texto[:restante]
-                paginas.append(f"PÁGINA {numero + 1}\n{texto}")
-                total_chars += len(texto)
+            try:
+                documento = fitz.open(stream=datos_pdf, filetype="pdf")
+                try:
+                    max_paginas = min(documento.page_count, MAX_PDF_PAGES_CHAT)
+                    for numero in range(max_paginas):
+                        if total_chars >= MAX_PDF_TEXT_CHARS_CHAT:
+                            break
+                        try:
+                            pagina = documento.load_page(numero)
+                            texto = pagina.get_text("text", sort=True) or ""
+                            del pagina
+                        except Exception as exc:
+                            print(f"ERROR EXTRAYENDO PDF ADJUNTO PÁGINA {numero + 1}: {exc}")
+                            continue
+
+                        texto = re.sub(r"[ \t]+", " ", texto).strip()
+                        if not texto:
+                            continue
+
+                        restante = MAX_PDF_TEXT_CHARS_CHAT - total_chars
+                        texto = texto[:restante]
+                        paginas.append(f"PÁGINA {numero + 1}\n{texto}")
+                        total_chars += len(texto)
+                finally:
+                    documento.close()
+            except Exception as exc:
+                return jsonify({
+                    "ok": False,
+                    "error": f"No se pudo leer el PDF adjunto: {exc}"
+                }), 400
+            finally:
+                del datos_pdf
 
             if not paginas:
                 return jsonify({
@@ -1804,7 +1809,8 @@ def subir_poliza():
     try:
         archivo.save(temporal)
         if temporal.read_bytes()[:5] != b"%PDF-": raise ValueError("El archivo no parece ser un PDF válido.")
-        PdfReader(str(temporal))
+        documento = fitz.open(str(temporal))
+        documento.close()
         temporal.replace(destino)
         return jsonify(ok=True,archivo=destino.name)
     except ValueError as e:
@@ -2022,7 +2028,16 @@ def subir_manual(slug):
                 )
             archivo.stream.seek(0)
             try:
-                PdfReader(archivo.stream)
+                datos_validacion = archivo.stream.read()
+                archivo.stream.seek(0)
+                if len(datos_validacion) > MAX_PDF_FILE_SIZE_BYTES:
+                    raise ValueError(
+                        f'El PDF "{archivo.filename}" supera el máximo de '
+                        f'{MAX_PDF_FILE_SIZE_BYTES // (1024 * 1024)} MB.'
+                    )
+                documento = fitz.open(stream=datos_validacion, filetype="pdf")
+                documento.close()
+                del datos_validacion
             except Exception as exc:
                 raise ValueError(
                     f'No se pudo leer el PDF "{archivo.filename}". '
