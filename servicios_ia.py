@@ -21,9 +21,8 @@ SHEET_URL = (
 
 
 MODELOS_GEMINI = [
-    # Modelo estable recomendado actualmente por Google para producción.
+    "gemini-flash-latest",
     "gemini-3.5-flash",
-    # Fallback económico/rápido.
     "gemini-3.1-flash-lite",
 ]
 
@@ -37,7 +36,7 @@ EXCEL_INTERNO = BASE_DIR / "excel_interno.xlsx"
 
 def obtener_cliente_gemini():
 
-    api_key = (os.getenv("GEMINI_API_KEY") or "").strip()
+    api_key = os.getenv("GEMINI_API_KEY")
 
     if not api_key:
         return None
@@ -590,8 +589,10 @@ FUENTES SELECCIONADAS
                 fuentes_seleccionadas,
             )
             config_kwargs = {
-                # No enviamos temperature/top_p/top_k: los modelos nuevos
-                # pueden rechazarlos y provocar errores 400.
+                "temperature": 0.15,
+                # 1400 era demasiado bajo para consultas complejas y podía
+                # truncar respuestas válidas. Dejamos margen sin fomentar
+                # respuestas innecesariamente largas mediante el prompt.
                 "max_output_tokens": 4096,
             }
             if uso_web:
@@ -615,7 +616,7 @@ FUENTES SELECCIONADAS
 
         except Exception as error:
             ultimo_error = error
-            print(f"ERROR GEMINI {modelo}: {type(error).__name__}: {error}")
+            print("ERROR GEMINI", modelo, ":", error)
 
     print("GEMINI TODOS LOS MODELOS FALLARON:", ultimo_error)
     return "Gemini no está disponible en este momento. Intentá nuevamente en unos segundos."

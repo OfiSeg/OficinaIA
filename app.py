@@ -58,20 +58,6 @@ load_dotenv(BASE_DIR / '.env')
 
 app.config['MAX_CONTENT_LENGTH'] = 20 * 1024 * 1024
 
-# Las rutas /api/* siempre devuelven JSON, incluso ante errores inesperados.
-# Evita que el frontend intente hacer JSON.parse() sobre una página HTML de Flask
-# y termine mostrando "Unexpected token < ...".
-@app.errorhandler(Exception)
-def manejar_error_global(error):
-    if request.path.startswith("/api/"):
-        print(f"ERROR API {request.method} {request.path}: {type(error).__name__}: {error}")
-        return jsonify({
-            "ok": False,
-            "error": "Ocurrió un error interno al procesar la solicitud."
-        }), 500
-    raise error
-
-
 DOCUMENTOS_DIR = BASE_DIR / "documentos"
 
 NOTAS_FILE = BASE_DIR / "notas.json"
@@ -416,7 +402,13 @@ def obtener_companias():
 # EXTRACCIÓN Y RETRIEVAL DE PDF
 # ==========================================================
 
-_PDF_CACHE = {}
+# Límites de seguridad para el entorno de Render.
+# pypdf puede consumir mucha memoria al procesar PDFs grandes o complejos.
+# No mantenemos el texto completo de todos los manuales en RAM.
+MAX_PDF_PAGES_INDEX = 120
+MAX_PDF_TEXT_CHARS_INDEX = 180_000
+MAX_R2_PDFS_PER_QUERY = 12
+
 _STOPWORDS_ES = {
     "para", "como", "cual", "cuál", "que", "qué", "del", "las", "los",
     "una", "uno", "unos", "unas", "por", "con", "sin", "sobre", "entre",
@@ -456,55 +448,80 @@ def _raiz_simple(token):
 
 def extraer_paginas_pdf(ruta):
     """
-    Devuelve el texto separado por página y conserva metadata útil para
-    citar el origen. Se cachea por fecha de modificación para no releer
-    todos los PDFs en cada pregunta.
+    Extrae texto de un PDF de forma acotada para evitar que un manual grande
+    derribe el worker de Render por falta de memoria.
+
+    Importante: no se cachea el texto completo de todos los PDFs. El caché
+    anterior podía acumular cientos de MB entre manuales y terminar en
+    SIGKILL/OOM.
     """
     ruta = Path(ruta)
+
     try:
-        mtime = ruta.stat().st_mtime_ns
+        tamaño = ruta.stat().st_size
     except OSError:
         return []
 
-    clave = str(ruta.resolve())
-    cacheado = _PDF_CACHE.get(clave)
-    if cacheado and cacheado.get("mtime") == mtime:
-        return cacheado["paginas"]
+    if tamaño <= 0:
+        return []
+
+    # MAX_CONTENT_LENGTH protege las subidas, pero R2 puede contener archivos
+    # cargados antes de ese límite. Evitamos intentar indexar uno enorme.
+    if tamaño > 20 * 1024 * 1024:
+        print(f"PDF OMITIDO POR TAMAÑO ({tamaño / 1024 / 1024:.1f} MB): {ruta}")
+        return []
 
     paginas = []
+    total_chars = 0
+    lector = None
 
     try:
-        lector = PdfReader(str(ruta))
-        for numero, pagina in enumerate(lector.pages, start=1):
+        # strict=False es más tolerante con PDFs reales y evita abortar por
+        # pequeños problemas estructurales del archivo.
+        lector = PdfReader(str(ruta), strict=False)
+        total_paginas = min(len(lector.pages), MAX_PDF_PAGES_INDEX)
+
+        for numero in range(total_paginas):
+            if total_chars >= MAX_PDF_TEXT_CHARS_INDEX:
+                break
+
             try:
-                contenido = pagina.extract_text() or ""
+                contenido = lector.pages[numero].extract_text() or ""
             except Exception as error:
-                print(f"ERROR EXTRAYENDO PÁGINA {numero} DE PDF {ruta}: {error}")
-                contenido = ""
+                print(f"ERROR EXTRAYENDO PÁGINA {numero + 1} DE PDF {ruta}: {error}")
+                continue
 
             contenido = re.sub(r"[ \t]+", " ", contenido)
             contenido = re.sub(r"\n{3,}", "\n\n", contenido).strip()
 
-            if contenido:
-                paginas.append({
-                    "pagina": numero,
-                    "texto": contenido
-                })
+            if not contenido:
+                continue
 
-        if not paginas:
-            print(
-                f"PDF SIN TEXTO EXTRAÍBLE: {ruta}. "
-                "Si es un PDF escaneado, necesita OCR para poder consultarse."
-            )
+            restante = MAX_PDF_TEXT_CHARS_INDEX - total_chars
+            contenido = contenido[:restante]
+            paginas.append({
+                "pagina": numero + 1,
+                "texto": contenido
+            })
+            total_chars += len(contenido)
 
     except Exception as error:
         print("ERROR LEYENDO PDF:", ruta, error)
         paginas = []
+    finally:
+        # Liberamos referencias al objeto pypdf antes de pasar al siguiente
+        # manual. Esto es especialmente importante en Render con poca RAM.
+        lector = None
 
-    _PDF_CACHE[clave] = {
-        "mtime": mtime,
-        "paginas": paginas
-    }
+    if not paginas:
+        print(
+            f"PDF SIN TEXTO EXTRAÍBLE: {ruta}. "
+            "Si es un PDF escaneado, necesita OCR para poder consultarse."
+        )
+
+    if total_paginas == MAX_PDF_PAGES_INDEX:
+        print(f"PDF LIMITADO A {MAX_PDF_PAGES_INDEX} PÁGINAS PARA INDEXACIÓN: {ruta}")
+
     return paginas
 
 
@@ -598,12 +615,28 @@ def _puntuar_chunk(consulta, chunk):
     return puntuacion
 
 
-def _manuales_r2_por_ruta():
-    """Relaciona el archivo temporal local con sus metadatos de Neon."""
+def _manuales_r2_por_ruta(consulta=""):
+    """
+    Descarga sólo un número acotado de manuales R2 por consulta.
+    Prioriza nombre/compañía cuando la pregunta menciona alguno.
+    """
     mapa = {}
     try:
-        for fila in listar_manuales():
+        filas = listar_manuales()
+        q = _normalizar_busqueda(consulta)
+
+        def prioridad(fila):
+            nombre = _normalizar_busqueda(fila.get("nombre") or "")
+            r2_key = _normalizar_busqueda(fila.get("r2_key") or "")
+            texto = f"{nombre} {r2_key}"
+            return sum(1 for token in _tokens_busqueda(consulta) if token in texto)
+
+        filas = sorted(filas, key=prioridad, reverse=True)[:MAX_R2_PDFS_PER_QUERY]
+
+        for fila in filas:
             r2_key = str(fila.get("r2_key") or "")
+            if not r2_key:
+                continue
             try:
                 path = descargar_pdf_temporal(r2_key)
             except Exception as error:
@@ -630,7 +663,7 @@ def buscar_en_documentos(consulta, limite=16):
     if not tokens:
         return resultados
 
-    r2_por_ruta = _manuales_r2_por_ruta()
+    r2_por_ruta = _manuales_r2_por_ruta(consulta)
 
     archivos_locales = []
     if DOCUMENTOS_DIR.exists():
