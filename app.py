@@ -86,6 +86,7 @@ CIAS_LINKS = [
     ("San Cristobal", "https://productores.sancristobal.com.ar/"),
     ("Mercantil Andina", "https://servicios.mercantilandina.com.ar/sigmav3/"),
     ("EuroAmerica", "https://pas.euroamericaseguros.seg.ar/login"),
+    ("Allianz", "https://auth.allianz.com.ar/login"),
 ]
 
 MANUALES_DIR = BASE_DIR / "manuales_companias"
