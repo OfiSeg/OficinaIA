@@ -1657,91 +1657,14 @@ def chat():
         db.commit()
 
     # ======================================================
-    # BUSCAR EN PDF
+    # CONTEXTO DIRECTO
     # ======================================================
+    # La búsqueda de documentos y Google Sheets ya no se ejecuta aquí.
+    # Gemini decide mediante Function Calling cuándo necesita esas fuentes.
+    # El único contexto prearmado que se conserva es el PDF adjuntado
+    # explícitamente por el usuario en este chat.
 
-    resultados_pdf = buscar_en_documentos(
-        mensaje
-    )
-
-    contexto_pdf = ""
-
-    for resultado in resultados_pdf:
-
-        contexto_pdf += (
-            "\n\n===== FRAGMENTO DE DOCUMENTO =====\n"
-        )
-
-        contexto_pdf += (
-            "ARCHIVO: "
-            + resultado.get("archivo", "")
-            + "\n"
-        )
-
-        contexto_pdf += (
-            "COMPAÑIA: "
-            + resultado.get("compania", "")
-            + "\n"
-        )
-
-        contexto_pdf += (
-            "PAGINA: "
-            + str(resultado.get("pagina", ""))
-            + "\n"
-        )
-
-        contexto_pdf += (
-            "TIPO: "
-            + resultado.get("tipo", "documento")
-            + "\n\n"
-        )
-
-        contexto_pdf += (
-            resultado.get("texto", "")
-            + "\n"
-        )
-
-    # ======================================================
-    # BUSCAR EN GOOGLE SHEETS
-    # ======================================================
-
-    contexto_sheet = ""
-
-    try:
-
-        from servicios_ia import (
-            buscar_en_google_sheet
-        )
-
-        resultados_sheet = (
-            buscar_en_google_sheet(
-                mensaje
-            )
-        )
-
-        if resultados_sheet:
-
-            contexto_sheet = (
-                "\n\n===== GOOGLE SHEETS =====\n"
-                + resultados_sheet
-            )
-
-    except Exception as error:
-
-        print(
-            "ERROR GOOGLE SHEETS:",
-            error
-        )
-
-    # ======================================================
-    # CONTEXTO COMPLETO
-    # ======================================================
-
-    contexto = (
-        contexto_pdf_adjunto
-        + contexto_pdf
-        + contexto_sheet
-    )
+    contexto = contexto_pdf_adjunto
 
     # ======================================================
     # GEMINI
