@@ -8,6 +8,12 @@ from google import genai
 from google.genai import types
 from openpyxl import load_workbook
 
+try:
+    from storage_r2 import descargar_excel_interno, EXCEL_INTERNO_R2_KEY
+except Exception:
+    descargar_excel_interno = None
+    EXCEL_INTERNO_R2_KEY = "excel_interno.xlsx"
+
 
 # ==========================================================
 # CONFIGURACIÓN
@@ -118,14 +124,31 @@ def _coincidencia_identificador(pregunta, fila):
             return True
     return False
 
+def _asegurar_excel_local_para_ia():
+    """Recupera el Excel interno desde R2 si la copia local no existe.
+    No modifica app.py y evita que el chat trabaje con un archivo inexistente
+    en una instancia nueva de Render.
+    """
+    if EXCEL_INTERNO.exists():
+        return True
+    if descargar_excel_interno is None:
+        return False
+    try:
+        return bool(descargar_excel_interno(EXCEL_INTERNO, EXCEL_INTERNO_R2_KEY))
+    except Exception as error:
+        print("ERROR RECUPERANDO EXCEL INTERNO PARA IA:", error)
+        return False
+
+
 def _cargar_excel_interno():
-    if not EXCEL_INTERNO.exists():
+    if not _asegurar_excel_local_para_ia():
         return []
     try:
         wb = load_workbook(EXCEL_INTERNO, read_only=True, data_only=True)
         ws = wb.active
         rows = list(ws.iter_rows(values_only=True))
         if not rows:
+            wb.close()
             return []
         headers = [str(x or "").strip().upper() for x in rows[0]]
         datos = []
@@ -138,10 +161,12 @@ def _cargar_excel_interno():
             if any(fila.values()):
                 datos.append(fila)
         wb.close()
+        print("EXCEL INTERNO IA:", len(datos), "registros cargados.")
         return datos
     except Exception as error:
         print("ERROR EXCEL INTERNO:", error)
         return []
+
 
 def _buscar_en_registros(pregunta, datos, etiqueta):
     if not datos:
@@ -172,8 +197,285 @@ def _buscar_en_registros(pregunta, datos, etiqueta):
         coincidencias = sum(1 for palabra in palabras if palabra in texto)
         if coincidencias:
             resultados.append((coincidencias, fila))
+    # Si la consulta nombra una compañía, devolvemos TODAS sus filas.
+    # Esto es imprescindible para conteos, listados y agrupaciones: un top-N
+    # semántico no puede representar el dataset completo.
+    companias = _companias_mencionadas(pregunta, datos)
+    if companias:
+        campos_cia = _campos_compania(datos)
+        filas_compania = [
+            f for f in datos
+            if any(
+                _normalizar_texto(f.get(campo, "")) in companias
+                for campo in campos_cia
+            )
+        ]
+        if filas_compania:
+            return [(50, f) for f in filas_compania]
+
     resultados.sort(key=lambda x: x[0], reverse=True)
     return resultados[:50]
+
+
+# ==========================================================
+# CONSULTAS ESTRUCTURADAS SOBRE EL DATASET COMPLETO
+# ==========================================================
+
+_ALIAS_CIAS = {
+    "ags": "ags",
+    "agrosalta": "agrosalta",
+    "atm": "atm",
+    "prof": "prof",
+    "rivadavia": "rivadavia",
+    "triunfo": "triunfo",
+    "san cristobal": "san cristobal",
+    "sancristobal": "sancristobal",
+    "mercantil andina": "mercantil andina",
+    "mercantilandina": "mercantilandina",
+    "euroamerica": "euroamerica",
+    "euro america": "euro america",
+    "federacion patronal": "federacion patronal",
+    "federacion": "federacion",
+}
+
+
+def _campos_compania(datos):
+    if not datos:
+        return []
+    candidatos = ("CIA", "COMPAÑIA", "COMPANIA", "COMPAÑÍA", "ASEGURADORA", "COMPANIA DE SEGUROS")
+    presentes = set()
+    for fila in datos[: min(len(datos), 3)]:
+        presentes.update(str(k).strip().upper() for k in fila.keys())
+    return [c for c in candidatos if c in presentes]
+
+
+def _companias_mencionadas(pregunta, datos):
+    q = _normalizar_texto(pregunta)
+    mencionadas = set()
+    for alias, canon in _ALIAS_CIAS.items():
+        if re.search(rf"\b{re.escape(_normalizar_texto(alias))}\b", q):
+            mencionadas.add(_normalizar_texto(canon))
+    return mencionadas
+
+
+def _campo_por_alias(fila, aliases):
+    for alias in aliases:
+        for clave in fila.keys():
+            if _normalizar_texto(clave) == _normalizar_texto(alias):
+                return clave
+    return None
+
+
+def _filas_por_companias(pregunta, datos):
+    mencionadas = _companias_mencionadas(pregunta, datos)
+    campos = _campos_compania(datos)
+    if not mencionadas or not campos:
+        return datos
+    salida = []
+    for fila in datos:
+        valor = next((fila.get(c, "") for c in campos), "")
+        if _normalizar_texto(valor) in mencionadas:
+            salida.append(fila)
+    return salida
+
+
+def _es_conteo(pregunta):
+    q = _normalizar_texto(pregunta)
+    return bool(re.search(r"\bcuant[oa]s?\b|\bnumero de\b|\btotal de\b|\bcuenta\b|\bcont[aá]me\b", q))
+
+
+def _es_lista_asegurados(pregunta):
+    q = _normalizar_texto(pregunta)
+    return bool(
+        re.search(r"\bque asegurados\b|\bcuales asegurados\b|\bque clientes\b|\bcuales clientes\b", q)
+    ) and not _es_conteo(pregunta)
+
+
+def _es_vehiculos_lista(pregunta):
+    q = _normalizar_texto(pregunta)
+    return bool(re.search(r"\bque vehiculos\b|\bcuales vehiculos\b", q))
+
+
+def _identidad_unica(fila):
+    # Si existe un identificador fuerte, cuenta personas y no filas repetidas.
+    for aliases in (
+        ("DNI", "DOCUMENTO", "CUIT", "CUIL"),
+        ("CLIENTE", "ASEGURADO", "NOMBRE"),
+        ("POLIZA", "PÓLIZA"),
+    ):
+        clave = _campo_por_alias(fila, aliases)
+        if clave and str(fila.get(clave, "")).strip():
+            return _normalizar_texto(fila.get(clave, ""))
+    return None
+
+
+def _deduplicar_personas(filas):
+    """Deduplica sólo cuando hay un identificador razonablemente confiable."""
+    if not filas:
+        return []
+    ids = []
+    sin_id = []
+    vistos = set()
+    for fila in filas:
+        ident = _identidad_unica(fila)
+        if ident:
+            if ident in vistos:
+                continue
+            vistos.add(ident)
+            ids.append(fila)
+        else:
+            sin_id.append(fila)
+    return ids + sin_id
+
+
+def _nombre_cliente(fila):
+    clave = _campo_por_alias(fila, ("CLIENTE", "ASEGURADO", "NOMBRE"))
+    return str(fila.get(clave, "")).strip() if clave else ""
+
+
+def _campo_pago(fila):
+    return _campo_por_alias(fila, ("FORMA DE PAGO", "MEDIO DE PAGO", "PAGO", "COBRANZA", "METODO DE PAGO", "MÉTODO DE PAGO"))
+
+
+def _es_pago(pregunta, palabra):
+    q = _normalizar_texto(pregunta)
+    return palabra in q and bool(re.search(r"\bpagan\b|\bpago\b|\bcobran\b|\bcuantos\b|\bcuantas\b", q))
+
+
+def _es_envios_ya(pregunta):
+    q = _normalizar_texto(pregunta)
+    return "envios ya" in q
+
+
+def _seleccionar_dataset_estructurado(interno, externo):
+    # El Excel interno es la fuente prioritaria si realmente tiene estructura
+    # de seguros. Si no la tiene, se usa el externo sin mezclar datasets.
+    if interno and (_campos_compania(interno) or any(_campo_por_alias(f, ("CLIENTE", "ASEGURADO", "PATENTE")) for f in interno[:3])):
+        return interno, "Excel interno"
+    if externo:
+        return externo, "Excel externo / Google Sheets"
+    return interno or [], "Excel interno"
+
+
+def respuesta_deterministica_excel(pregunta, datos_interno=None, datos_externo=None):
+    """Resuelve operaciones estructuradas sobre TODAS las filas disponibles.
+
+    Nunca recorta a 10/50/100 registros. Gemini sólo redacta cuando hace falta;
+    los conteos y agrupaciones salen directamente del dataset.
+    """
+    interno = datos_interno if datos_interno is not None else _cargar_excel_interno()
+    externo = datos_externo if datos_externo is not None else obtener_datos_sheet()
+    datos, fuente = _seleccionar_dataset_estructurado(interno, externo)
+    if not datos:
+        return None
+
+    q = _normalizar_texto(pregunta)
+    filas = _filas_por_companias(pregunta, datos)
+
+    # Vehículos de un cliente: listado y conteo exactos.
+    if _es_vehiculos_lista(pregunta) or _es_pregunta_cantidad_vehiculos(pregunta):
+        cliente = buscar_cliente_exactamente(pregunta, datos)
+        if cliente:
+            cn = _normalizar_texto(cliente)
+            filas_cliente = [f for f in datos if _normalizar_texto(_nombre_cliente(f)) == cn]
+            vehiculos = []
+            vistos = set()
+            for fila in filas_cliente:
+                veh = str(fila.get(_campo_por_alias(fila, ("VEHICULO", "VEHÍCULO")) or "") or "").strip()
+                pat = str(fila.get(_campo_por_alias(fila, ("PATENTE",)) or "") or "").strip()
+                if not veh and not pat:
+                    continue
+                clave = _normalizar_texto(pat or veh)
+                if clave in vistos:
+                    continue
+                vistos.add(clave)
+                vehiculos.append(fila)
+            if vehiculos:
+                if _es_pregunta_cantidad_vehiculos(pregunta):
+                    cantidad = len(vehiculos)
+                    palabra = "vehículo" if cantidad == 1 else "vehículos"
+                    return f"{cliente} tiene registrados {cantidad} {palabra}.\n\n**Fuentes:** {fuente}"
+                cantidad = len(vehiculos)
+                palabra = "vehículo" if cantidad == 1 else "vehículos"
+                lineas = [f"{cliente} tiene registrados {cantidad} {palabra}:"]
+                for i, fila in enumerate(vehiculos, 1):
+                    veh = str(fila.get(_campo_por_alias(fila, ("VEHICULO", "VEHÍCULO")) or "") or "").strip()
+                    pat = str(fila.get(_campo_por_alias(fila, ("PATENTE",)) or "") or "").strip()
+                    cia = str(fila.get(_campo_por_alias(fila, ("CIA", "COMPAÑIA", "COMPANIA", "COMPAÑÍA")) or "") or "").strip()
+                    detalle = " — ".join(x for x in (veh, f"Patente {pat}" if pat else "", cia) if x)
+                    lineas.append(f"{i}. {detalle}")
+                return "\n".join(lineas) + f"\n\n**Fuentes:** {fuente}"
+
+    if _es_envios_ya(pregunta) and _es_conteo(pregunta):
+        claves = ("ENVIOS YA", "ENVÍOS YA", "ENVIOSYA")
+        filas_validas = []
+        for f in filas:
+            clave = _campo_por_alias(f, claves)
+            if clave:
+                valor = _normalizar_texto(f.get(clave, ""))
+                if valor not in {"", "no", "false", "0", "n", "none", "null"}:
+                    filas_validas.append(f)
+        if filas_validas:
+            n = len(_deduplicar_personas(filas_validas))
+            return f"Hay **{n}** asegurados con Envíos Ya.\n\n**Fuentes:** {fuente}"
+
+    if _es_pago(pregunta, "cbu") and _es_conteo(pregunta):
+        filas_validas = [f for f in filas if "cbu" in _normalizar_texto(f.get(_campo_pago(f) or "", ""))]
+        if filas_validas:
+            n = len(_deduplicar_personas(filas_validas))
+            return f"Hay **{n}** asegurados que pagan con CBU.\n\n**Fuentes:** {fuente}"
+
+    if _es_pago(pregunta, "cuponera") and _es_conteo(pregunta):
+        filas_validas = [f for f in filas if "cupon" in _normalizar_texto(f.get(_campo_pago(f) or "", ""))]
+        if filas_validas:
+            n = len(_deduplicar_personas(filas_validas))
+            return f"Hay **{n}** asegurados que pagan con cuponera.\n\n**Fuentes:** {fuente}"
+
+    if _es_lista_asegurados(pregunta):
+        nombres = []
+        vistos = set()
+        for f in filas:
+            nombre = _nombre_cliente(f)
+            if not nombre:
+                continue
+            clave = _normalizar_texto(nombre)
+            if clave not in vistos:
+                vistos.add(clave)
+                nombres.append(nombre)
+        if nombres:
+            return "Asegurados encontrados:\n\n" + "\n".join(f"- {n}" for n in nombres) + f"\n\n**Fuentes:** {fuente}"
+
+    if _es_conteo(pregunta):
+        # "Cuántos asegurados tengo en AGS y ATM": responde cada compañía por
+        # separado, usando todas las filas, sin depender de un top-N.
+        if len(_companias_mencionadas(pregunta, datos)) >= 2:
+            lineas = []
+            for cia in sorted(_companias_mencionadas(pregunta, datos)):
+                sub = [f for f in datos if _normalizar_texto(next((f.get(c, "") for c in _campos_compania(datos)), "")) == cia]
+                lineas.append(f"- {cia.upper()}: {len(_deduplicar_personas(sub))}")
+            if lineas:
+                return "Cantidad de asegurados:\n\n" + "\n".join(lineas) + f"\n\n**Fuentes:** {fuente}"
+
+        # Una sola compañía.
+        if _companias_mencionadas(pregunta, datos):
+            n = len(_deduplicar_personas(filas))
+            return f"Hay **{n}** asegurados en la compañía consultada.\n\n**Fuentes:** {fuente}"
+
+        # "Cuántos asegurados tiene cada compañía".
+        if re.search(r"\bcada compania\b|\bpor compania\b", q):
+            campos = _campos_compania(datos)
+            if campos:
+                grupos = {}
+                for f in datos:
+                    cia = str(next((f.get(c, "") for c in campos), "")).strip()
+                    if cia:
+                        grupos.setdefault(cia, []).append(f)
+                lineas = [f"- {cia}: {len(_deduplicar_personas(grupo))}" for cia, grupo in sorted(grupos.items(), key=lambda x: _normalizar_texto(x[0]))]
+                if lineas:
+                    return "Asegurados por compañía:\n\n" + "\n".join(lineas) + f"\n\n**Fuentes:** {fuente}"
+
+    return None
+
 
 def buscar_en_sheet(pregunta, datos=None):
     datos = datos if datos is not None else obtener_datos_sheet()
@@ -364,6 +666,28 @@ def _documentos_desde_contexto(contexto):
     return fuentes
 
 
+def _intencion_fuente(pregunta):
+    q = _normalizar_texto(pregunta)
+    excel = any(x in q for x in (
+        "excel", "planilla", "asegurado", "asegurados", "cliente", "clientes",
+        "vehiculo", "vehiculos", "patente", "dni", "cuit", "cbu", "cuponera",
+        "envios ya", "compania", "cia"
+    ))
+    documento = any(x in q for x in (
+        "manual", "poliza", "póliza", "cobertura", "condicion", "condiciones",
+        "procedimiento", "franquicia", "asistencia", "remolque", "siniestro"
+    ))
+    if "excel" in q or "planilla" in q:
+        return "excel"
+    if "manual" in q or "poliza" in q or "póliza" in q:
+        return "documento"
+    if excel and not documento:
+        return "excel"
+    if documento and not excel:
+        return "documento"
+    return "mixta"
+
+
 def _seleccionar_fuentes(pregunta, contexto_interno, contexto_externo, contexto):
     """
     Selecciona como máximo 2 fuentes reales para el contexto de Gemini.
@@ -398,6 +722,17 @@ def _seleccionar_fuentes(pregunta, contexto_interno, contexto_externo, contexto)
 
     if not candidatos:
         return [], []
+
+    intencion = _intencion_fuente(pregunta)
+    if intencion == "excel":
+        candidatos = [c for c in candidatos if c["nombre"] in {
+            "Excel interno", "Excel externo / Google Sheets"
+        }] or candidatos
+    elif intencion == "documento":
+        documentos = [c for c in candidatos if c["nombre"] not in {
+            "Excel interno", "Excel externo / Google Sheets"
+        }]
+        candidatos = documentos or candidatos
 
     for candidato in candidatos:
         candidato["score"] = _puntuar_fuente(
@@ -463,15 +798,19 @@ def consultar_gemini(pregunta, contexto="", historial=None):
         return "La IA todavía no está configurada. Falta GEMINI_API_KEY."
 
     datos_sheet_crudos = obtener_datos_sheet()
-    respuesta_vehiculos = respuesta_deterministica_vehiculos(pregunta, datos_sheet_crudos)
-    if respuesta_vehiculos:
-        return _agregar_fuentes(
-            respuesta_vehiculos,
-            ["Excel externo / Google Sheets"],
-        )
+    datos_interno_crudos = _cargar_excel_interno()
 
-    # Recuperación completa de los Excel: se buscan todos los registros
-    # relevantes, no sólo las primeras 10 filas.
+    respuesta_estructurada = respuesta_deterministica_excel(
+        pregunta,
+        datos_interno=datos_interno_crudos,
+        datos_externo=datos_sheet_crudos,
+    )
+    if respuesta_estructurada:
+        return respuesta_estructurada
+
+    # Recuperación para preguntas no estructuradas. Las operaciones de conteo,
+    # agrupación y filtrado determinístico ya se resolvieron arriba con todas
+    # las filas; Gemini no debe calcularlas a partir de un subconjunto.
     contexto_interno = buscar_en_excel_interno(pregunta)
     contexto_externo = (
         ""
