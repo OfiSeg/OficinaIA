@@ -119,8 +119,12 @@ MANUALES_COMPANIAS = [
 # puede revisar todos los manuales de esa compañía; una consulta genérica se
 # mantiene acotada para proteger memoria, tiempo y costo en Render.
 # MANUALES_MAX_CANDIDATOS_CIA: 0 = sin tope (revisar todos los de esa compañía).
+# Se baja el default de 0 a 10 para evitar quedarse sin memoria (SIGKILL) al
+# descargar TODOS los manuales de una compañía en una sola consulta. Si hace
+# falta cobertura completa y el plan de Render tiene RAM de sobra, se puede
+# subir con la variable de entorno MANUALES_MAX_CANDIDATOS_CIA en Render.
 MANUALES_MAX_CANDIDATOS_GENERAL = int(os.getenv("MANUALES_MAX_CANDIDATOS_GENERAL", "12"))
-MANUALES_MAX_CANDIDATOS_CIA = int(os.getenv("MANUALES_MAX_CANDIDATOS_CIA", "0"))
+MANUALES_MAX_CANDIDATOS_CIA = int(os.getenv("MANUALES_MAX_CANDIDATOS_CIA", "10"))
 MANUALES_MAX_ARCHIVOS_CON_CIA = int(os.getenv("MANUALES_MAX_ARCHIVOS_CON_CIA", "6"))
 MANUALES_MAX_ARCHIVOS_GENERAL = int(os.getenv("MANUALES_MAX_ARCHIVOS_GENERAL", "3"))
 

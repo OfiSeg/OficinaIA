@@ -802,6 +802,19 @@ def _chunks_metadato(contenido, chunk_chars=1400, overlap=220):
     return chunks
 
 
+def _raiz_simple(palabra):
+    """Raíz muy simplificada para acercar singular/plural y variaciones
+    cercanas (ej. 'grúas'~'grúa', 'remolques'~'remolque') cuando el token
+    exacto no matcheó. No es un stemmer real, solo recorta sufijos comunes.
+    Esta función faltaba en el archivo original (bug pre-existente) y hacía
+    que CUALQUIER búsqueda en metadatos reventara con NameError."""
+    p = str(palabra or "")
+    for sufijo in ("iciones", "ciones", "mente", "es", "s"):
+        if len(p) > len(sufijo) + 3 and p.endswith(sufijo):
+            return p[: -len(sufijo)]
+    return p
+
+
 def _puntuar_metadato(consulta, texto):
     consulta_norm = _normalizar_texto(consulta)
     texto_norm = _normalizar_texto(texto)
@@ -1041,19 +1054,22 @@ REGLAS:
 - OficinaIA puede haber recuperado METADATOS INTERNOS PRIORITARIOS antes de esta llamada. Si aparecen dentro del contexto, utilizalos directamente como fuente prioritaria; no afirmes que el dato no está disponible si está allí.
 - Si el contexto ya contiene metadatos suficientes para responder, no vuelvas a llamar buscar_en_metadatos() innecesariamente. Podés usarla nuevamente únicamente si necesitás información adicional o una búsqueda más específica.
 - Elegí las herramientas necesarias según el significado de la pregunta.
-- ORDEN OBLIGATORIO DE FUENTES DOCUMENTALES (coberturas, asistencia, remolque,
-  grúas, límites, condiciones, procedimientos, datos de compañías):
-  1) buscar_en_metadatos  ← PRIORIDAD MÁXIMA (fichas cargadas a mano)
-  2) buscar_en_manuales   ← solo si metadatos dio 0 o es insuficiente
-  3) buscar_en_internet u otras tools solo si ambas fallaron
-- Si metadatos devuelve resultados útiles, podés responder con ellos. Complementá
-  con PDFs solo si aportan valor real adicional.
-- No afirmes que la información no existe solo porque la primera búsqueda dio 0.
-- FLUJO OBLIGATORIO DE DOS INTENTOS: búsqueda inicial -> evaluar resultados -> si
-  son insuficientes o cantidad 0, realizar una segunda búsqueda con términos
-  descompuestos, sinónimos (remolque/grúa/asistencia/auxilio/traslado),
-  singular/plural o formulaciones equivalentes -> recién después del segundo
-  intento, si tampoco hay evidencia, informar que no disponés de la información.
+- FUENTE PRINCIPAL Y AUTOSUFICIENTE: buscar_en_metadatos (fichas cargadas a
+  mano). Para coberturas, asistencia, remolque, grúas, límites, condiciones,
+  procedimientos y datos de compañías, buscá primero ahí y, si hay resultado
+  razonable, respondé con eso. NO hace falta abrir manuales en PDF además,
+  salvo que el propio resultado de metadatos sea insuficiente o contradictorio.
+- buscar_en_manuales (PDFs completos) es una herramienta PESADA y de uso
+  EXCEPCIONAL: implica descargar y procesar archivos grandes. Usala ÚNICAMENTE
+  cuando el usuario pida explícitamente un manual, documento o PDF por nombre,
+  o cuando metadatos haya dado 0 resultados Y el usuario insista en que la
+  información debería existir. Nunca la uses como paso automático de rutina.
+- Si metadatos da 0 resultados en un tema puntual, está bien responder que no
+  tenés esa ficha cargada y sugerir cargarla (guardar_metadato_relevante),
+  en lugar de encadenar automáticamente una búsqueda en PDFs.
+- No afirmes que la información no existe solo porque la primera búsqueda dio 0;
+  probá una reformulación de la MISMA búsqueda en metadatos (sinónimos:
+  remolque/grúa/asistencia/auxilio/traslado, singular/plural) antes de descartar.
 - Para conteos, usá contar_registros y confiá en su total; nunca cuentes manualmente un subconjunto.
 - Para vehículos/patentes, usá buscar_vehiculos.
 - Para datos estructurados generales (asegurados, pólizas en planilla), usá consultar_excel.
@@ -1066,11 +1082,14 @@ REGLAS:
 - Si el usuario usa el comando /guardar asegurado, respetá exactamente el orden:
   ASEGURADO, NUMERO, VEHICULO, PATENTE, CIA, MEDIO DE PAGO, CP, MAIL.
   ENVIOS YA es opcional. No reinterpretes ese orden.
-- Si necesitás información pública actualizada, usá buscar_en_internet.
+- Si necesitás información pública actualizada, usá buscar_en_internet (también
+  es una herramienta de uso puntual, no automático).
 - Podés llamar varias herramientas en la misma consulta y combinar sus resultados.
 - Si un identificador concreto aparece en la pregunta, no mezcles registros de otros identificadores.
 - Contestá todos los puntos de una pregunta múltiple.
-- Sólo si la evidencia sigue siendo insuficiente después del segundo intento, decilo claramente.
+- Si después de reformular la búsqueda en metadatos seguís sin evidencia y el
+  usuario no pidió explícitamente un manual/PDF, decilo claramente y ofrecé
+  cargar una ficha nueva con guardar_metadato_relevante.
 - Si la respuesta contiene un dato objetivo, estable y reutilizable para consultas futuras
   (por ejemplo una cantidad de grúas, un límite de cobertura o una condición puntual
   de una compañía), podés llamar guardar_metadato_relevante para PROPONER una ficha.
@@ -1097,12 +1116,16 @@ PREGUNTA:
     # debe existir al menos una nueva llamada de búsqueda antes de permitir texto final.
     reintento_pendiente = False
     fuentes_reintentadas = set()
+    # buscar_en_manuales y buscar_en_internet quedan afuera de este set a
+    # propósito: son herramientas pesadas (PDFs completos / búsqueda web) y
+    # no deben disparar una vuelta forzada adicional si dan 0 resultados. El
+    # reintento automático solo aplica a las fuentes livianas (metadatos,
+    # excel, vehículos), que es donde vale la pena insistir con sinónimos
+    # antes de responder "no tengo esa información".
     herramientas_busqueda = {
-        "buscar_en_manuales",
         "buscar_en_metadatos",
         "consultar_excel",
         "buscar_vehiculos",
-        "buscar_en_internet",
     }
 
     # Antes eran 6 vueltas x hasta 3 modelos cada una (hasta 18 llamadas a
@@ -1157,12 +1180,14 @@ PREGUNTA:
                             text=(
                                 "CONTROL DE RECUPERACIÓN: una herramienta de búsqueda "
                                 "devolvió 0 resultados o error. No respondas todavía. "
-                                "Hacé ahora una segunda búsqueda obligatoria. "
-                                "Orden de fuentes documentales: 1) buscar_en_metadatos "
-                                "(prioridad) → 2) buscar_en_manuales. "
-                                "Usá sinónimos si hace falta (remolque/grúa/asistencia/"
-                                "auxilio/traslado). Sólo después de ese segundo intento "
-                                "podés responder."
+                                "Hacé ahora una segunda búsqueda en buscar_en_metadatos "
+                                "con sinónimos (remolque/grúa/asistencia/auxilio/traslado) "
+                                "u otra formulación. NO uses buscar_en_manuales salvo que "
+                                "el usuario haya pedido explícitamente un manual/PDF por "
+                                "nombre: es una herramienta pesada de uso excepcional. "
+                                "Sólo después de ese segundo intento en metadatos podés "
+                                "responder, aunque sea para decir que no tenés esa ficha "
+                                "cargada."
                             )
                         )],
                     )

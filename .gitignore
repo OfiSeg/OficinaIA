@@ -4,3 +4,8 @@ __pycache__/
 .env
 .venv/
 venv/
+oficina.db
+polizas/*.pdf
+!polizas/.gitkeep
+manuales_companias/*
+!manuales_companias/.gitkeep
