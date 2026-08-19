@@ -202,6 +202,11 @@ const COMANDOS_CHAT=[
     comando:'/guardar asegurado',
     descripcion:'Cargar un asegurado en la planilla con campos en orden fijo.',
     plantilla:'/guardar asegurado (asegurado) (numero) (vehiculo) (patente) (cia) (medio de pago) (cp) (mail)'
+  },
+  {
+    comando:'/coti',
+    descripcion:'Generar una cotización rápida. Formato: /coti CIA COBERTURA SUMA PREMIO',
+    plantilla:'/coti CIA COBERTURA SUMA PREMIO'
   }
 ];
 let indiceComando=-1;

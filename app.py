@@ -44,6 +44,8 @@ from storage_r2 import (
 from openpyxl import Workbook, load_workbook
 from openpyxl.utils import get_column_letter
 from docx import Document
+from coti import procesar_comando_coti
+from servicios_ia import buscar_en_metadatos
 
 # ==========================================================
 # CONFIGURACIÓN
@@ -105,6 +107,15 @@ MANUALES_COMPANIAS = [
     "Triunfo",
     "PROF",
 ]
+
+# Límites de recuperación de manuales. Una consulta con compañía identificada
+# puede revisar todos los manuales de esa compañía; una consulta genérica se
+# mantiene acotada para proteger memoria, tiempo y costo en Render.
+# MANUALES_MAX_CANDIDATOS_CIA: 0 = sin tope (revisar todos los de esa compañía).
+MANUALES_MAX_CANDIDATOS_GENERAL = int(os.getenv("MANUALES_MAX_CANDIDATOS_GENERAL", "12"))
+MANUALES_MAX_CANDIDATOS_CIA = int(os.getenv("MANUALES_MAX_CANDIDATOS_CIA", "0"))
+MANUALES_MAX_ARCHIVOS_CON_CIA = int(os.getenv("MANUALES_MAX_ARCHIVOS_CON_CIA", "6"))
+MANUALES_MAX_ARCHIVOS_GENERAL = int(os.getenv("MANUALES_MAX_ARCHIVOS_GENERAL", "3"))
 
 def slug_manual_compania(nombre):
     equivalencias = {
@@ -638,42 +649,107 @@ def _puntuar_chunk(consulta, chunk):
     return puntuacion
 
 
-def _manuales_r2_por_ruta(consulta="", max_manuales=12):
+def _manuales_r2_por_ruta(consulta="", max_manuales=None):
     """
-    Prepara únicamente una cantidad acotada de manuales R2 por consulta.
+    Prepara una cantidad acotada de manuales R2 por consulta.
 
-    Antes se descargaban TODOS los PDFs de R2 antes de comenzar la búsqueda.
-    Eso podía convertir una consulta normal en una operación larga y pesada:
-    N PDFs -> N descargas -> N extracciones con PyMuPDF dentro del mismo
-    request. En Render, además, podía coincidir con otra petición y agotar
-    memoria/timeout del worker.
+    Si la consulta menciona una compañía, primero se restringe el universo a
+    los manuales de esa compañía usando el mismo detector de aliases que usa
+    servicios_ia._companias_mencionadas(). Recién después se aplica el orden
+    por nombre. Si no hay compañía explícita, se conserva el filtro por nombre
+    para no descargar todo R2 en cada request.
 
-    Se mantienen los mismos datos en R2/Neon. Sólo se evita descargar y
-    procesar manuales que no son candidatos razonables para esa consulta.
+    Con compañía identificada se prioriza cobertura completa de ese universo;
+    el límite opcional sólo se usa si se configura explícitamente y es mayor
+    que cero. Esto aumenta la lectura de PDFs de una compañía, pero evita que
+    un manual correcto quede fuera por el nombre de archivo y mantiene el
+    universo de trabajo controlado frente a un barrido global.
     """
     mapa = {}
     try:
         manuales = listar_manuales()
 
-        tokens = set(_tokens_busqueda(consulta))
-        candidatos = []
+        # Reutilizamos exactamente el criterio de aliases de servicios_ia.py.
+        try:
+            from servicios_ia import _companias_mencionadas
+            companias_detectadas = _companias_mencionadas(consulta, [])
+        except Exception as error:
+            print("ERROR DETECTANDO COMPAÑIA PARA MANUALES:", error)
+            companias_detectadas = set()
 
+        slug_por_canon = {
+            "mercantil andina": "mercantil_andina",
+            "mercantilandina": "mercantil_andina",
+            "federacion patronal": "federacion_patronal",
+            "federacion": "federacion_patronal",
+            "atm": "atm",
+            "san cristobal": "san_cristobal",
+            "sancristobal": "san_cristobal",
+            "rivadavia": "rivadavia",
+            "euroamerica": "euroamerica",
+            "euro america": "euroamerica",
+            "agrosalta": "agrosalta",
+            "ags": "agrosalta",
+            "triunfo": "triunfo",
+            "prof": "prof",
+        }
+
+        # Algunos aliases del detector tienen una forma compacta distinta
+        # (ej. "mercantilandina"). Se resuelven contra la misma compañía.
+        slug_companias = set()
+        for canon in companias_detectadas:
+            canon_norm = _normalizar_busqueda(canon)
+            slug = slug_por_canon.get(canon_norm)
+            if slug:
+                slug_companias.add(slug)
+                continue
+            compact = re.sub(r"[^a-z0-9]+", "", canon_norm)
+            for nombre, slug_candidato in slug_por_canon.items():
+                if compact == re.sub(r"[^a-z0-9]+", "", nombre):
+                    slug_companias.add(slug_candidato)
+                    break
+
+        candidatos = []
         for fila in manuales:
             nombre = str(fila.get("nombre") or "")
-            r2_key = str(fila.get("r2_key") or "")
-            texto_nombre = _normalizar_busqueda(f"{nombre} {r2_key}")
-            score = sum(1 for token in tokens if token in texto_nombre)
-
-            # Los manuales con coincidencia en nombre/ruta van primero.
-            candidatos.append((score, nombre, fila))
-
-        candidatos.sort(key=lambda x: (x[0], x[1].lower()), reverse=True)
-
-        for score, _, fila in candidatos[:max_manuales]:
             r2_key = str(fila.get("r2_key") or "")
             if not r2_key:
                 continue
 
+            partes = r2_key.split("/")
+            slug = partes[1] if len(partes) > 1 else ""
+
+            if slug_companias:
+                # Con compañía explícita, los manuales de otras compañías no
+                # compiten en absoluto por el contexto final.
+                if slug not in slug_companias:
+                    continue
+                score = 0
+            else:
+                texto_nombre = _normalizar_busqueda(f"{nombre} {r2_key}")
+                tokens = set(_tokens_busqueda(consulta))
+                score = sum(1 for token in tokens if token in texto_nombre)
+
+            candidatos.append((score, nombre, fila))
+
+        candidatos.sort(key=lambda x: (x[0], x[1].lower()), reverse=True)
+
+        if slug_companias:
+            # Si la compañía está identificada, por defecto se revisan todos
+            # sus manuales. Sólo un límite > 0 impuesto por configuración
+            # reduce ese universo de forma explícita. 0 o None = sin tope.
+            limite = max_manuales
+            if limite is None:
+                limite = MANUALES_MAX_CANDIDATOS_CIA
+            seleccion = candidatos if not limite else candidatos[:limite]
+        else:
+            limite = max_manuales
+            if limite is None:
+                limite = MANUALES_MAX_CANDIDATOS_GENERAL
+            seleccion = candidatos[:max(0, limite)]
+
+        for score, _, fila in seleccion:
+            r2_key = str(fila.get("r2_key") or "")
             try:
                 path = descargar_pdf_temporal(r2_key)
             except Exception as error:
@@ -691,9 +767,13 @@ def _manuales_r2_por_ruta(consulta="", max_manuales=12):
 def buscar_en_documentos(consulta, limite=16):
     """
     Recuperación por relevancia de PDFs.
-    - Conserva la selección final de hasta 2 documentos distintos.
-    - Procesa los documentos R2 de forma acotada para evitar que una consulta
-      descargue/extraga todos los manuales del bucket.
+
+    - Con compañía identificada, primero se acota R2 a esa compañía y se
+      permite que compitan hasta MANUALES_MAX_ARCHIVOS_CON_CIA archivos.
+    - Sin compañía identificada, se conserva un tope menor para no disparar
+      descargas, memoria y costo en Render.
+    - La cantidad total de fragmentos sigue limitada por ``limite`` y cada
+      archivo conserva su máximo de 4/8 fragmentos según complejidad.
     """
     resultados = []
     tokens = _tokens_busqueda(consulta)
@@ -701,7 +781,13 @@ def buscar_en_documentos(consulta, limite=16):
     if not tokens:
         return resultados
 
-    r2_por_ruta = _manuales_r2_por_ruta(consulta, max_manuales=12)
+    try:
+        from servicios_ia import _companias_mencionadas
+        companias_detectadas = _companias_mencionadas(consulta, [])
+    except Exception:
+        companias_detectadas = set()
+
+    r2_por_ruta = _manuales_r2_por_ruta(consulta)
 
     archivos_locales = []
     if DOCUMENTOS_DIR.exists():
@@ -784,29 +870,37 @@ def buscar_en_documentos(consulta, limite=16):
         reverse=True
     )
 
+    # La detección de compañía define cuántos archivos pueden competir.
+    # El límite total de fragmentos sigue siendo ``limite``.
+    max_archivos = (
+        MANUALES_MAX_ARCHIVOS_CON_CIA
+        if companias_detectadas
+        else MANUALES_MAX_ARCHIVOS_GENERAL
+    )
+
     seleccionados = []
     por_archivo = {}
     archivos_permitidos = []
 
+    tokens_consulta = _tokens_busqueda(consulta)
+    es_compleja = len(tokens_consulta) >= 8 or any(
+        palabra in _normalizar_busqueda(consulta)
+        for palabra in (
+            "como", "cómo", "procedimiento", "documentacion",
+            "documentación", "requisitos", "condiciones", "pasos",
+            "explicame", "detalle", "completo",
+        )
+    )
+    max_por_archivo = 8 if es_compleja else 4
+
     for resultado in resultados:
         clave = resultado["ruta"]
         if clave not in archivos_permitidos:
-            if len(archivos_permitidos) >= 2:
+            if len(archivos_permitidos) >= max_archivos:
                 continue
             archivos_permitidos.append(clave)
 
         cantidad = por_archivo.get(clave, 0)
-        tokens_consulta = _tokens_busqueda(consulta)
-        es_compleja = len(tokens_consulta) >= 8 or any(
-            palabra in _normalizar_busqueda(consulta)
-            for palabra in (
-                "como", "cómo", "procedimiento", "documentacion",
-                "documentación", "requisitos", "condiciones", "pasos",
-                "explicame", "detalle", "completo",
-            )
-        )
-        max_por_archivo = 8 if es_compleja else 4
-
         if cantidad >= max_por_archivo:
             continue
 
@@ -817,11 +911,14 @@ def buscar_en_documentos(consulta, limite=16):
 
     print(
         f"RETRIEVAL PDF: consulta={consulta!r} "
+        f"companias={sorted(companias_detectadas)} "
         f"archivos_procesados={cantidad_archivos} "
+        f"archivos_seleccionados={len(archivos_permitidos)} "
         f"fragmentos={len(seleccionados)}"
     )
 
     return seleccionados
+
 
 
 # ==========================================================
@@ -1488,11 +1585,35 @@ def word_exportar():
 
 # ==========================================================
 # METADATOS — FICHAS DE TEXTO LIBRE
+# Preferencia: Neon/Postgres (persistente). Fallback: SQLite.
 # ==========================================================
+
+def _metadatos_usar_pg():
+    """True si DATABASE_URL está configurada (producción Render/Neon)."""
+    return bool(os.getenv("DATABASE_URL"))
+
 
 @app.route("/api/metadatos", methods=["GET"])
 @requiere_login
 def listar_metadatos():
+    if _metadatos_usar_pg():
+        try:
+            from database_pg import listar_metadatos as listar_pg
+            filas = listar_pg()
+            # La UI solo necesita id, titulo, actualizado_en en el listado.
+            resumen = [
+                {
+                    "id": f["id"],
+                    "titulo": f.get("titulo"),
+                    "actualizado_en": f.get("actualizado_en"),
+                }
+                for f in filas
+            ]
+            return jsonify({"ok": True, "metadatos": resumen})
+        except Exception as error:
+            print("ERROR listar_metadatos PG:", error)
+            return jsonify({"ok": False, "error": "No se pudieron listar los metadatos."}), 500
+
     with closing(conectar_db()) as db:
         rows = db.execute(
             "SELECT id, titulo, actualizado_en FROM metadatos ORDER BY actualizado_en DESC, id DESC"
@@ -1503,6 +1624,17 @@ def listar_metadatos():
 @app.route("/api/metadatos/<int:metadato_id>", methods=["GET"])
 @requiere_login
 def obtener_metadato(metadato_id):
+    if _metadatos_usar_pg():
+        try:
+            from database_pg import obtener_metadato as obtener_pg
+            fila = obtener_pg(metadato_id)
+            if not fila:
+                return jsonify({"ok": False, "error": "Ficha no encontrada."}), 404
+            return jsonify({"ok": True, "metadato": fila})
+        except Exception as error:
+            print("ERROR obtener_metadato PG:", error)
+            return jsonify({"ok": False, "error": "No se pudo leer la ficha."}), 500
+
     with closing(conectar_db()) as db:
         row = db.execute(
             "SELECT id, titulo, contenido, creado_en, actualizado_en, usuario "
@@ -1524,6 +1656,16 @@ def crear_metadato():
         return jsonify({"ok": False, "error": "El título es obligatorio."}), 400
     if len(titulo) > 200:
         titulo = titulo[:200]
+
+    if _metadatos_usar_pg():
+        try:
+            from database_pg import crear_metadato as crear_pg
+            fila = crear_pg(session["usuario"], titulo, contenido)
+            return jsonify({"ok": True, "metadato": fila})
+        except Exception as error:
+            print("ERROR crear_metadato PG:", error)
+            return jsonify({"ok": False, "error": "No se pudo guardar la ficha."}), 500
+
     with closing(conectar_db()) as db:
         cur = db.execute(
             "INSERT INTO metadatos (usuario,titulo,contenido) VALUES (?,?,?)",
@@ -1548,6 +1690,18 @@ def editar_metadato(metadato_id):
         return jsonify({"ok": False, "error": "El título es obligatorio."}), 400
     if len(titulo) > 200:
         titulo = titulo[:200]
+
+    if _metadatos_usar_pg():
+        try:
+            from database_pg import actualizar_metadato as actualizar_pg
+            fila = actualizar_pg(metadato_id, titulo, contenido)
+            if not fila:
+                return jsonify({"ok": False, "error": "Ficha no encontrada."}), 404
+            return jsonify({"ok": True, "metadato": fila})
+        except Exception as error:
+            print("ERROR editar_metadato PG:", error)
+            return jsonify({"ok": False, "error": "No se pudo actualizar la ficha."}), 500
+
     with closing(conectar_db()) as db:
         row = db.execute("SELECT id FROM metadatos WHERE id=?", (metadato_id,)).fetchone()
         if not row:
@@ -1568,6 +1722,17 @@ def editar_metadato(metadato_id):
 @app.route("/api/metadatos/<int:metadato_id>", methods=["DELETE"])
 @requiere_login
 def eliminar_metadato(metadato_id):
+    if _metadatos_usar_pg():
+        try:
+            from database_pg import eliminar_metadato as eliminar_pg
+            ok = eliminar_pg(metadato_id)
+            if not ok:
+                return jsonify({"ok": False, "error": "Ficha no encontrada."}), 404
+            return jsonify({"ok": True})
+        except Exception as error:
+            print("ERROR eliminar_metadato PG:", error)
+            return jsonify({"ok": False, "error": "No se pudo eliminar la ficha."}), 500
+
     with closing(conectar_db()) as db:
         row = db.execute("SELECT id FROM metadatos WHERE id=?", (metadato_id,)).fetchone()
         if not row:
@@ -1653,12 +1818,53 @@ def api_excel_agregar_fila():
         encabezados = filas[0]
         cantidad_columnas = max(len(encabezados), 1)
         fila_nueva = [""] * cantidad_columnas
-        indices = {normalizar(encabezado): i for i, encabezado in enumerate(encabezados) if normalizar(encabezado)}
+        indices = {
+            normalizar(encabezado): i
+            for i, encabezado in enumerate(encabezados)
+            if normalizar(encabezado)
+        }
+
+        campos_normalizados = {
+            normalizar(clave): str(valor or "").strip()
+            for clave, valor in campos.items()
+        }
+
+        indice_asegurado = indices.get(normalizar("ASEGURADO"))
+        indice_numero = indices.get(normalizar("NUMERO"))
+        indice_patente = indices.get(normalizar("PATENTE"))
+
+        asegurado = campos_normalizados.get(normalizar("ASEGURADO"), "")
+        numero = campos_normalizados.get(normalizar("NUMERO"), "")
+        patente = campos_normalizados.get(normalizar("PATENTE"), "")
+
+        if not asegurado:
+            return jsonify({
+                "ok": False,
+                "error": "Antes de guardar, el registro necesita al menos el nombre del ASEGURADO."
+            }), 400
+
+        if not numero and not patente:
+            return jsonify({
+                "ok": False,
+                "error": "Antes de guardar, indicá al menos NUMERO (DNI/póliza) o PATENTE."
+            }), 400
+
+        if indice_asegurado is None:
+            return jsonify({
+                "ok": False,
+                "error": "El Excel no tiene la columna ASEGURADO."
+            }), 400
+
+        if indice_numero is None and indice_patente is None:
+            return jsonify({
+                "ok": False,
+                "error": "El Excel no tiene NUMERO ni PATENTE para identificar el registro."
+            }), 400
 
         for campo, valor in campos.items():
             indice = indices.get(normalizar(campo))
             if indice is not None:
-                fila_nueva[indice] = str(valor).strip()
+                fila_nueva[indice] = str(valor or "").strip()
 
         if not any(str(valor).strip() for valor in fila_nueva):
             return jsonify({
@@ -1671,6 +1877,143 @@ def api_excel_agregar_fila():
     except Exception as error:
         print("ERROR AGREGANDO FILA DESDE CHAT:", error)
         return jsonify({"ok": False, "error": "No se pudo agregar el registro al Excel."}), 500
+
+
+def _parsear_comando_guardar_asegurado(mensaje):
+    """
+    Parsea el comando explícito /guardar asegurado sin depender de Gemini.
+
+    Formato principal:
+      /guardar asegurado (asegurado) (numero) (vehiculo) (patente) (cia)
+      (medio de pago) (cp) (mail)
+
+    También acepta los mismos campos separados por comas. ENVIOS YA no forma
+    parte del comando corto; puede completarse luego en la propuesta.
+    """
+    texto = str(mensaje or "").strip()
+    patron = re.compile(r"^/guardar\s+asegurado\b", re.IGNORECASE)
+    if not patron.match(texto):
+        return None
+
+    resto = patron.sub("", texto, count=1).strip()
+    campos = (
+        "ASEGURADO",
+        "NUMERO",
+        "VEHICULO",
+        "PATENTE",
+        "CIA",
+        "MEDIO DE PAGO",
+        "CP",
+        "MAIL",
+    )
+
+    valores = re.findall(r"\(([^)]*)\)", resto)
+    if valores:
+        if len(valores) > len(campos):
+            return {"error": "El comando tiene más campos de los esperados."}
+        valores = [v.strip() for v in valores]
+    elif "," in resto:
+        valores = [v.strip() for v in resto.split(",")]
+        if len(valores) > len(campos):
+            return {"error": "El comando tiene más campos de los esperados."}
+    else:
+        # Sin delimitadores no se puede distinguir de forma segura un nombre
+        # con espacios de un vehículo u otro campo.
+        return {
+            "error": (
+                "Usá el formato /guardar asegurado (asegurado) (numero) "
+                "(vehiculo) (patente) (cia) (medio de pago) (cp) (mail)."
+            )
+        }
+
+    propuesta = {
+        campo: (valores[i] if i < len(valores) else "")
+        for i, campo in enumerate(campos)
+    }
+
+    # La plantilla puede enviarse accidentalmente sin reemplazar los textos
+    # entre paréntesis. Esos valores no cuentan como datos reales.
+    placeholders = {
+        "ASEGURADO": "asegurado",
+        "NUMERO": "numero",
+        "VEHICULO": "vehiculo",
+        "PATENTE": "patente",
+        "CIA": "cia",
+        "MEDIO DE PAGO": "medio de pago",
+        "CP": "cp",
+        "MAIL": "mail",
+    }
+    for campo, placeholder in placeholders.items():
+        if propuesta[campo].strip().lower() == placeholder:
+            propuesta[campo] = ""
+
+    propuesta["ENVIOS YA"] = ""
+
+    return {
+        "propuesta": propuesta,
+        "valida": bool(propuesta["ASEGURADO"] and (
+            propuesta["NUMERO"] or propuesta["PATENTE"]
+        )),
+    }
+
+
+
+def _consulta_requiere_metadatos(pregunta):
+    """Detecta consultas donde conviene precargar metadatos internos antes de Gemini."""
+    texto = unicodedata.normalize("NFKD", str(pregunta or "")).encode("ascii", "ignore").decode("ascii").lower()
+    texto = re.sub(r"\s+", " ", texto).strip()
+    if not texto or texto.startswith("/"):
+        return False
+
+    # Excluir operaciones que ya tienen routing determinístico/estructurado.
+    terminos_estructurados = (
+        "asegurado", "asegurados", "patente", "patentes", "poliza", "póliza",
+        "polizas", "pólizas", "planilla", "excel", "dni", "numero de poliza",
+        "número de póliza", "cuantos registros", "cuántos registros",
+        "cantidad de vehiculos", "cantidad de vehículos",
+    )
+    if any(t in texto for t in terminos_estructurados):
+        return False
+
+    terminos_documentales = (
+        "cobertura", "cubre", "cubrir", "asistencia", "asistencias",
+        "grua", "grúa", "remolque", "remolques", "auxilio", "traslado",
+        "limite", "límite", "limites", "límites", "condicion", "condición",
+        "condiciones", "procedimiento", "procedimientos", "compañia",
+        "compañía", "compañias", "compañías", "prestacion", "prestación",
+        "prestaciones", "servicio", "servicios", "evento", "kilometros",
+        "kilómetros", "cerradura", "cerraduras", "granizo", "vidrio",
+        "vidrios", "rueda", "ruedas", "robo", "incendio", "destruccion",
+        "destrucción", "responsabilidad civil", "rc",
+    )
+    return any(t in texto for t in terminos_documentales)
+
+
+def _formatear_metadatos_para_contexto(resultado):
+    """Convierte el resultado existente de buscar_en_metadatos en contexto legible para Gemini."""
+    if not isinstance(resultado, dict) or not resultado.get("cantidad"):
+        return ""
+    fichas = resultado.get("fichas") or []
+    if not fichas:
+        return ""
+
+    partes = [
+        "\n\n===== METADATOS INTERNOS PRIORITARIOS =====",
+        "Estos datos fueron recuperados localmente por OficinaIA antes de llamar a Gemini.",
+        "Usalos como fuente prioritaria para información operativa interna.",
+        "",
+    ]
+    for ficha in fichas:
+        titulo = str(ficha.get("titulo") or "Metadato").strip()
+        contenido = str(ficha.get("contenido") or "").strip()
+        if not contenido:
+            continue
+        partes.append(f"[Metadato: {titulo}]")
+        partes.append(contenido)
+        partes.append("")
+    partes.append("===== FIN METADATOS INTERNOS PRIORITARIOS =====\n")
+    return "\n".join(partes)
+
 
 @app.route(
     "/api/chat",
@@ -1824,20 +2167,94 @@ def chat():
         db.commit()
 
     # ======================================================
-    # CONTEXTO DIRECTO
+    # COMANDO /COTI — RESOLUCIÓN LOCAL Y DETERMINÍSTICA
     # ======================================================
-    # La búsqueda de documentos ya no se ejecuta aquí.
-    # Gemini decide mediante Function Calling cuándo necesita esas fuentes.
-    # El único contexto prearmado que se conserva es el PDF adjuntado
-    # explícitamente por el usuario en este chat.
+    # Se intercepta antes de cualquier llamada a Gemini. El catálogo y el
+    # parser viven en coti.py para que puedan ampliarse sin tocar /api/chat.
+    respuesta_coti = procesar_comando_coti(mensaje)
+    if respuesta_coti is not None:
+        with closing(conectar_db()) as db:
+            db.execute(
+                "INSERT INTO mensajes (conversacion_id,rol,contenido) VALUES (?,?,?)",
+                (chat_id, "assistant", str(respuesta_coti))
+            )
+            db.execute(
+                "UPDATE conversaciones SET actualizado_en=CURRENT_TIMESTAMP WHERE id=?",
+                (chat_id,)
+            )
+            db.commit()
 
+        return jsonify({
+            "respuesta": respuesta_coti,
+            "chat_id": chat_id,
+            "archivo_adjunto": nombre_pdf_adjunto or None,
+            "propuesta_excel": None,
+            "propuesta_metadato": None,
+        })
+
+    # El comando explícito se parsea de forma determinista en backend y no
+    # se entrega a Gemini para que adivine posiciones o separadores.
+    propuesta_comando = _parsear_comando_guardar_asegurado(mensaje)
+    if propuesta_comando is not None:
+        if propuesta_comando.get("error"):
+            respuesta = propuesta_comando["error"]
+            propuesta_excel = None
+        else:
+            respuesta = (
+                "Preparé el registro con el orden fijo del comando. "
+                "Revisá los campos y confirmá antes de guardarlo."
+            )
+            propuesta_excel = propuesta_comando.get("propuesta")
+
+        with closing(conectar_db()) as db:
+            db.execute(
+                "INSERT INTO mensajes (conversacion_id,rol,contenido) VALUES (?,?,?)",
+                (chat_id, "assistant", str(respuesta))
+            )
+            db.execute(
+                "UPDATE conversaciones SET actualizado_en=CURRENT_TIMESTAMP WHERE id=?",
+                (chat_id,)
+            )
+            db.commit()
+
+        return jsonify({
+            "respuesta": respuesta,
+            "chat_id": chat_id,
+            "archivo_adjunto": nombre_pdf_adjunto or None,
+            "propuesta_excel": propuesta_excel,
+            "propuesta_metadato": None,
+        })
+
+    # ======================================================
+    # CONTEXTO DIRECTO + PRE-ROUTING DE METADATOS
+    # ======================================================
+    # Los metadatos internos se recuperan localmente antes de Gemini
+    # para que el modelo no tenga que decidir si necesita consultarlos.
+    # La tool buscar_en_metadatos sigue disponible para búsquedas adicionales.
     contexto = contexto_pdf_adjunto
+
+    if _consulta_requiere_metadatos(mensaje):
+        try:
+            resultado_metadatos = buscar_en_metadatos(mensaje)
+            contexto_metadatos = _formatear_metadatos_para_contexto(resultado_metadatos)
+            if contexto_metadatos:
+                contexto += contexto_metadatos
+                print(
+                    "PRE-ROUTING METADATOS: resultados=%s consulta=%r"
+                    % (resultado_metadatos.get("cantidad", 0), mensaje)
+                )
+            else:
+                print("PRE-ROUTING METADATOS: sin resultados consulta=%r" % mensaje)
+        except Exception as error:
+            # No romper el chat si falla la precarga; Gemini conserva sus tools.
+            print("ERROR PRE-ROUTING METADATOS:", error)
 
     # ======================================================
     # GEMINI
     # ======================================================
 
     propuesta_excel = None
+    propuesta_metadato = None
     try:
 
         from servicios_ia import (
@@ -1850,7 +2267,9 @@ def chat():
             historial=historial
         )
         if isinstance(resultado_gemini, tuple):
-            respuesta, propuesta_excel = resultado_gemini
+            respuesta = resultado_gemini[0]
+            propuesta_excel = resultado_gemini[1] if len(resultado_gemini) > 1 else None
+            propuesta_metadato = resultado_gemini[2] if len(resultado_gemini) > 2 else None
         else:
             respuesta, propuesta_excel = resultado_gemini, None
 
@@ -1887,6 +2306,7 @@ def chat():
         "chat_id": chat_id,
         "archivo_adjunto": nombre_pdf_adjunto or None,
         "propuesta_excel": propuesta_excel,
+        "propuesta_metadato": propuesta_metadato,
     })
 
 

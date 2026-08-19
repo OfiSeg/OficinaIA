@@ -55,6 +55,12 @@ def inicializar_postgres():
         with db.cursor() as cursor:
             cursor.execute(CREATE_TABLE_MANUALES_SQL)
             cursor.execute(CREATE_TABLE_METADATOS_SQL)
+            cursor.execute(
+                """
+                ALTER TABLE metadatos
+                ADD COLUMN IF NOT EXISTS usuario VARCHAR(120) NOT NULL DEFAULT ''
+                """
+            )
         db.commit()
 
 
