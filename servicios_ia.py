@@ -107,6 +107,7 @@ def _buscar_en_registros(pregunta, datos, etiqueta):
 
     q = _normalizar_texto(pregunta)
     palabras = [p for p in re.findall(r"[a-z0-9]+", q) if len(p) >= 3]
+    palabras = list(_expandir_sinonimos_tokens(palabras))
     cliente_exacto = buscar_cliente_exactamente(pregunta, datos) if any("CLIENTE" in f for f in datos) else None
 
     # Identificador fuerte: restringimos el contexto únicamente a las filas
@@ -282,6 +283,38 @@ def _normalizar_texto(texto):
     return ''.join(c for c in texto if not unicodedata.combining(c))
 
 
+# ==========================================================
+# SINÓNIMOS DE DOMINIO (seguros)
+# ==========================================================
+# El dataset no siempre usa la misma palabra que el usuario ("grúa" en la
+# pregunta, "remolque" en la planilla). Sin esto, la primera búsqueda daba 0
+# resultados y el prompt forzaba un segundo (y tercer...) intento en el mismo
+# request, lo que terminaba en timeout (502) o en una cadena de errores (500).
+# Expandiendo la CONSULTA con sinónimos, la primera búsqueda ya encuentra la
+# fila correcta la gran mayoría de las veces.
+_SINONIMOS_DOMINIO = [
+    {"grua", "gruas", "remolque", "remolques", "auxilio", "traslado", "arrastre", "acarreo"},
+    {"asistencia", "asistencias", "sat", "auxilio", "socorro"},
+    {"choque", "choques", "colision", "colisiones", "siniestro", "siniestros", "accidente", "accidentes"},
+    {"robo", "robos", "hurto", "hurtos"},
+    {"cristales", "cristal", "vidrios", "vidrio", "parabrisas", "lunas"},
+    {"franquicia", "franquicias", "deducible", "deducibles"},
+    {"poliza", "polizas"},
+    {"vencimiento", "vencimientos", "renovacion", "renovaciones"},
+    {"vehiculo", "vehiculos", "auto", "autos", "unidad", "unidades", "rodado", "rodados"},
+]
+
+
+def _expandir_sinonimos_tokens(tokens):
+    """Devuelve el conjunto de tokens original + sinónimos conocidos."""
+    base = {t for t in tokens if t}
+    expandido = set(base)
+    for grupo in _SINONIMOS_DOMINIO:
+        if base & grupo:
+            expandido |= grupo
+    return expandido
+
+
 
 # ==========================================================
 # CONSULTAR GEMINI
@@ -405,37 +438,93 @@ TOOL_DEFINITIONS = [
         ),
         types.FunctionDeclaration(
             name="buscar_en_manuales",
-            description="Busca fragmentos relevantes en los manuales y PDFs de OficinaIA.",
+            description=(
+                "Busca fragmentos relevantes en los manuales y PDFs de OficinaIA. "
+                "Fuente SECUNDARIA respecto a buscar_en_metadatos. Usar después de "
+                "metadatos, o cuando metadatos devolvió 0 resultados y la consulta "
+                "requiere documentación formal de la compañía (coberturas, "
+                "asistencia, remolque, procedimientos)."
+            ),
             parameters_json_schema={"type": "object", "properties": {"consulta": {"type": "string"}}, "required": ["consulta"]},
         ),
         types.FunctionDeclaration(
             name="buscar_en_metadatos",
             description=(
-                "Busca en fichas de texto cargadas manualmente por la oficina, "
-                "normalmente contenido copiado de PDFs escaneados o no legibles "
-                "automáticamente. Usar cuando la pregunta pueda estar respondida "
-                "por información cargada a mano."
+                "FUENTE PRIORITARIA. Busca en fichas de texto cargadas manualmente "
+                "por la oficina (contenido copiado de PDFs escaneados, no legibles "
+                "o resúmenes operativos). Debe usarse ANTES que buscar_en_manuales "
+                "en cualquier consulta sobre coberturas, asistencia, remolque, "
+                "grúas, límites, condiciones, procedimientos o datos de compañías. "
+                "Si devuelve resultados útiles, se puede responder con ellos."
             ),
             parameters_json_schema={"type": "object", "properties": {"consulta": {"type": "string"}}, "required": ["consulta"]},
         ),
         types.FunctionDeclaration(
             name="proponer_registro_excel",
             description=(
-                "Cuando la conversación contiene datos suficientes de un asegurado "
-                "(cliente, póliza, patente, compañía, etc.) y el usuario pide guardarlo "
-                "o agregarlo a la planilla, arma un registro propuesto con esos campos "
-                "para que el usuario lo confirme antes de guardarlo. No guarda nada "
-                "directamente."
+                "Cuando el usuario pide guardar o agregar un asegurado a la planilla, "
+                "proponé un registro usando EXACTAMENTE estas claves: ASEGURADO, NUMERO, "
+                "VEHICULO, PATENTE, ENVIOS YA, CIA, MEDIO DE PAGO, CP, MAIL. "
+                "NUMERO acepta DNI o número de póliza según el caso. Nunca inventes un "
+                "dato: si falta, dejalo como cadena vacía para que el usuario lo confirme. "
+                "Intentá completar siempre todos los campos que estén presentes en el "
+                "mensaje, aunque el texto libre no tenga comas. Ejemplo: "
+                "'ramiro herrera, 1141492756, Brava Nevada 125, AC123BC, ATM' se mapea "
+                "a ASEGURADO=ramiro herrera, NUMERO=1141492756, VEHICULO=Brava Nevada 125, "
+                "PATENTE=AC123BC, CIA=ATM. Si el usuario usa sólo espacios como separadores "
+                "y la frase es ambigua, no adivines silenciosamente: completá lo seguro y "
+                "dejá el resto vacío. Otro ejemplo: 'Juan Perez 123456 ATM' permite "
+                "ASEGURADO=Juan Perez, NUMERO=123456, CIA=ATM si no hay datos suficientes "
+                "para inferir vehículo o patente. La tool sólo propone; no guarda nada."
             ),
             parameters_json_schema={
                 "type": "object",
                 "properties": {
                     "campos": {
                         "type": "object",
-                        "description": "Pares campo:valor detectados, por ejemplo CLIENTE, POLIZA, PATENTE, CIA."
+                        "properties": {
+                            "ASEGURADO": {"type": "string", "description": "Nombre completo del asegurado."},
+                            "NUMERO": {"type": "string", "description": "DNI o número de póliza, según el caso."},
+                            "VEHICULO": {"type": "string", "description": "Marca/modelo/tipo del vehículo."},
+                            "PATENTE": {"type": "string", "description": "Patente del vehículo."},
+                            "ENVIOS YA": {"type": "string", "description": "Dato de Envíos Ya, si corresponde."},
+                            "CIA": {"type": "string", "description": "Compañía aseguradora."},
+                            "MEDIO DE PAGO": {"type": "string", "description": "Medio de pago."},
+                            "CP": {"type": "string", "description": "Código postal."},
+                            "MAIL": {"type": "string", "description": "Correo electrónico."},
+                        },
+                        "additionalProperties": False,
                     }
                 },
                 "required": ["campos"],
+            },
+        ),
+        types.FunctionDeclaration(
+            name="guardar_metadato_relevante",
+            description=(
+                "Propone una ficha de metadato reutilizable cuando la respuesta contiene "
+                "un dato objetivo, estable y útil para consultas futuras: por ejemplo una "
+                "cantidad de grúas de una compañía, un límite de cobertura, una condición "
+                "puntual o un requisito específico. NO guardes conversaciones completas, "
+                "opiniones, explicaciones generales, preguntas ni datos temporales. "
+                "Usá sólo información respaldada por los resultados de las herramientas "
+                "consultadas en esta misma conversación. La propuesta requiere confirmación "
+                "del usuario antes de escribirse en la base. Si ya existe un metadato igual "
+                "o muy similar, no propongas otro."
+            ),
+            parameters_json_schema={
+                "type": "object",
+                "properties": {
+                    "titulo": {
+                        "type": "string",
+                        "description": "Título corto y descriptivo, idealmente incluyendo compañía y tema."
+                    },
+                    "contenido": {
+                        "type": "string",
+                        "description": "El dato puntual reutilizable, en 1-4 frases, sin copiar la conversación completa."
+                    },
+                },
+                "required": ["titulo", "contenido"],
             },
         ),
         types.FunctionDeclaration(
@@ -532,15 +621,110 @@ def contar_registros(compania=None, campo=None, valor=None):
 
 
 def proponer_registro_excel(campos):
-    """Prepara una propuesta de alta; nunca escribe directamente en el Excel."""
+    """
+    Prepara una propuesta de alta; nunca escribe directamente en el Excel.
+
+    Las claves se normalizan contra el esquema real de la planilla. Los campos
+    faltantes se conservan vacíos para que el usuario pueda completarlos en la
+    confirmación, en lugar de desaparecer silenciosamente.
+    """
+    campos_validos = (
+        "ASEGURADO",
+        "NUMERO",
+        "VEHICULO",
+        "PATENTE",
+        "ENVIOS YA",
+        "CIA",
+        "MEDIO DE PAGO",
+        "CP",
+        "MAIL",
+    )
     if not isinstance(campos, dict):
-        return {"propuesta": {}}
+        return {"propuesta": {}, "valida": False}
+
     propuesta = {
-        str(clave).strip(): str(valor).strip()
-        for clave, valor in campos.items()
-        if str(clave).strip() and str(valor).strip()
+        campo: str(campos.get(campo, "") or "").strip()
+        for campo in campos_validos
     }
-    return {"propuesta": propuesta}
+
+    # Nunca aceptar claves inventadas por el modelo.
+    for clave, valor in campos.items():
+        clave_norm = _normalizar_texto(clave)
+        for campo in campos_validos:
+            if _normalizar_texto(campo) == clave_norm:
+                propuesta[campo] = str(valor or "").strip()
+                break
+
+    tiene_asegurado = bool(propuesta["ASEGURADO"])
+    tiene_identificador = bool(propuesta["NUMERO"] or propuesta["PATENTE"])
+
+    return {
+        "propuesta": propuesta,
+        "valida": bool(tiene_asegurado and tiene_identificador),
+        "faltantes_minimos": [
+            campo for campo, ok in (
+                ("ASEGURADO", tiene_asegurado),
+                ("NUMERO o PATENTE", tiene_identificador),
+            ) if not ok
+        ],
+    }
+
+
+def guardar_metadato_relevante(titulo, contenido):
+    """
+    Prepara una propuesta de metadato reutilizable; nunca escribe directamente.
+
+    Sólo se aceptan datos objetivos y relativamente estables que puedan
+    responder consultas futuras: cifras, cantidades, límites o condiciones
+    puntuales de una compañía. Se reutiliza la misma recuperación existente
+    para evitar proponer duplicados obvios.
+    """
+    titulo = str(titulo or "").strip()
+    contenido = str(contenido or "").strip()
+
+    if not titulo or not contenido:
+        return {"propuesta": None, "valida": False}
+
+    if len(titulo) > 200:
+        titulo = titulo[:200]
+
+    # No guardar conversaciones, opiniones, instrucciones temporales ni
+    # texto demasiado largo. El metadato debe ser una ficha puntual.
+    if len(contenido) > 1200:
+        contenido = contenido[:1200].rsplit(" ", 1)[0].strip()
+
+    texto = _normalizar_texto(f"{titulo} {contenido}")
+    patrones_descartables = (
+        "creo que", "me parece", "quizas", "quiza", "podrias",
+        "te recomiendo", "como puedo", "que opinas",
+    )
+    if any(patron in texto for patron in patrones_descartables):
+        return {"propuesta": None, "valida": False, "motivo": "dato_no_objetivo"}
+
+    try:
+        existentes = _cargar_metadatos()
+        for ficha in existentes:
+            if _normalizar_texto(contenido) == _normalizar_texto(ficha.get("contenido", "")):
+                return {
+                    "propuesta": None,
+                    "valida": False,
+                    "duplicado": True,
+                    "metadato_existente": {
+                        "id": ficha.get("id"),
+                        "titulo": ficha.get("titulo"),
+                    },
+                }
+    except Exception as error:
+        print("ERROR VALIDANDO METADATO PROPUESTO:", error)
+
+    return {
+        "propuesta": {
+            "titulo": titulo,
+            "contenido": contenido,
+        },
+        "valida": True,
+    }
+
 
 
 def buscar_en_manuales(consulta):
@@ -559,7 +743,22 @@ def buscar_en_manuales(consulta):
 
 
 def _cargar_metadatos():
-    """Carga las fichas de texto compartidas por toda la oficina."""
+    """Carga las fichas de texto compartidas por toda la oficina.
+
+    Intenta primero Neon/Postgres (persistente entre redeploys). Si no está
+    disponible, cae a SQLite local para desarrollo.
+    """
+    # 1) Neon (persistente)
+    try:
+        from database_pg import listar_metadatos as listar_metadatos_pg
+        filas = listar_metadatos_pg()
+        if filas is not None:
+            print("METADATOS PG:", len(filas), "fichas cargadas.")
+            return filas
+    except Exception as error:
+        print("METADATOS PG no disponible, intento SQLite:", error)
+
+    # 2) SQLite (local / fallback)
     try:
         from app import conectar_db
         with conectar_db() as db:
@@ -567,9 +766,11 @@ def _cargar_metadatos():
                 "SELECT id, titulo, contenido, actualizado_en FROM metadatos "
                 "ORDER BY actualizado_en DESC, id DESC"
             ).fetchall()
-            return [dict(row) for row in rows]
+            filas = [dict(row) for row in rows]
+            print("METADATOS SQLite:", len(filas), "fichas cargadas.")
+            return filas
     except Exception as error:
-        print("ERROR CARGANDO METADATOS:", error)
+        print("ERROR CARGANDO METADATOS (SQLite):", error)
         return []
 
 
@@ -609,6 +810,7 @@ def _puntuar_metadato(consulta, texto):
     tokens = [p for p in re.findall(r"[a-z0-9]+", consulta_norm) if len(p) >= 3]
     if not tokens:
         return 0
+    tokens = list(_expandir_sinonimos_tokens(tokens))
     puntuacion = 0
     if len(consulta_norm) >= 8 and consulta_norm in texto_norm:
         puntuacion += 30
@@ -628,16 +830,28 @@ def buscar_en_metadatos(consulta):
     """
     Busca información en fichas de texto cargadas manualmente por la oficina.
     Las fichas son compartidas entre usuarios y se recuperan por relevancia.
+    Fuente prioritaria frente a manuales/PDFs.
     """
+    try:
+        fichas = _cargar_metadatos()
+    except Exception as error:
+        print("ERROR buscar_en_metadatos al cargar:", error)
+        return {
+            "cantidad": 0,
+            "fichas": [],
+            "fuente": "Metadatos internos",
+            "error": "No se pudieron cargar los metadatos.",
+        }
+
     resultados = []
-    for ficha in _cargar_metadatos():
+    for ficha in fichas:
         titulo = str(ficha.get("titulo") or "")
         for fragmento in _chunks_metadato(ficha.get("contenido", "")):
             puntuacion = _puntuar_metadato(consulta, f"{titulo}\n{fragmento}")
             if puntuacion <= 0:
                 continue
             resultados.append({
-                "id": ficha["id"],
+                "id": ficha.get("id"),
                 "titulo": titulo,
                 "contenido": fragmento,
                 "actualizado_en": ficha.get("actualizado_en"),
@@ -655,6 +869,10 @@ def buscar_en_metadatos(consulta):
         salida.append(resultado)
         if len(salida) >= 12:
             break
+    print(
+        f"RETRIEVAL METADATOS: consulta={consulta!r} "
+        f"fichas_cargadas={len(fichas)} fragmentos={len(salida)}"
+    )
     return {
         "cantidad": len(salida),
         "fichas": salida,
@@ -671,8 +889,11 @@ def _buscar_vehiculos_filtrados(datos, compania=None, tipo=None, cliente=None):
         filas = [f for f in filas if objetivo in _normalizar_texto(_valor_campo(f, "CLIENTE") or _valor_campo(f, "ASEGURADO") or "")]
     campo_tipo = _campo_por_alias(filas[0], ("TIPO_VEHICULO", "TIPO DE VEHICULO", "TIPO DE VEHÍCULO", "VEHICULO", "VEHÍCULO", "VH")) if filas else None
     if tipo and campo_tipo:
-        objetivo = _normalizar_texto(tipo)
-        filas = [f for f in filas if objetivo in _normalizar_texto(f.get(campo_tipo, ""))]
+        objetivos = _expandir_sinonimos_tokens([_normalizar_texto(tipo)])
+        filas = [
+            f for f in filas
+            if any(o in _normalizar_texto(f.get(campo_tipo, "")) for o in objetivos)
+        ]
     resultado = []
     vistos = set()
     for f in filas:
@@ -722,6 +943,7 @@ _TOOL_HANDLERS = {
     "buscar_en_manuales": buscar_en_manuales,
     "buscar_en_metadatos": buscar_en_metadatos,
     "proponer_registro_excel": proponer_registro_excel,
+    "guardar_metadato_relevante": guardar_metadato_relevante,
     "buscar_vehiculos": buscar_vehiculos,
     "buscar_en_internet": buscar_en_internet,
 }
@@ -731,11 +953,49 @@ def _ejecutar_tool(nombre, argumentos):
     handler = _TOOL_HANDLERS.get(nombre)
     if not handler:
         return {"error": f"Herramienta desconocida: {nombre}"}
+
+    herramientas_busqueda = {
+        "buscar_en_manuales",
+        "buscar_en_metadatos",
+        "consultar_excel",
+        "buscar_vehiculos",
+        "buscar_en_internet",
+    }
+
+    def _marcar_vacia(resultado, motivo=""):
+        resultado = dict(resultado) if isinstance(resultado, dict) else {"error": str(resultado)}
+        resultado["busqueda_vacia"] = True
+        resultado["instruccion_reintento"] = (
+            "No cierres la respuesta todavía. Debe realizarse una segunda "
+            "búsqueda con términos descompuestos o sinónimos relevantes. "
+            "Orden obligatorio para consultas documentales: "
+            "1) buscar_en_metadatos (prioridad) → 2) buscar_en_manuales. "
+            "Si ya buscaste metadatos y dio 0, probá manuales/PDFs. "
+            "Si ya buscaste manuales, reformulá o usá sinónimos "
+            "(remolque/grúa/asistencia/auxilio/traslado)."
+            + (f" Motivo: {motivo}" if motivo else "")
+        )
+        return resultado
+
     try:
-        return handler(**argumentos)
+        resultado = handler(**argumentos)
+        if isinstance(resultado, dict) and nombre in herramientas_busqueda:
+            cantidad = resultado.get("cantidad")
+            # cantidad 0 o presencia de error → forzar reintento
+            if cantidad == 0 or resultado.get("error"):
+                resultado = _marcar_vacia(
+                    resultado,
+                    motivo=resultado.get("error") or "sin resultados",
+                )
+        return resultado
     except Exception as error:
         print(f"ERROR TOOL {nombre}:", error)
-        return {"error": f"No se pudo ejecutar {nombre}."}
+        # También marcar vacía para que el flujo de segundo intento se active
+        return _marcar_vacia(
+            {"error": f"No se pudo ejecutar {nombre}.", "cantidad": 0},
+            motivo=str(error),
+        )
+
 
 
 def _contenido_respuesta(respuesta):
@@ -778,18 +1038,44 @@ Sos el asistente interno de OficinaIA, una oficina de seguros de Argentina.
 Respondé la pregunta completa y no inventes datos.
 
 REGLAS:
-- Elegí las herramientas necesarias. No adivines la fuente mediante palabras clave: decidí por el significado de la pregunta.
+- OficinaIA puede haber recuperado METADATOS INTERNOS PRIORITARIOS antes de esta llamada. Si aparecen dentro del contexto, utilizalos directamente como fuente prioritaria; no afirmes que el dato no está disponible si está allí.
+- Si el contexto ya contiene metadatos suficientes para responder, no vuelvas a llamar buscar_en_metadatos() innecesariamente. Podés usarla nuevamente únicamente si necesitás información adicional o una búsqueda más específica.
+- Elegí las herramientas necesarias según el significado de la pregunta.
+- ORDEN OBLIGATORIO DE FUENTES DOCUMENTALES (coberturas, asistencia, remolque,
+  grúas, límites, condiciones, procedimientos, datos de compañías):
+  1) buscar_en_metadatos  ← PRIORIDAD MÁXIMA (fichas cargadas a mano)
+  2) buscar_en_manuales   ← solo si metadatos dio 0 o es insuficiente
+  3) buscar_en_internet u otras tools solo si ambas fallaron
+- Si metadatos devuelve resultados útiles, podés responder con ellos. Complementá
+  con PDFs solo si aportan valor real adicional.
+- No afirmes que la información no existe solo porque la primera búsqueda dio 0.
+- FLUJO OBLIGATORIO DE DOS INTENTOS: búsqueda inicial -> evaluar resultados -> si
+  son insuficientes o cantidad 0, realizar una segunda búsqueda con términos
+  descompuestos, sinónimos (remolque/grúa/asistencia/auxilio/traslado),
+  singular/plural o formulaciones equivalentes -> recién después del segundo
+  intento, si tampoco hay evidencia, informar que no disponés de la información.
 - Para conteos, usá contar_registros y confiá en su total; nunca cuentes manualmente un subconjunto.
 - Para vehículos/patentes, usá buscar_vehiculos.
-- Para manuales, pólizas, coberturas, procedimientos o asistencia, usá buscar_en_manuales.
-- Para información cargada manualmente de PDFs no legibles, usá buscar_en_metadatos.
-- Si el usuario pide guardar o agregar un asegurado/registro a la planilla, usá proponer_registro_excel con los datos detectados; nunca lo guardes vos directamente.
-- Para datos estructurados generales, usá consultar_excel.
+- Para datos estructurados generales (asegurados, pólizas en planilla), usá consultar_excel.
+- Si el usuario pide guardar o agregar un asegurado/registro a la planilla, usá
+  proponer_registro_excel. Las columnas reales y únicas son:
+  ASEGURADO, NUMERO, VEHICULO, PATENTE, ENVIOS YA, CIA, MEDIO DE PAGO, CP, MAIL.
+  NUMERO puede ser DNI o número de póliza. Intentá completar todos los campos presentes.
+  Si falta un campo, dejalo vacío; nunca inventes ni omitas silenciosamente un campo
+  que el usuario haya dado. La propuesta siempre requiere confirmación.
+- Si el usuario usa el comando /guardar asegurado, respetá exactamente el orden:
+  ASEGURADO, NUMERO, VEHICULO, PATENTE, CIA, MEDIO DE PAGO, CP, MAIL.
+  ENVIOS YA es opcional. No reinterpretes ese orden.
 - Si necesitás información pública actualizada, usá buscar_en_internet.
 - Podés llamar varias herramientas en la misma consulta y combinar sus resultados.
 - Si un identificador concreto aparece en la pregunta, no mezcles registros de otros identificadores.
 - Contestá todos los puntos de una pregunta múltiple.
-- Si la evidencia no alcanza, decilo claramente.
+- Sólo si la evidencia sigue siendo insuficiente después del segundo intento, decilo claramente.
+- Si la respuesta contiene un dato objetivo, estable y reutilizable para consultas futuras
+  (por ejemplo una cantidad de grúas, un límite de cobertura o una condición puntual
+  de una compañía), podés llamar guardar_metadato_relevante para PROPONER una ficha.
+  No propongas metadatos para conversación descartable, opiniones, saludos, preguntas,
+  explicaciones generales ni datos claramente temporales. Nunca guardes directamente.
 - Respondé en español argentino claro y profesional.
 - No menciones el funcionamiento interno de las herramientas salvo que sea necesario.
 
@@ -805,13 +1091,34 @@ PREGUNTA:
 
     contents = [prompt]
     propuesta_excel = None
-    for _ in range(5):
+    propuesta_metadato = None
+
+    # Si una búsqueda devuelve 0, el modelo no puede cerrar la respuesta en ese turno:
+    # debe existir al menos una nueva llamada de búsqueda antes de permitir texto final.
+    reintento_pendiente = False
+    fuentes_reintentadas = set()
+    herramientas_busqueda = {
+        "buscar_en_manuales",
+        "buscar_en_metadatos",
+        "consultar_excel",
+        "buscar_vehiculos",
+        "buscar_en_internet",
+    }
+
+    # Antes eran 6 vueltas x hasta 3 modelos cada una (hasta 18 llamadas a
+    # Gemini encadenadas en un mismo request). Con timeout de gunicorn en
+    # 180s, eso terminaba en 502 (timeout) o 500. Con los sinónimos de dominio
+    # ya aplicados en la búsqueda, la primera consulta casi siempre encuentra
+    # el dato; 3 vueltas alcanzan de sobra para el flujo normal + 1 reintento.
+    LIMITE_VUELTAS = 3
+    for _ in range(LIMITE_VUELTAS):
         ultimo_error = None
         respuesta = None
+
         for modelo in MODELOS_GEMINI:
             try:
                 config = types.GenerateContentConfig(
-                    temperature=0.15,
+                    temperature=0.05,
                     max_output_tokens=4096,
                     tools=TOOL_DEFINITIONS,
                 )
@@ -824,34 +1131,103 @@ PREGUNTA:
             except Exception as error:
                 ultimo_error = error
                 print("ERROR GEMINI", modelo, ":", error)
+
         if respuesta is None:
             print("GEMINI TODOS LOS MODELOS FALLARON:", ultimo_error)
+            if propuesta_excel or propuesta_metadato:
+                return (
+                    "Gemini no está disponible en este momento. La propuesta quedó "
+                    "pendiente de confirmación.",
+                    propuesta_excel,
+                    propuesta_metadato,
+                )
             return "Gemini no está disponible en este momento. Intentá nuevamente en unos segundos."
 
         calls = _partes_function_calls(respuesta)
         if not calls:
             texto = _contenido_respuesta(respuesta) or "No pude generar una respuesta con la información disponible."
-            if propuesta_excel:
-                return texto, propuesta_excel
+
+            if reintento_pendiente:
+                # No se permite cerrar con un "no encontré" o cualquier texto final
+                # después de una búsqueda vacía sin que exista una segunda búsqueda.
+                contents.append(
+                    types.Content(
+                        role="user",
+                        parts=[types.Part.from_text(
+                            text=(
+                                "CONTROL DE RECUPERACIÓN: una herramienta de búsqueda "
+                                "devolvió 0 resultados o error. No respondas todavía. "
+                                "Hacé ahora una segunda búsqueda obligatoria. "
+                                "Orden de fuentes documentales: 1) buscar_en_metadatos "
+                                "(prioridad) → 2) buscar_en_manuales. "
+                                "Usá sinónimos si hace falta (remolque/grúa/asistencia/"
+                                "auxilio/traslado). Sólo después de ese segundo intento "
+                                "podés responder."
+                            )
+                        )],
+                    )
+                )
+                continue
+
+            if propuesta_excel or propuesta_metadato:
+                return texto, propuesta_excel, propuesta_metadato
             return texto
 
-        # Conservamos la respuesta del modelo en el historial de contents y agregamos
-        # las respuestas de las herramientas. El SDK de Gemini acepta los objetos de
-        # respuesta generados por el modelo y los FunctionResponse en el siguiente turno.
-        contents.append(respuesta.candidates[0].content if getattr(respuesta, "candidates", None) else respuesta)
+        contents.append(
+            respuesta.candidates[0].content
+            if getattr(respuesta, "candidates", None)
+            else respuesta
+        )
+
+        busqueda_realizada_despues_de_cero = False
+
         for call in calls:
             nombre = getattr(call, "name", "")
             argumentos = dict(getattr(call, "args", {}) or {})
             print("GEMINI TOOL CALL:", nombre, argumentos)
+
+            if reintento_pendiente and nombre in herramientas_busqueda:
+                # La llamada actual satisface el segundo intento obligatorio,
+                # aunque el modelo haya elegido una fuente complementaria.
+                busqueda_realizada_despues_de_cero = True
+                fuentes_reintentadas.add(nombre)
+
             resultado = _ejecutar_tool(nombre, argumentos)
+
+            if (
+                isinstance(resultado, dict)
+                and resultado.get("busqueda_vacia")
+                and nombre in herramientas_busqueda
+                and nombre not in fuentes_reintentadas
+            ):
+                reintento_pendiente = True
+
             if nombre == "proponer_registro_excel":
-                propuesta_excel = resultado.get("propuesta") if isinstance(resultado, dict) else None
+                propuesta_excel = (
+                    resultado.get("propuesta")
+                    if isinstance(resultado, dict)
+                    else None
+                )
+
+            if nombre == "guardar_metadato_relevante":
+                propuesta_metadato = (
+                    resultado.get("propuesta")
+                    if isinstance(resultado, dict)
+                    else None
+                )
+
             contents.append(types.Part.from_function_response(
                 name=nombre,
                 response={"resultado": resultado},
             ))
 
-    if propuesta_excel:
-        return "No pude completar la consulta después de consultar las fuentes disponibles.", propuesta_excel
-    return "No pude completar la consulta después de consultar las fuentes disponibles."
+        if busqueda_realizada_despues_de_cero:
+            reintento_pendiente = False
 
+    if propuesta_excel or propuesta_metadato:
+        return (
+            "No pude completar la consulta después de consultar las fuentes disponibles.",
+            propuesta_excel,
+            propuesta_metadato,
+        )
+    return "No pude completar la consulta después de consultar las fuentes disponibles."

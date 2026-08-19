@@ -3,13 +3,14 @@
 {% block content %}
 <div class="page">
   <header class="top">
-    <div><span>BIBLIOTECA DE CONOCIMIENTO</span><h1>Manuales y pólizas</h1><p>Los PDFs quedan almacenados de forma privada y están disponibles para la IA.</p></div>
+    <div><span>BIBLIOTECA DE CONOCIMIENTO</span><h1>Manuales y pólizas</h1><p>PDFs privados, pólizas y fichas de metadatos disponibles para la IA.</p></div>
     <strong class="count">{{ polizas|length }} pólizas · {{ manuales|sum(attribute='cantidad') }} manuales</strong>
   </header>
 
   <div class="library-tabs">
     <button type="button" class="library-tab active" data-target="manualesPanel">📘 Manuales</button>
     <button type="button" class="library-tab" data-target="polizasPanel">📄 Pólizas</button>
+    <button type="button" class="library-tab" data-target="metaPanel">🗂️ Metadatos</button>
   </div>
 
   <section id="manualesPanel" class="panel library-panel">
@@ -48,8 +49,65 @@
       {% else %}<div class="empty"><b>Aún no hay pólizas cargadas</b><small>Subí el primer PDF para incorporarlo al conocimiento de la IA.</small></div>{% endfor %}
     </div>
   </section>
+
+  <section id="metaPanel" class="panel library-panel hidden">
+    <div class="workspace-head">
+      <div><b>Metadatos</b><small>Fichas de texto que la IA consulta con prioridad. Ideal para PDFs escaneados o datos operativos.</small></div>
+      <div class="excel-actions"><button class="btn-primary" id="nuevoMetadato" type="button">+ Nueva ficha</button></div>
+    </div>
+    <div class="meta-layout">
+      <aside class="meta-list-panel">
+        <div class="meta-list-head"><b>Fichas</b><span id="metaCount">0</span></div>
+        <div id="metaList" class="meta-list"><div class="meta-empty">No hay fichas todavía.</div></div>
+      </aside>
+      <div class="meta-editor-panel">
+        <div id="metaEmpty" class="meta-editor-empty">Seleccioná una ficha o creá una nueva.</div>
+        <div id="metaEditor" class="hidden">
+          <input class="meta-title" id="metaTitulo" type="text" maxlength="200" placeholder="Título de la ficha...">
+          <div class="word-status" id="metaStatus">Listo</div>
+          <textarea class="word-editor meta-content" id="metaContenido" placeholder="Pegá aquí el contenido del PDF o la información que querés que OficinaIA conozca..."></textarea>
+        </div>
+      </div>
+    </div>
+  </section>
 </div>
 {% endblock %}
+
+{% block head %}<style>
+.workspace-head{padding-bottom:14px;border-bottom:1px solid var(--line);display:flex;align-items:center;justify-content:space-between;gap:15px}
+.workspace-head b,.workspace-head small{display:block}
+.workspace-head b{font-size:11px}
+.workspace-head small{margin-top:3px;color:var(--soft);font-size:8px}
+.excel-actions{display:flex;gap:6px;align-items:center;flex-wrap:wrap;justify-content:flex-end}
+.btn-soft,.btn-primary{border-radius:8px;padding:8px 10px;font-size:9px;font-weight:700;cursor:pointer;text-decoration:none}
+.btn-soft{border:1px solid var(--line);background:#fff;color:#526071}
+.btn-soft:hover{background:#f7f9fb}
+.btn-primary{border:0;background:var(--teal);color:#fff}
+.word-status{font-size:8px;color:var(--soft);padding:9px 0}
+.word-status.ok{color:var(--teal)}
+.word-status.error{color:#b44d4d}
+.word-editor{width:100%;min-height:520px;margin-top:14px;border:1px solid var(--line);border-radius:11px;padding:18px;font:14px/1.65 Inter,sans-serif;color:var(--ink);resize:vertical;outline:0}
+.word-editor:focus{box-shadow:inset 0 0 0 1px #8bcfc3}
+.meta-layout{display:grid;grid-template-columns:260px minmax(0,1fr);gap:14px;margin-top:14px;min-height:520px}
+.meta-list-panel,.meta-editor-panel{border:1px solid var(--line);border-radius:11px;background:#fff;overflow:hidden}
+.meta-list-head{display:flex;justify-content:space-between;align-items:center;padding:12px 13px;border-bottom:1px solid var(--line);font-size:10px;color:var(--navy)}
+.meta-list-head span{font-size:8px;color:var(--soft)}
+.meta-list{max-height:470px;overflow:auto}
+.meta-item{display:flex;align-items:center;gap:8px;padding:10px 11px;border-bottom:1px solid var(--line);cursor:pointer}
+.meta-item:hover{background:#f7f9fb}
+.meta-item.active{background:#eef9f6}
+.meta-item-main{min-width:0;flex:1}
+.meta-item-title{font-size:9px;font-weight:800;color:var(--navy);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.meta-item-date{font-size:7px;color:var(--soft);margin-top:3px}
+.meta-delete{border:0;background:transparent;color:#a85b5b;font-size:9px;cursor:pointer;padding:5px}
+.meta-empty,.meta-editor-empty{padding:22px;color:var(--soft);font-size:9px}
+.meta-editor-panel{padding:14px}
+.meta-title{width:100%;box-sizing:border-box;border:1px solid var(--line);border-radius:9px;padding:10px 12px;font-size:13px;font-weight:700;color:var(--ink);outline:0}
+.meta-title:focus{box-shadow:inset 0 0 0 1px #8bcfc3}
+.meta-content{min-height:455px;margin-top:0;box-sizing:border-box}
+.hidden{display:none!important}
+@media(max-width:800px){.meta-layout{grid-template-columns:1fr}.meta-list{max-height:220px}}
+</style>{% endblock %}
 
 {% block scripts %}
 <script>
@@ -66,6 +124,10 @@
       document.querySelectorAll('.library-panel').forEach(x => x.classList.add('hidden'));
       btn.classList.add('active');
       document.getElementById(btn.dataset.target).classList.remove('hidden');
+      if (btn.dataset.target === 'metaPanel' && !window.metaLoaded) {
+        cargarListaMetadatos();
+        window.metaLoaded = true;
+      }
     });
   });
 
@@ -78,9 +140,6 @@
       const status = card?.querySelector('.upload-status');
       const files = Array.from(input.files);
 
-      // Se envía cada archivo en una petición independiente. Así el límite de
-      // 20 MB de Flask se aplica por PDF y una carga de varios archivos no se
-      // convierte en una única petición gigante.
       input.disabled = true;
 
       let exitosos = 0;
@@ -150,8 +209,6 @@
           status.textContent = `Error: ${errores.join(' | ')}`;
         }
 
-        // Siempre refrescamos si al menos un PDF quedó guardado, para que
-        // aparezca inmediatamente y se consulte desde el estado persistente.
         if (exitosos > 0) {
           setTimeout(() => location.reload(), 700);
         } else {
@@ -228,6 +285,125 @@
       location.reload();
     } catch (error) { alert(error.message); }
   }));
+
+  /* ---- Metadatos CRUD ---- */
+  let metaSaveTimer = null;
+  let metaItems = [];
+  let metaActualId = null;
+  const metaTitulo = document.getElementById('metaTitulo');
+  const metaContenido = document.getElementById('metaContenido');
+  const metaStatus = document.getElementById('metaStatus');
+  const metaList = document.getElementById('metaList');
+
+  function metaFecha(valor) {
+    if (!valor) return '';
+    try { return new Date(valor.replace(' ', 'T') + 'Z').toLocaleString('es-AR', { day: '2-digit', month: '2-digit', year: 'numeric' }); }
+    catch (e) { return valor; }
+  }
+  function escapeHtmlMeta(text) {
+    return String(text || '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+  }
+  function renderMetadatos() {
+    document.getElementById('metaCount').textContent = String(metaItems.length);
+    if (!metaItems.length) { metaList.innerHTML = '<div class="meta-empty">No hay fichas todavía.</div>'; return; }
+    metaList.innerHTML = metaItems.map(item => `<div class="meta-item ${item.id === metaActualId ? 'active' : ''}" data-id="${item.id}">
+      <div class="meta-item-main"><div class="meta-item-title">${escapeHtmlMeta(item.titulo)}</div><div class="meta-item-date">${metaFecha(item.actualizado_en)}</div></div>
+      <button class="meta-delete" type="button" title="Borrar" data-delete-meta="${item.id}">×</button>
+    </div>`).join('');
+    metaList.querySelectorAll('.meta-item').forEach(el => el.onclick = e => {
+      if (e.target.closest('[data-delete-meta]')) return;
+      cargarMetadato(Number(el.dataset.id));
+    });
+    metaList.querySelectorAll('[data-delete-meta]').forEach(btn => btn.onclick = async e => {
+      e.stopPropagation();
+      if (!confirm('¿Borrar esta ficha?')) return;
+      try {
+        const r = await fetch('/api/metadatos/' + btn.dataset.deleteMeta, { method: 'DELETE' }), d = await r.json();
+        if (!d.ok) throw Error(d.error || 'Error');
+        if (metaActualId === Number(btn.dataset.deleteMeta)) {
+          metaActualId = null;
+          document.getElementById('metaEditor').classList.add('hidden');
+          document.getElementById('metaEmpty').classList.remove('hidden');
+        }
+        await cargarListaMetadatos();
+      } catch (err) { alert(err.message || 'No se pudo borrar la ficha'); }
+    });
+  }
+  async function cargarListaMetadatos() {
+    try {
+      const r = await fetch('/api/metadatos'), d = await r.json();
+      if (!d.ok) throw Error(d.error || 'Error');
+      metaItems = d.metadatos || [];
+      renderMetadatos();
+    } catch (e) { metaList.innerHTML = '<div class="meta-empty">No se pudieron cargar las fichas.</div>'; }
+  }
+  async function cargarMetadato(id) {
+    try {
+      const r = await fetch('/api/metadatos/' + id), d = await r.json();
+      if (!d.ok) throw Error(d.error || 'Error');
+      metaActualId = id;
+      document.getElementById('metaEmpty').classList.add('hidden');
+      document.getElementById('metaEditor').classList.remove('hidden');
+      metaTitulo.value = d.metadato.titulo || '';
+      metaContenido.value = d.metadato.contenido || '';
+      metaStatus.textContent = 'Guardado';
+      metaStatus.className = 'word-status ok';
+      renderMetadatos();
+    } catch (e) {
+      metaStatus.textContent = 'No se pudo cargar la ficha';
+      metaStatus.className = 'word-status error';
+    }
+  }
+  async function guardarMetadato() {
+    if (metaActualId === null) return;
+    const titulo = metaTitulo.value.trim();
+    const contenido = metaContenido.value;
+    if (!titulo) { metaStatus.textContent = 'El título es obligatorio'; metaStatus.className = 'word-status error'; return; }
+    if (!contenido.trim()) { metaStatus.textContent = 'El contenido no puede estar vacío'; metaStatus.className = 'word-status error'; return; }
+    metaStatus.textContent = 'Guardando...';
+    metaStatus.className = 'word-status';
+    try {
+      const r = await fetch('/api/metadatos/' + metaActualId, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ titulo, contenido })
+      }), d = await r.json();
+      if (!d.ok) throw Error(d.error || 'Error');
+      const idx = metaItems.findIndex(x => x.id === metaActualId);
+      if (idx >= 0) {
+        metaItems[idx].titulo = d.metadato.titulo;
+        metaItems[idx].actualizado_en = d.metadato.actualizado_en;
+      }
+      renderMetadatos();
+      metaStatus.textContent = 'Guardado';
+      metaStatus.className = 'word-status ok';
+    } catch (e) {
+      metaStatus.textContent = e.message || 'Error al guardar';
+      metaStatus.className = 'word-status error';
+    }
+  }
+  function programarGuardadoMetadato() {
+    clearTimeout(metaSaveTimer);
+    metaStatus.textContent = 'Guardando...';
+    metaStatus.className = 'word-status';
+    metaSaveTimer = setTimeout(guardarMetadato, 700);
+  }
+  if (metaTitulo) metaTitulo.addEventListener('input', programarGuardadoMetadato);
+  if (metaContenido) metaContenido.addEventListener('input', programarGuardadoMetadato);
+  const btnNuevo = document.getElementById('nuevoMetadato');
+  if (btnNuevo) btnNuevo.onclick = async () => {
+    const titulo = 'Nueva ficha';
+    try {
+      const r = await fetch('/api/metadatos', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ titulo, contenido: 'Contenido pendiente de cargar.' })
+      }), d = await r.json();
+      if (!d.ok) throw Error(d.error || 'Error');
+      metaItems.unshift({ id: d.metadato.id, titulo: d.metadato.titulo, actualizado_en: d.metadato.actualizado_en });
+      await cargarMetadato(d.metadato.id);
+    } catch (e) { alert(e.message || 'No se pudo crear la ficha'); }
+  };
 })();
 </script>
 {% endblock %}
