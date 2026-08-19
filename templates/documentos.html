@@ -11,4 +11,5 @@
 <div class="composer-wrap"><div id="pdfAdjunto" class="pdf-attached" hidden><span>📎</span><strong id="pdfNombre"></strong><button type="button" onclick="quitarPdf()" title="Quitar PDF">×</button></div><div class="composer"><label class="attach-pdf" title="Adjuntar PDF">📎<input id="pdfInput" type="file" accept="application/pdf,.pdf"></label><textarea id="mensaje" rows="1" maxlength="6000" placeholder="Escribí tu consulta…"></textarea><button class="send" onclick="enviarMensaje()">↑</button></div><small>PDF hasta 20 MB · Se analiza en este chat y no se guarda en la biblioteca · Enter para enviar · Shift + Enter para una nueva línea</small></div>
 </section></div></div>
 {% endblock %}
-{% block scripts %}<script>initChat();</script>{% endblock %}
+{% block scripts %}<script>window.FORZAR_CHAT_NUEVO = {{ 'true' if forzar_chat_nuevo else 'false' }};</script>
+<script>initChat();</script>{% endblock %}
