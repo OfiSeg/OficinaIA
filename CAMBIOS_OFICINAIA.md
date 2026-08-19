@@ -24,3 +24,10 @@ Cambios aplicados sobre la base existente:
 - La selección final de contexto compite entre Excel interno, Excel externo y documentos, buscando 1 fuente cuando alcanza y 2 sólo cuando aportan valor real.
 - El prompt de Gemini ahora exige cubrir todos los puntos de una pregunta compleja, evitar registros ajenos, no inventar y citar sólo las fuentes realmente utilizadas.
 - `max_output_tokens` aumentó de 1400 a 4096 para evitar cortes prematuros de respuestas válidas, sin pedir respuestas largas por defecto.
+
+
+## Corrección adicional 2026-08-18 — consultas documentales sin Gemini
+- Se corrigió `consultar_gemini()` para que la ausencia de `GEMINI_API_KEY` no transforme una consulta de remolque/asistencia en un resultado de Excel/Google Sheets.
+- Las consultas clasificadas como `DOCUMENTO` siguen excluyendo Excel y Sheets del routing estructurado.
+- Si Gemini no está configurado, se muestran únicamente fragmentos PDF recuperados como evidencia, sin inventar cantidades/coberturas.
+- Se agregó logging explícito `INTENCION=DOCUMENTO`, `SERVICIO=REMOLQUE`, `FUENTE=PDF`, `GEMINI=NO_CONFIGURADO`.

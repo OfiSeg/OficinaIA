@@ -1,8 +1,5 @@
 import re
 import os
-import csv
-import io
-import urllib.request
 from pathlib import Path
 from google import genai
 from google.genai import types
@@ -19,11 +16,6 @@ except Exception:
 # CONFIGURACIÓN
 # ==========================================================
 
-SHEET_URL = (
-    "https://docs.google.com/spreadsheets/d/e/"
-    "2PACX-1vRqKDij-TRt87x_9EfggVPc0Qc8v4-hJUnOLXqrBcnqLO_gumj47GhJOcSoWAJkX3oRh3tZa9PRXiss/"
-    "pub?output=csv"
-)
 
 
 MODELOS_GEMINI = [
@@ -52,65 +44,6 @@ def obtener_cliente_gemini():
     )
 
 
-# ==========================================================
-# GOOGLE SHEETS
-# ==========================================================
-
-def obtener_datos_sheet():
-
-    try:
-
-        with urllib.request.urlopen(
-            SHEET_URL,
-            timeout=15
-        ) as respuesta:
-
-            contenido = respuesta.read().decode(
-                "utf-8-sig"
-            )
-
-        lector = csv.DictReader(
-            io.StringIO(contenido)
-        )
-
-        datos = []
-
-        for fila in lector:
-
-            fila_limpia = {
-                str(k).strip().upper():
-                str(v).strip()
-                for k, v in fila.items()
-                if k is not None
-            }
-
-            if any(fila_limpia.values()):
-
-                datos.append(
-                    fila_limpia
-                )
-
-        print(
-            "GOOGLE SHEETS: "
-            + str(len(datos))
-            + " registros cargados."
-        )
-
-        return datos
-
-    except Exception as error:
-
-        print(
-            "ERROR GOOGLE SHEETS:",
-            error
-        )
-
-        return []
-
-
-# ==========================================================
-# BUSCAR EN GOOGLE SHEETS
-# ==========================================================
 
 def _texto_fila(fila):
     return " ".join(str(v or "") for v in fila.values()).strip()
@@ -326,19 +259,6 @@ def _filas_por_companias(pregunta, datos):
     return salida
 
 
-def buscar_en_sheet(pregunta, datos=None):
-    datos = datos if datos is not None else obtener_datos_sheet()
-    resultados = _buscar_en_registros(pregunta, datos, "Google Sheets")
-    if not resultados:
-        return ""
-
-    contexto = "FUENTE: Excel externo / Google Sheets\n"
-    for _, fila in resultados:
-        contexto += "REGISTRO DE CLIENTE:\n"
-        for campo, valor in fila.items():
-            contexto += f"{campo}: {valor}\n"
-        contexto += "\n--------------------\n"
-    return contexto
 
 def buscar_en_excel_interno(pregunta):
     datos = _cargar_excel_interno()
@@ -469,8 +389,8 @@ TOOL_DEFINITIONS = [
             name="consultar_excel",
             description=(
                 "Busca filas relevantes en los datos estructurados de OficinaIA. "
-                "Usa el Excel interno como prioridad y Google Sheets sólo si el interno "
-                "no tiene estructura de seguros. Devuelve filas relevantes y la fuente."
+                "Busca únicamente en el Excel interno de OficinaIA. "
+                "Devuelve filas relevantes y la fuente."
             ),
             parameters_json_schema={"type": "object", "properties": {"pregunta_o_filtro": {"type": "string"}}, "required": ["pregunta_o_filtro"]},
         ),
@@ -487,6 +407,36 @@ TOOL_DEFINITIONS = [
             name="buscar_en_manuales",
             description="Busca fragmentos relevantes en los manuales y PDFs de OficinaIA.",
             parameters_json_schema={"type": "object", "properties": {"consulta": {"type": "string"}}, "required": ["consulta"]},
+        ),
+        types.FunctionDeclaration(
+            name="buscar_en_metadatos",
+            description=(
+                "Busca en fichas de texto cargadas manualmente por la oficina, "
+                "normalmente contenido copiado de PDFs escaneados o no legibles "
+                "automáticamente. Usar cuando la pregunta pueda estar respondida "
+                "por información cargada a mano."
+            ),
+            parameters_json_schema={"type": "object", "properties": {"consulta": {"type": "string"}}, "required": ["consulta"]},
+        ),
+        types.FunctionDeclaration(
+            name="proponer_registro_excel",
+            description=(
+                "Cuando la conversación contiene datos suficientes de un asegurado "
+                "(cliente, póliza, patente, compañía, etc.) y el usuario pide guardarlo "
+                "o agregarlo a la planilla, arma un registro propuesto con esos campos "
+                "para que el usuario lo confirme antes de guardarlo. No guarda nada "
+                "directamente."
+            ),
+            parameters_json_schema={
+                "type": "object",
+                "properties": {
+                    "campos": {
+                        "type": "object",
+                        "description": "Pares campo:valor detectados, por ejemplo CLIENTE, POLIZA, PATENTE, CIA."
+                    }
+                },
+                "required": ["campos"],
+            },
         ),
         types.FunctionDeclaration(
             name="buscar_vehiculos",
@@ -509,13 +459,7 @@ TOOL_DEFINITIONS = [
 
 
 def _dataset_estructurado():
-    interno = _cargar_excel_interno()
-    externo = obtener_datos_sheet()
-    if interno and any(_campo_por_alias(f, ("CLIENTE", "ASEGURADO", "PATENTE", "CIA", "COMPAÑIA", "COMPANIA")) for f in interno[:20]):
-        return interno, "Excel interno"
-    if externo:
-        return externo, "Excel externo / Google Sheets"
-    return interno, "Excel interno"
+    return _cargar_excel_interno(), "Excel interno"
 
 
 def _valor_campo(fila, campo):
@@ -545,7 +489,6 @@ def _filtrar_filas(filas, compania=None, campo=None, valor=None):
 def consultar_excel(pregunta_o_filtro):
     """Herramienta de búsqueda estructurada; no decide intención."""
     interno = _cargar_excel_interno()
-    externo = obtener_datos_sheet()
     datos, fuente = _dataset_estructurado()
     if not datos:
         return {"fuente": fuente, "registros": [], "cantidad": 0}
@@ -588,6 +531,18 @@ def contar_registros(compania=None, campo=None, valor=None):
     }
 
 
+def proponer_registro_excel(campos):
+    """Prepara una propuesta de alta; nunca escribe directamente en el Excel."""
+    if not isinstance(campos, dict):
+        return {"propuesta": {}}
+    propuesta = {
+        str(clave).strip(): str(valor).strip()
+        for clave, valor in campos.items()
+        if str(clave).strip() and str(valor).strip()
+    }
+    return {"propuesta": propuesta}
+
+
 def buscar_en_manuales(consulta):
     """Reutiliza buscar_en_documentos de app.py sin alterar su lógica."""
     try:
@@ -600,6 +555,111 @@ def buscar_en_manuales(consulta):
     except Exception as error:
         print("ERROR BUSCANDO EN MANUALES:", error)
         return {"cantidad": 0, "fragmentos": [], "error": "No se pudieron consultar los manuales."}
+
+
+
+def _cargar_metadatos():
+    """Carga las fichas de texto compartidas por toda la oficina."""
+    try:
+        from app import conectar_db
+        with conectar_db() as db:
+            rows = db.execute(
+                "SELECT id, titulo, contenido, actualizado_en FROM metadatos "
+                "ORDER BY actualizado_en DESC, id DESC"
+            ).fetchall()
+            return [dict(row) for row in rows]
+    except Exception as error:
+        print("ERROR CARGANDO METADATOS:", error)
+        return []
+
+
+def _chunks_metadato(contenido, chunk_chars=1400, overlap=220):
+    """Divide fichas largas en fragmentos manejables para la recuperación."""
+    texto = str(contenido or "").strip()
+    if not texto:
+        return []
+    if len(texto) <= chunk_chars:
+        return [texto]
+    chunks = []
+    inicio = 0
+    while inicio < len(texto):
+        fin = min(len(texto), inicio + chunk_chars)
+        if fin < len(texto):
+            corte = max(
+                texto.rfind("\n", inicio + 700, fin),
+                texto.rfind(". ", inicio + 700, fin),
+                texto.rfind("; ", inicio + 700, fin),
+            )
+            if corte > inicio + 700:
+                fin = corte + 1
+        fragmento = texto[inicio:fin].strip()
+        if fragmento:
+            chunks.append(fragmento)
+        if fin >= len(texto):
+            break
+        inicio = max(inicio + 1, fin - overlap)
+    return chunks
+
+
+def _puntuar_metadato(consulta, texto):
+    consulta_norm = _normalizar_texto(consulta)
+    texto_norm = _normalizar_texto(texto)
+    if not consulta_norm or not texto_norm:
+        return 0
+    tokens = [p for p in re.findall(r"[a-z0-9]+", consulta_norm) if len(p) >= 3]
+    if not tokens:
+        return 0
+    puntuacion = 0
+    if len(consulta_norm) >= 8 and consulta_norm in texto_norm:
+        puntuacion += 30
+    palabras_texto = set(re.findall(r"[a-z0-9]+", texto_norm))
+    for i in range(len(tokens) - 1):
+        if f"{tokens[i]} {tokens[i+1]}" in texto_norm:
+            puntuacion += 10
+    for token in tokens:
+        if token in palabras_texto:
+            puntuacion += min(8, 2 + texto_norm.count(token))
+        elif _raiz_simple(token) in {_raiz_simple(x) for x in palabras_texto}:
+            puntuacion += 3
+    return puntuacion
+
+
+def buscar_en_metadatos(consulta):
+    """
+    Busca información en fichas de texto cargadas manualmente por la oficina.
+    Las fichas son compartidas entre usuarios y se recuperan por relevancia.
+    """
+    resultados = []
+    for ficha in _cargar_metadatos():
+        titulo = str(ficha.get("titulo") or "")
+        for fragmento in _chunks_metadato(ficha.get("contenido", "")):
+            puntuacion = _puntuar_metadato(consulta, f"{titulo}\n{fragmento}")
+            if puntuacion <= 0:
+                continue
+            resultados.append({
+                "id": ficha["id"],
+                "titulo": titulo,
+                "contenido": fragmento,
+                "actualizado_en": ficha.get("actualizado_en"),
+                "puntuacion": puntuacion,
+            })
+    resultados.sort(key=lambda x: x["puntuacion"], reverse=True)
+    # Mantener un contexto acotado, priorizando fichas distintas.
+    salida = []
+    vistos = set()
+    for resultado in resultados:
+        clave = (resultado["id"], resultado["contenido"])
+        if clave in vistos:
+            continue
+        vistos.add(clave)
+        salida.append(resultado)
+        if len(salida) >= 12:
+            break
+    return {
+        "cantidad": len(salida),
+        "fichas": salida,
+        "fuente": "Metadatos internos",
+    }
 
 
 def _buscar_vehiculos_filtrados(datos, compania=None, tipo=None, cliente=None):
@@ -660,6 +720,8 @@ _TOOL_HANDLERS = {
     "consultar_excel": consultar_excel,
     "contar_registros": contar_registros,
     "buscar_en_manuales": buscar_en_manuales,
+    "buscar_en_metadatos": buscar_en_metadatos,
+    "proponer_registro_excel": proponer_registro_excel,
     "buscar_vehiculos": buscar_vehiculos,
     "buscar_en_internet": buscar_en_internet,
 }
@@ -720,6 +782,8 @@ REGLAS:
 - Para conteos, usá contar_registros y confiá en su total; nunca cuentes manualmente un subconjunto.
 - Para vehículos/patentes, usá buscar_vehiculos.
 - Para manuales, pólizas, coberturas, procedimientos o asistencia, usá buscar_en_manuales.
+- Para información cargada manualmente de PDFs no legibles, usá buscar_en_metadatos.
+- Si el usuario pide guardar o agregar un asegurado/registro a la planilla, usá proponer_registro_excel con los datos detectados; nunca lo guardes vos directamente.
 - Para datos estructurados generales, usá consultar_excel.
 - Si necesitás información pública actualizada, usá buscar_en_internet.
 - Podés llamar varias herramientas en la misma consulta y combinar sus resultados.
@@ -740,6 +804,7 @@ PREGUNTA:
 """
 
     contents = [prompt]
+    propuesta_excel = None
     for _ in range(5):
         ultimo_error = None
         respuesta = None
@@ -765,8 +830,10 @@ PREGUNTA:
 
         calls = _partes_function_calls(respuesta)
         if not calls:
-            texto = _contenido_respuesta(respuesta)
-            return texto or "No pude generar una respuesta con la información disponible."
+            texto = _contenido_respuesta(respuesta) or "No pude generar una respuesta con la información disponible."
+            if propuesta_excel:
+                return texto, propuesta_excel
+            return texto
 
         # Conservamos la respuesta del modelo en el historial de contents y agregamos
         # las respuestas de las herramientas. El SDK de Gemini acepta los objetos de
@@ -777,13 +844,14 @@ PREGUNTA:
             argumentos = dict(getattr(call, "args", {}) or {})
             print("GEMINI TOOL CALL:", nombre, argumentos)
             resultado = _ejecutar_tool(nombre, argumentos)
+            if nombre == "proponer_registro_excel":
+                propuesta_excel = resultado.get("propuesta") if isinstance(resultado, dict) else None
             contents.append(types.Part.from_function_response(
                 name=nombre,
                 response={"resultado": resultado},
             ))
 
+    if propuesta_excel:
+        return "No pude completar la consulta después de consultar las fuentes disponibles.", propuesta_excel
     return "No pude completar la consulta después de consultar las fuentes disponibles."
 
-
-# Compatibilidad con el nombre utilizado por otras partes de la aplicación.
-buscar_en_google_sheet = buscar_en_sheet

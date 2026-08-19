@@ -86,7 +86,6 @@ CIAS_LINKS = [
     ("San Cristobal", "https://productores.sancristobal.com.ar/"),
     ("Mercantil Andina", "https://servicios.mercantilandina.com.ar/sigmav3/"),
     ("EuroAmerica", "https://pas.euroamericaseguros.seg.ar/login"),
-    ("Allianz", "https://auth.allianz.com.ar/login"),
 ]
 
 MANUALES_DIR = BASE_DIR / "manuales_companias"
@@ -193,14 +192,6 @@ def inicializar_base_datos():
             creado_en TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
             FOREIGN KEY(conversacion_id) REFERENCES conversaciones(id) ON DELETE CASCADE
         )""")
-        db.execute("""CREATE TABLE IF NOT EXISTS metadatos (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            usuario TEXT NOT NULL,
-            titulo TEXT NOT NULL,
-            contenido TEXT NOT NULL,
-            creado_en TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-            actualizado_en TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-        )""")
         columnas = {fila[1] for fila in db.execute("PRAGMA table_info(usuarios)").fetchall()}
         if "email" not in columnas: db.execute("ALTER TABLE usuarios ADD COLUMN email TEXT NOT NULL DEFAULT ''")
         if "rol" not in columnas: db.execute("ALTER TABLE usuarios ADD COLUMN rol TEXT NOT NULL DEFAULT 'usuario'")
@@ -244,33 +235,12 @@ def cargar_configuracion():
         "color_fondo": "#f7f9fb",
         "color_sidebar": "#ffffff",
         "color_botones": "#122033",
-        "herramientas_visibles": {
-            "gmail": True,
-            "whatsapp": True,
-            "datacar": True,
-            "nosis": True,
-            "chatgpt": True,
-            "drive": True,
-            "envios_ya": True,
-        },
-        "excel_visible": True,
     }
     try:
         if CONFIG_FILE.exists():
             datos = json.loads(CONFIG_FILE.read_text(encoding="utf-8"))
             if isinstance(datos, dict):
                 config.update(datos)
-                visibles = config.get("herramientas_visibles", {})
-                if not isinstance(visibles, dict):
-                    visibles = {}
-                defaults_visibles = {
-                    "gmail": True, "whatsapp": True, "datacar": True,
-                    "nosis": True, "chatgpt": True, "drive": True,
-                    "envios_ya": True,
-                }
-                defaults_visibles.update(visibles)
-                config["herramientas_visibles"] = defaults_visibles
-                config["excel_visible"] = bool(config.get("excel_visible", True))
     except Exception:
         pass
     return config
@@ -862,7 +832,6 @@ def login():
                 session.clear()
                 session["usuario"] = registro["usuario"]
                 session["rol"] = registro["rol"]
-                session["forzar_chat_nuevo"] = True
                 return redirect(url_for("documentos"))
         error = "Usuario o contraseña incorrectos."
 
@@ -879,15 +848,12 @@ def login():
 @app.route("/documentos")
 @requiere_login
 def documentos():
-    # Consumir el flag una sola vez: solo fuerza un chat nuevo al iniciar sesión.
-    forzar_chat_nuevo = session.pop("forzar_chat_nuevo", False)
 
     return render_template(
         "documentos.html",
         carpetas=obtener_companias(),
         usuario=session["usuario"],
-        usuario_rol=session.get("rol", "usuario"),
-        forzar_chat_nuevo=forzar_chat_nuevo
+        usuario_rol=session.get("rol", "usuario")
     )
 
 
@@ -1485,97 +1451,6 @@ def word_exportar():
 
 
 
-
-# ==========================================================
-# METADATOS — FICHAS DE TEXTO LIBRE
-# ==========================================================
-
-@app.route("/api/metadatos", methods=["GET"])
-@requiere_login
-def listar_metadatos():
-    with closing(conectar_db()) as db:
-        rows = db.execute(
-            "SELECT id, titulo, actualizado_en FROM metadatos ORDER BY actualizado_en DESC, id DESC"
-        ).fetchall()
-        return jsonify({"ok": True, "metadatos": [dict(row) for row in rows]})
-
-
-@app.route("/api/metadatos/<int:metadato_id>", methods=["GET"])
-@requiere_login
-def obtener_metadato(metadato_id):
-    with closing(conectar_db()) as db:
-        row = db.execute(
-            "SELECT id, titulo, contenido, creado_en, actualizado_en, usuario "
-            "FROM metadatos WHERE id=?",
-            (metadato_id,),
-        ).fetchone()
-        if not row:
-            return jsonify({"ok": False, "error": "Ficha no encontrada."}), 404
-        return jsonify({"ok": True, "metadato": dict(row)})
-
-
-@app.route("/api/metadatos", methods=["POST"])
-@requiere_login
-def crear_metadato():
-    data = request.get_json(silent=True) or {}
-    titulo = str(data.get("titulo", "")).strip()
-    contenido = str(data.get("contenido", "") or "")
-    if not titulo:
-        return jsonify({"ok": False, "error": "El título es obligatorio."}), 400
-    if len(titulo) > 200:
-        titulo = titulo[:200]
-    with closing(conectar_db()) as db:
-        cur = db.execute(
-            "INSERT INTO metadatos (usuario,titulo,contenido) VALUES (?,?,?)",
-            (session["usuario"], titulo, contenido),
-        )
-        db.commit()
-        row = db.execute(
-            "SELECT id,titulo,contenido,creado_en,actualizado_en,usuario "
-            "FROM metadatos WHERE id=?",
-            (cur.lastrowid,),
-        ).fetchone()
-        return jsonify({"ok": True, "metadato": dict(row)})
-
-
-@app.route("/api/metadatos/<int:metadato_id>", methods=["PUT"])
-@requiere_login
-def editar_metadato(metadato_id):
-    data = request.get_json(silent=True) or {}
-    titulo = str(data.get("titulo", "")).strip()
-    contenido = str(data.get("contenido", "") or "")
-    if not titulo:
-        return jsonify({"ok": False, "error": "El título es obligatorio."}), 400
-    if len(titulo) > 200:
-        titulo = titulo[:200]
-    with closing(conectar_db()) as db:
-        row = db.execute("SELECT id FROM metadatos WHERE id=?", (metadato_id,)).fetchone()
-        if not row:
-            return jsonify({"ok": False, "error": "Ficha no encontrada."}), 404
-        db.execute(
-            "UPDATE metadatos SET titulo=?, contenido=?, actualizado_en=CURRENT_TIMESTAMP WHERE id=?",
-            (titulo, contenido, metadato_id),
-        )
-        db.commit()
-        row = db.execute(
-            "SELECT id,titulo,contenido,creado_en,actualizado_en,usuario "
-            "FROM metadatos WHERE id=?",
-            (metadato_id,),
-        ).fetchone()
-        return jsonify({"ok": True, "metadato": dict(row)})
-
-
-@app.route("/api/metadatos/<int:metadato_id>", methods=["DELETE"])
-@requiere_login
-def eliminar_metadato(metadato_id):
-    with closing(conectar_db()) as db:
-        row = db.execute("SELECT id FROM metadatos WHERE id=?", (metadato_id,)).fetchone()
-        if not row:
-            return jsonify({"ok": False, "error": "Ficha no encontrada."}), 404
-        db.execute("DELETE FROM metadatos WHERE id=?", (metadato_id,))
-        db.commit()
-    return jsonify({"ok": True})
-
 # ==========================================================
 # CONVERSACIONES PERSISTENTES
 # ==========================================================
@@ -1629,48 +1504,6 @@ def eliminar_chat(chat_id):
 
 # CHAT
 # ==========================================================
-
-@app.route("/api/excel/agregar-fila", methods=["POST"])
-@requiere_login
-def api_excel_agregar_fila():
-    data = request.get_json(silent=True) or {}
-    campos = data.get("campos")
-    if not isinstance(campos, dict) or not campos:
-        return jsonify({"ok": False, "error": "No se recibieron campos para agregar."}), 400
-
-    def normalizar(valor):
-        texto = unicodedata.normalize("NFKD", str(valor or ""))
-        texto = "".join(c for c in texto if not unicodedata.combining(c))
-        return re.sub(r"[^a-z0-9]+", "", texto.lower())
-
-    try:
-        datos = leer_excel_interno()
-        filas = list(datos.get("filas") or [])
-        hoja_actual = datos.get("hoja", "Datos")
-        if not filas:
-            return jsonify({"ok": False, "error": "El Excel interno no tiene encabezados."}), 400
-
-        encabezados = filas[0]
-        cantidad_columnas = max(len(encabezados), 1)
-        fila_nueva = [""] * cantidad_columnas
-        indices = {normalizar(encabezado): i for i, encabezado in enumerate(encabezados) if normalizar(encabezado)}
-
-        for campo, valor in campos.items():
-            indice = indices.get(normalizar(campo))
-            if indice is not None:
-                fila_nueva[indice] = str(valor).strip()
-
-        if not any(str(valor).strip() for valor in fila_nueva):
-            return jsonify({
-                "ok": False,
-                "error": "Ninguno de los campos propuestos coincide con las columnas existentes del Excel."
-            }), 400
-
-        guardar_matriz_excel(filas + [fila_nueva], hoja_actual)
-        return jsonify({"ok": True, **leer_excel_interno()})
-    except Exception as error:
-        print("ERROR AGREGANDO FILA DESDE CHAT:", error)
-        return jsonify({"ok": False, "error": "No se pudo agregar el registro al Excel."}), 500
 
 @app.route(
     "/api/chat",
@@ -1824,35 +1657,107 @@ def chat():
         db.commit()
 
     # ======================================================
-    # CONTEXTO DIRECTO
+    # BUSCAR EN PDF
     # ======================================================
-    # La búsqueda de documentos ya no se ejecuta aquí.
-    # Gemini decide mediante Function Calling cuándo necesita esas fuentes.
-    # El único contexto prearmado que se conserva es el PDF adjuntado
-    # explícitamente por el usuario en este chat.
 
-    contexto = contexto_pdf_adjunto
+    resultados_pdf = buscar_en_documentos(
+        mensaje
+    )
+
+    contexto_pdf = ""
+
+    for resultado in resultados_pdf:
+
+        contexto_pdf += (
+            "\n\n===== FRAGMENTO DE DOCUMENTO =====\n"
+        )
+
+        contexto_pdf += (
+            "ARCHIVO: "
+            + resultado.get("archivo", "")
+            + "\n"
+        )
+
+        contexto_pdf += (
+            "COMPAÑIA: "
+            + resultado.get("compania", "")
+            + "\n"
+        )
+
+        contexto_pdf += (
+            "PAGINA: "
+            + str(resultado.get("pagina", ""))
+            + "\n"
+        )
+
+        contexto_pdf += (
+            "TIPO: "
+            + resultado.get("tipo", "documento")
+            + "\n\n"
+        )
+
+        contexto_pdf += (
+            resultado.get("texto", "")
+            + "\n"
+        )
+
+    # ======================================================
+    # BUSCAR EN GOOGLE SHEETS
+    # ======================================================
+
+    contexto_sheet = ""
+
+    try:
+
+        from servicios_ia import (
+            buscar_en_google_sheet
+        )
+
+        resultados_sheet = (
+            buscar_en_google_sheet(
+                mensaje
+            )
+        )
+
+        if resultados_sheet:
+
+            contexto_sheet = (
+                "\n\n===== GOOGLE SHEETS =====\n"
+                + resultados_sheet
+            )
+
+    except Exception as error:
+
+        print(
+            "ERROR GOOGLE SHEETS:",
+            error
+        )
+
+    # ======================================================
+    # CONTEXTO COMPLETO
+    # ======================================================
+
+    contexto = (
+        contexto_pdf_adjunto
+        + contexto_pdf
+        + contexto_sheet
+    )
 
     # ======================================================
     # GEMINI
     # ======================================================
 
-    propuesta_excel = None
     try:
 
         from servicios_ia import (
             consultar_gemini
         )
 
-        resultado_gemini = consultar_gemini(
+        respuesta = consultar_gemini(
             mensaje,
             contexto,
             historial=historial
         )
-        if isinstance(resultado_gemini, tuple):
-            respuesta, propuesta_excel = resultado_gemini
-        else:
-            respuesta, propuesta_excel = resultado_gemini, None
 
     except Exception as error:
 
@@ -1874,7 +1779,7 @@ def chat():
             respuesta = (
                 "No encontré información "
                 "relacionada en los documentos "
-                "ni en el Excel interno."
+                "ni en Google Sheets."
             )
 
     with closing(conectar_db()) as db:
@@ -1885,8 +1790,7 @@ def chat():
     return jsonify({
         "respuesta": respuesta,
         "chat_id": chat_id,
-        "archivo_adjunto": nombre_pdf_adjunto or None,
-        "propuesta_excel": propuesta_excel,
+        "archivo_adjunto": nombre_pdf_adjunto or None
     })
 
 
@@ -1970,7 +1874,7 @@ def configuracion():
     return render_template("configuracion.html",config=config,usuario=session["usuario"],carpetas=obtener_companias(),usuarios=usuarios)
 
 @app.route("/api/configuracion", methods=["POST"])
-@requiere_admin
+@requiere_login
 def guardar_configuracion():
     data=request.get_json(silent=True) or {}
     config=cargar_configuracion()
@@ -1991,18 +1895,8 @@ def guardar_configuracion():
             return jsonify(ok=False,error=f"El color {clave} no es válido."),400
         colores[clave] = valor.upper()
 
-    herramientas_actuales = config.get("herramientas_visibles", {})
-    herramientas_recibidas = data.get("herramientas_visibles", herramientas_actuales)
-    if not isinstance(herramientas_recibidas, dict):
-        return jsonify(ok=False,error="La configuración de herramientas no es válida."),400
-    herramientas = {}
-    for clave in ("gmail", "whatsapp", "datacar", "nosis", "chatgpt", "drive", "envios_ya"):
-        herramientas[clave] = bool(herramientas_recibidas.get(clave, herramientas_actuales.get(clave, True)))
-
     config["nombre_oficina"]=nombre
     config["notificaciones"]=bool(data.get("notificaciones",config["notificaciones"]))
-    config["herramientas_visibles"]=herramientas
-    config["excel_visible"]=bool(data.get("excel_visible", config.get("excel_visible", True)))
     config.update(colores)
     try:
         CONFIG_FILE.write_text(json.dumps(config,ensure_ascii=False,indent=2),encoding="utf-8")

@@ -61,39 +61,37 @@ class TestHerramientasFunctionCalling(unittest.TestCase):
             {"CLIENTE": "Maria Lopez", "CIA": "AGS", "FORMA DE PAGO": "Cuponera", "PATENTE": "AC789DD", "VEHICULO": "Moto"},
             {"CLIENTE": "Maria Lopez", "CIA": "AGS", "FORMA DE PAGO": "Cuponera", "PATENTE": "AC789DD", "VEHICULO": "Moto"},
         ]
-        self.sheet = []
-
     def patch_dataset(self):
-        return patch.object(ia, "_cargar_excel_interno", return_value=self.datos), patch.object(ia, "obtener_datos_sheet", return_value=self.sheet)
+        return (patch.object(ia, "_cargar_excel_interno", return_value=self.datos),)
 
     def test_consultar_excel_devuelve_filas_relevantes(self):
-        with self.patch_dataset()[0], self.patch_dataset()[1]:
+        with self.patch_dataset()[0]:
             resultado = ia.consultar_excel("Juan Perez")
         self.assertEqual(resultado["fuente"], "Excel interno")
         self.assertEqual(resultado["cantidad"], 2)
         self.assertTrue(all(r["CLIENTE"] == "Juan Perez" for r in resultado["registros"]))
 
     def test_contar_registros_deduplica_personas_sin_recortar(self):
-        with self.patch_dataset()[0], self.patch_dataset()[1]:
+        with self.patch_dataset()[0]:
             resultado = ia.contar_registros(compania="AGS")
         self.assertEqual(resultado["total_filas"], 2)
         self.assertEqual(resultado["campo_identidad"], "CLIENTE")
         self.assertEqual(resultado["total_unicos"], 1)
 
     def test_contar_registros_campo_valor(self):
-        with self.patch_dataset()[0], self.patch_dataset()[1]:
+        with self.patch_dataset()[0]:
             resultado = ia.contar_registros(campo="FORMA DE PAGO", valor="CBU")
         self.assertEqual(resultado["total_filas"], 2)
         self.assertEqual(resultado["total_unicos"], 1)
 
     def test_buscar_vehiculos_por_filtros(self):
-        with self.patch_dataset()[0], self.patch_dataset()[1]:
+        with self.patch_dataset()[0]:
             resultado = ia.buscar_vehiculos(compania="ATM", cliente="Juan Perez")
         self.assertEqual(resultado["cantidad"], 2)
         self.assertEqual({r["PATENTE"] for r in resultado["vehiculos"]}, {"AA123BB", "AB456CC"})
 
     def test_buscar_vehiculos_por_tipo(self):
-        with self.patch_dataset()[0], self.patch_dataset()[1]:
+        with self.patch_dataset()[0]:
             resultado = ia.buscar_vehiculos(tipo="Moto")
         self.assertEqual(resultado["cantidad"], 1)
         self.assertEqual(resultado["vehiculos"][0]["PATENTE"], "AC789DD")
@@ -142,7 +140,7 @@ class TestHerramientasFunctionCalling(unittest.TestCase):
             def __init__(self):
                 self.models = FakeModels()
 
-        with self.patch_dataset()[0], self.patch_dataset()[1], patch.object(ia, "obtener_cliente_gemini", return_value=FakeClient()):
+        with self.patch_dataset()[0], patch.object(ia, "obtener_cliente_gemini", return_value=FakeClient()):
             resultado = ia.consultar_gemini("¿Cuántos asegurados tengo en ATM?")
 
         self.assertEqual(resultado, "ATM tiene 1 asegurado único.")

@@ -22,6 +22,73 @@ async function nuevoChat(){const r=await fetch('/api/chats',{method:'POST',heade
 async function eliminarChat(id){const r=await fetch('/api/chats/'+id,{method:'DELETE'});if(!r.ok)return;if(currentChatId===id){currentChatId=null;const c=document.getElementById('chat');if(c)c.innerHTML='<div id="chatWelcome" class="welcome"><strong>✦</strong><h2>¿Qué necesitás resolver?</h2><p>Podés iniciar una nueva conversación cuando quieras.</p></div>'}await cargarListaChats()}
 async function borrarChatActual(){if(!currentChatId){return}await eliminarChat(currentChatId)}
 let enviandoMensaje=false;
+function mostrarPropuestaExcel(propuesta){
+  const c=document.getElementById('chat');
+  if(!c||!propuesta||typeof propuesta!=='object')return;
+  const campos=Object.entries(propuesta).filter(([k,v])=>String(k).trim()&&String(v).trim());
+  if(!campos.length)return;
+  const r=document.createElement('div');
+  r.className='msg assistant';
+  const b=document.createElement('div');
+  b.className='bubble excel-proposal';
+  const titulo=document.createElement('div');
+  titulo.className='excel-proposal-title';
+  titulo.textContent='Registro detectado para Excel';
+  b.appendChild(titulo);
+  const ayuda=document.createElement('div');
+  ayuda.className='excel-proposal-help';
+  ayuda.textContent='Revisá y corregí los datos antes de guardar.';
+  b.appendChild(ayuda);
+  const form=document.createElement('div');
+  form.className='excel-proposal-fields';
+  campos.forEach(([clave,valor])=>{
+    const label=document.createElement('label');
+    label.className='excel-proposal-field';
+    const span=document.createElement('span');
+    span.textContent=clave;
+    const input=document.createElement('input');
+    input.type='text';
+    input.value=String(valor);
+    input.dataset.campo=clave;
+    label.appendChild(span);
+    label.appendChild(input);
+    form.appendChild(label);
+  });
+  b.appendChild(form);
+  const acciones=document.createElement('div');
+  acciones.className='excel-proposal-actions';
+  const guardar=document.createElement('button');
+  guardar.type='button';
+  guardar.className='excel-proposal-save';
+  guardar.textContent='Guardar en Excel';
+  const estado=document.createElement('span');
+  estado.className='excel-proposal-status';
+  acciones.appendChild(guardar);
+  acciones.appendChild(estado);
+  b.appendChild(acciones);
+  r.appendChild(b);
+  c.appendChild(r);
+  guardar.addEventListener('click',async()=>{
+    if(guardar.disabled)return;
+    const valores={};
+    form.querySelectorAll('input[data-campo]').forEach(input=>{valores[input.dataset.campo]=input.value.trim()});
+    if(!Object.values(valores).some(Boolean)){estado.textContent='Completá al menos un campo.';return}
+    guardar.disabled=true;
+    estado.textContent='Guardando…';
+    try{
+      const resp=await fetch('/api/excel/agregar-fila',{method:'POST',headers:{'Content-Type':'application/json'},credentials:'same-origin',body:JSON.stringify({campos:valores})});
+      const d=await leerJsonSeguro(resp);
+      if(!resp.ok||d.ok===false)throw Error(d.error||'No se pudo guardar el registro.');
+      estado.textContent='Guardado correctamente en Excel.';
+      estado.classList.add('success');
+      guardar.textContent='Guardado';
+    }catch(e){
+      estado.textContent=e?.message||'No se pudo guardar.';
+      guardar.disabled=false;
+    }
+  });
+  scroll();
+}
 async function enviarMensaje(){
   const i=document.getElementById('mensaje'),b=document.querySelector('.send'),pdf=document.getElementById('pdfInput');
   if(!i||enviandoMensaje)return;
@@ -47,6 +114,7 @@ async function enviarMensaje(){
       if(!r.ok||d.ok===false)throw Error(d.error||'No se pudo consultar el asistente.');
       currentChatId=d.chat_id||currentChatId;
       thinking.querySelector('.bubble').innerHTML=fmt(d.respuesta||'No recibí una respuesta.');
+      if(d.propuesta_excel)mostrarPropuestaExcel(d.propuesta_excel);
       if(pdf)pdf.value='';
       mostrarPdf(null);
       try{await cargarListaChats()}catch(_){}
@@ -61,7 +129,7 @@ async function enviarMensaje(){
     i.focus();
   }
 }
-async function initChat(){const i=document.getElementById('mensaje');if(!i)return;i.oninput=size;i.onkeydown=e=>{if(e.key==='Enter'&&!e.shiftKey){e.preventDefault();enviarMensaje()}};const pdf=document.getElementById('pdfInput');if(pdf)pdf.addEventListener('change',()=>{const file=pdf.files?.[0];if(file){if(!file.name.toLowerCase().endsWith('.pdf')){alert('Solo podés adjuntar archivos PDF.');pdf.value='';return}if(file.size>20*1024*1024){alert('El PDF supera el límite de 20 MB.');pdf.value='';return}mostrarPdf(file)}});const r=await fetch('/api/chats',{credentials:'same-origin'}),d=await leerJsonSeguro(r);if(!r.ok||!d.ok)throw new Error(d.error||'No se pudo cargar el historial.');if(d.chats.length)await abrirChat(d.chats[0].id);else{const x=await fetch('/api/chats',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({titulo:'Nueva conversación'}),credentials:'same-origin'}),j=await leerJsonSeguro(x);if(j.ok)await abrirChat(j.id)}size();scroll()}
+async function initChat(){const i=document.getElementById('mensaje');if(!i)return;i.oninput=size;i.onkeydown=e=>{if(e.key==='Enter'&&!e.shiftKey){e.preventDefault();enviarMensaje()}};const pdf=document.getElementById('pdfInput');if(pdf)pdf.addEventListener('change',()=>{const file=pdf.files?.[0];if(file){if(!file.name.toLowerCase().endsWith('.pdf')){alert('Solo podés adjuntar archivos PDF.');pdf.value='';return}if(file.size>20*1024*1024){alert('El PDF supera el límite de 20 MB.');pdf.value='';return}mostrarPdf(file)}});const r=await fetch('/api/chats',{credentials:'same-origin'}),d=await leerJsonSeguro(r);if(!r.ok||!d.ok)throw new Error(d.error||'No se pudo cargar el historial.');if(window.FORZAR_CHAT_NUEVO||!d.chats.length){const x=await fetch('/api/chats',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({titulo:'Nueva conversación'}),credentials:'same-origin'}),j=await leerJsonSeguro(x);if(j.ok)await abrirChat(j.id);window.FORZAR_CHAT_NUEVO=false}else{await abrirChat(d.chats[0].id)}size();scroll()}
 async function buscar(q){const box=document.getElementById('resultadosBusqueda');if(!box)return;if(!q){box.innerHTML='<div class="empty"><b>Empezá a buscar</b><small>Los resultados aparecerán aquí.</small></div>';return}box.innerHTML='<div class="empty"><b>Buscando…</b></div>';try{const r=await fetch('/api/buscar?q='+encodeURIComponent(q)),d=await r.json();box.innerHTML=d.length?d.map(x=>`<div class="result"><b>${esc((x.extension||'FILE').replace('.','').toUpperCase())}</b><span><strong>${esc(x.nombre)}</strong><small>${esc(x.compania)} · ${esc(x.tamaño)} KB</small></span></div>`).join(''):'<div class="empty"><b>No encontramos coincidencias</b></div>'}catch{box.innerHTML='<div class="empty"><b>Error de búsqueda</b></div>'}}
 function mostrarPdf(file){const box=document.getElementById('pdfAdjunto'),name=document.getElementById('pdfNombre');if(!box||!name)return;if(file){name.textContent=file.name;box.hidden=false}else{box.hidden=true;name.textContent=''}}
 function quitarPdf(){const input=document.getElementById('pdfInput');if(input)input.value='';mostrarPdf(null)}

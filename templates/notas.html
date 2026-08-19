@@ -2,14 +2,34 @@
 {% block title %}Excel · {{config_global.nombre_oficina}}{% endblock %}
 {% block content %}
 <div class="page">
-<header class="top"><div><span>ESPACIO DE TRABAJO</span><h1>Excel</h1><p>Planilla interna y documento de trabajo de {{config_global.nombre_oficina}}.</p></div><strong class="saved" id="estadoGuardado">Listo</strong></header>
-<div class="workspace-tabs" role="tablist"><button class="workspace-tab active" data-tab="excelPanel">📊 Excel</button><button class="workspace-tab" data-tab="wordPanel">📄 Word</button></div>
+<header class="top"><div><span>ESPACIO DE TRABAJO</span><h1>Excel</h1><p>Planilla interna y documento de trabajo de {{config_global.nombre_oficina}}.</p></div></header>
+<div class="workspace-tabs" role="tablist"><button class="workspace-tab active" data-tab="excelPanel">📊 Excel</button><button class="workspace-tab" data-tab="wordPanel">📄 Word</button><button class="workspace-tab" data-tab="metaPanel">🗂️ Metadatos</button></div>
 <section class="panel workspace-panel" id="excelPanel"><div class="workspace-head excel-head"><div><b>Excel interno</b><small>Las filas nuevas pueden quedar vacías; se eliminan sólo cuando elegís “Eliminar filas vacías”.</small></div><div class="excel-actions"><button class="btn-soft" id="agregarFila">+ Fila</button><button class="btn-soft" id="eliminarFila">- Fila</button><button class="btn-soft" id="agregarColumna">+ Columna</button><button class="btn-soft" id="eliminarColumna">- Columna</button><button class="btn-soft" id="limpiarFilas">Eliminar filas vacías</button><button class="btn-soft" id="limpiarColumnas">Eliminar columnas vacías</button><label class="btn-soft file-btn">Importar Excel<input id="importarExcel" type="file" accept=".xlsx,.xlsm"></label><a class="btn-primary" href="/excel/exportar">Exportar .xlsx</a></div></div><div class="excel-status" id="excelStatus">Cargando planilla...</div><div class="excel-wrap"><table class="excel-table" id="excelTable"></table></div><div class="excel-hint">Podés editar cualquier celda. Las filas vacías se conservan mientras trabajás y se eliminan sólo con la limpieza manual.</div></section>
 <section class="panel workspace-panel hidden" id="wordPanel"><div class="workspace-head"><div><b>Documento Word</b><small>Documento separado del Excel. Se guarda automáticamente.</small></div><div class="excel-actions"><a class="btn-primary" href="/word/exportar">Exportar .docx</a></div></div><div class="word-status" id="wordStatus">Cargando documento...</div><textarea class="word-editor" id="editorWord" placeholder="Escribí aquí el contenido del documento..."></textarea></section>
+<section class="panel workspace-panel hidden" id="metaPanel">
+<div class="workspace-head">
+  <div><b>Metadatos</b><small>Fichas de texto libre para información cargada manualmente por la oficina.</small></div>
+  <div class="excel-actions"><button class="btn-primary" id="nuevoMetadato">+ Nueva ficha</button></div>
+</div>
+<div class="meta-layout">
+  <aside class="meta-list-panel">
+    <div class="meta-list-head"><b>Fichas</b><span id="metaCount">0</span></div>
+    <div id="metaList" class="meta-list"><div class="meta-empty">No hay fichas todavía.</div></div>
+  </aside>
+  <div class="meta-editor-panel">
+    <div id="metaEmpty" class="meta-editor-empty">Seleccioná una ficha o creá una nueva.</div>
+    <div id="metaEditor" class="hidden">
+      <input class="meta-title" id="metaTitulo" type="text" maxlength="200" placeholder="Título de la ficha...">
+      <div class="word-status" id="metaStatus">Listo</div>
+      <textarea class="word-editor meta-content" id="metaContenido" placeholder="Pegá aquí el contenido del PDF o la información que querés que OficinaIA conozca..."></textarea>
+    </div>
+  </div>
+</div>
+</section>
 </div>
 {% endblock %}
 {% block head %}<style>
-.workspace-tabs{display:flex;gap:6px;margin-bottom:12px;padding:5px;background:#eef2f4;border-radius:12px;width:max-content}.workspace-tab{border:0;background:transparent;padding:9px 15px;border-radius:9px;color:#667383;font-size:10px;font-weight:700;cursor:pointer}.workspace-tab.active{background:#fff;color:var(--navy);box-shadow:0 2px 8px #12203310}.workspace-panel.hidden{display:none}.workspace-head{padding-bottom:14px;border-bottom:1px solid var(--line);display:flex;align-items:center;justify-content:space-between;gap:15px}.workspace-head b,.workspace-head small{display:block}.workspace-head b{font-size:11px}.workspace-head small{margin-top:3px;color:var(--soft);font-size:8px}.excel-actions{display:flex;gap:6px;align-items:center;flex-wrap:wrap;justify-content:flex-end}.btn-soft,.btn-primary{border-radius:8px;padding:8px 10px;font-size:9px;font-weight:700;cursor:pointer;text-decoration:none}.btn-soft{border:1px solid var(--line);background:#fff;color:#526071}.btn-soft:hover{background:#f7f9fb}.btn-primary{border:0;background:var(--teal);color:#fff}.file-btn{position:relative;overflow:hidden}.file-btn input{position:absolute;inset:0;opacity:0;cursor:pointer}.excel-status,.word-status{font-size:8px;color:var(--soft);padding:9px 0}.excel-wrap{border:1px solid var(--line);border-radius:11px;overflow:auto;max-height:570px;background:#fff}.excel-table{border-collapse:separate;border-spacing:0;width:100%;min-width:720px;font-size:10px}.excel-table th,.excel-table td{border-right:1px solid var(--line);border-bottom:1px solid var(--line);padding:0;min-width:120px;height:36px}.excel-table th{cursor:pointer;background:#f4f7f8;color:#536171;font-size:8px;font-weight:800;position:sticky;top:0;z-index:2}.excel-table th:first-child{min-width:42px;width:42px}.excel-table td:first-child{background:#f8fafb;text-align:center;color:#9aa5b0;font-size:8px;min-width:42px;width:42px}.excel-cell{width:100%;height:35px;border:0;outline:0;background:transparent;padding:7px 9px;color:var(--ink);font-size:10px}.excel-table th.excel-selected,.excel-table td.excel-selected{background:#dff3ee;color:var(--navy);font-weight:800}.excel-cell:focus{background:#eef9f6;box-shadow:inset 0 0 0 1px #8bcfc3}.excel-status.ok,.word-status.ok{color:var(--teal)}.excel-status.error,.word-status.error{color:#b44d4d}.excel-hint{margin-top:9px;color:var(--soft);font-size:8px}.word-editor{width:100%;min-height:520px;margin-top:14px;border:1px solid var(--line);border-radius:11px;padding:18px;font:14px/1.65 Inter,sans-serif;color:var(--ink);resize:vertical;outline:0}.word-editor:focus{box-shadow:inset 0 0 0 1px #8bcfc3}@media(max-width:800px){.excel-head{align-items:flex-start;flex-direction:column}.excel-actions{justify-content:flex-start}.workspace-tabs{width:100%}.workspace-tab{flex:1}}</style>{% endblock %}
+.workspace-tabs{display:flex;gap:6px;margin-bottom:12px;padding:5px;background:#eef2f4;border-radius:12px;width:max-content}.workspace-tab{border:0;background:transparent;padding:9px 15px;border-radius:9px;color:#667383;font-size:10px;font-weight:700;cursor:pointer}.workspace-tab.active{background:#fff;color:var(--navy);box-shadow:0 2px 8px #12203310}.workspace-panel.hidden{display:none}.workspace-head{padding-bottom:14px;border-bottom:1px solid var(--line);display:flex;align-items:center;justify-content:space-between;gap:15px}.workspace-head b,.workspace-head small{display:block}.workspace-head b{font-size:11px}.workspace-head small{margin-top:3px;color:var(--soft);font-size:8px}.excel-actions{display:flex;gap:6px;align-items:center;flex-wrap:wrap;justify-content:flex-end}.btn-soft,.btn-primary{border-radius:8px;padding:8px 10px;font-size:9px;font-weight:700;cursor:pointer;text-decoration:none}.btn-soft{border:1px solid var(--line);background:#fff;color:#526071}.btn-soft:hover{background:#f7f9fb}.btn-primary{border:0;background:var(--teal);color:#fff}.file-btn{position:relative;overflow:hidden}.file-btn input{position:absolute;inset:0;opacity:0;cursor:pointer}.excel-status,.word-status{font-size:8px;color:var(--soft);padding:9px 0}.excel-wrap{border:1px solid var(--line);border-radius:11px;overflow:auto;max-height:570px;background:#fff}.excel-table{border-collapse:separate;border-spacing:0;width:100%;min-width:720px;font-size:10px}.excel-table th,.excel-table td{border-right:1px solid var(--line);border-bottom:1px solid var(--line);padding:0;min-width:120px;height:36px}.excel-table th{cursor:pointer;background:#f4f7f8;color:#536171;font-size:8px;font-weight:800;position:sticky;top:0;z-index:2}.excel-table th:first-child{min-width:42px;width:42px}.excel-table td:first-child{background:#f8fafb;text-align:center;color:#9aa5b0;font-size:8px;min-width:42px;width:42px}.excel-cell{width:100%;height:35px;border:0;outline:0;background:transparent;padding:7px 9px;color:var(--ink);font-size:10px}.excel-table th.excel-selected,.excel-table td.excel-selected{background:#dff3ee;color:var(--navy);font-weight:800}.excel-cell:focus{background:#eef9f6;box-shadow:inset 0 0 0 1px #8bcfc3}.excel-status.ok,.word-status.ok{color:var(--teal)}.excel-status.error,.word-status.error{color:#b44d4d}.excel-hint{margin-top:9px;color:var(--soft);font-size:8px}.word-editor{width:100%;min-height:520px;margin-top:14px;border:1px solid var(--line);border-radius:11px;padding:18px;font:14px/1.65 Inter,sans-serif;color:var(--ink);resize:vertical;outline:0}.word-editor:focus{box-shadow:inset 0 0 0 1px #8bcfc3}.meta-layout{display:grid;grid-template-columns:260px minmax(0,1fr);gap:14px;margin-top:14px;min-height:520px}.meta-list-panel,.meta-editor-panel{border:1px solid var(--line);border-radius:11px;background:#fff;overflow:hidden}.meta-list-head{display:flex;justify-content:space-between;align-items:center;padding:12px 13px;border-bottom:1px solid var(--line);font-size:10px;color:var(--navy)}.meta-list-head span{font-size:8px;color:var(--soft)}.meta-list{max-height:470px;overflow:auto}.meta-item{display:flex;align-items:center;gap:8px;padding:10px 11px;border-bottom:1px solid var(--line);cursor:pointer}.meta-item:hover{background:#f7f9fb}.meta-item.active{background:#eef9f6}.meta-item-main{min-width:0;flex:1}.meta-item-title{font-size:9px;font-weight:800;color:var(--navy);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.meta-item-date{font-size:7px;color:var(--soft);margin-top:3px}.meta-delete{border:0;background:transparent;color:#a85b5b;font-size:9px;cursor:pointer;padding:5px}.meta-empty,.meta-editor-empty{padding:22px;color:var(--soft);font-size:9px}.meta-editor-panel{padding:14px}.meta-title{width:100%;box-sizing:border-box;border:1px solid var(--line);border-radius:9px;padding:10px 12px;font-size:13px;font-weight:700;color:var(--ink);outline:0}.meta-title:focus{box-shadow:inset 0 0 0 1px #8bcfc3}.meta-content{min-height:455px;margin-top:0;box-sizing:border-box}@media(max-width:800px){.meta-layout{grid-template-columns:1fr}.meta-list{max-height:220px}}@media(max-width:800px){.excel-head{align-items:flex-start;flex-direction:column}.excel-actions{justify-content:flex-start}.workspace-tabs{width:100%}.workspace-tab{flex:1}}</style>{% endblock %}
 {% block scripts %}<script>
 let excelData=[],excelCols=1,excelSaveTimer=null,excelHoja='Datos';
 let selectedExcelRow=null,selectedExcelCol=null;
@@ -56,9 +76,97 @@ document.getElementById('limpiarFilas').onclick=async()=>{try{const r=await fetc
 document.getElementById('limpiarColumnas').onclick=async()=>{try{const r=await fetch('/api/excel/limpiar-columnas',{method:'POST'}),d=await r.json();if(!d.ok)throw Error();excelData=d.filas||[];excelCols=d.columnas||1;selectedExcelRow=selectedExcelCol=null;asegurarFormaExcel();renderExcel();setExcelStatus('Columnas vacías eliminadas','ok')}catch(e){setExcelStatus('No se pudieron eliminar las columnas','error')}};
 document.getElementById('importarExcel').onchange=async e=>{const file=e.target.files[0];if(!file)return;const fd=new FormData();fd.append('archivo',file);setExcelStatus('Importando...');try{const r=await fetch('/api/excel/importar',{method:'POST',body:fd}),d=await r.json();if(!d.ok)throw Error(d.error||'Error');excelData=d.filas||[];excelCols=d.columnas||1;excelHoja=d.hoja||'Datos';asegurarFormaExcel();selectedExcelRow=selectedExcelCol=null;renderExcel();window.excelLoaded=true;setExcelStatus('Excel importado correctamente','ok')}catch(e){setExcelStatus(e.message||'No se pudo importar','error')}e.target.value=''};
 
+let metaSaveTimer=null;
+let metaItems=[];
+let metaActualId=null;
+let metaTitulo=document.getElementById('metaTitulo');
+let metaContenido=document.getElementById('metaContenido');
+let metaStatus=document.getElementById('metaStatus');
+let metaList=document.getElementById('metaList');
+
+function metaFecha(valor){
+  if(!valor) return '';
+  try{return new Date(valor.replace(' ','T')+'Z').toLocaleString('es-AR',{day:'2-digit',month:'2-digit',year:'numeric'})}
+  catch(e){return valor}
+}
+function renderMetadatos(){
+  document.getElementById('metaCount').textContent=String(metaItems.length);
+  if(!metaItems.length){metaList.innerHTML='<div class="meta-empty">No hay fichas todavía.</div>';return}
+  metaList.innerHTML=metaItems.map(item=>`<div class="meta-item ${item.id===metaActualId?'active':''}" data-id="${item.id}">
+    <div class="meta-item-main"><div class="meta-item-title">${escapeHtmlMeta(item.titulo)}</div><div class="meta-item-date">${metaFecha(item.actualizado_en)}</div></div>
+    <button class="meta-delete" type="button" title="Borrar" data-delete-meta="${item.id}">×</button>
+  </div>`).join('');
+  metaList.querySelectorAll('.meta-item').forEach(el=>el.onclick=e=>{
+    if(e.target.closest('[data-delete-meta]')) return;
+    cargarMetadato(Number(el.dataset.id));
+  });
+  metaList.querySelectorAll('[data-delete-meta]').forEach(btn=>btn.onclick=async e=>{
+    e.stopPropagation();
+    if(!confirm('¿Borrar esta ficha?')) return;
+    try{
+      const r=await fetch('/api/metadatos/'+btn.dataset.deleteMeta,{method:'DELETE'}),d=await r.json();
+      if(!d.ok) throw Error(d.error||'Error');
+      if(metaActualId===Number(btn.dataset.deleteMeta)){metaActualId=null;document.getElementById('metaEditor').classList.add('hidden');document.getElementById('metaEmpty').classList.remove('hidden')}
+      await cargarListaMetadatos();
+    }catch(err){alert(err.message||'No se pudo borrar la ficha')}
+  });
+}
+function escapeHtmlMeta(text){return String(text||'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]))}
+async function cargarListaMetadatos(){
+  try{
+    const r=await fetch('/api/metadatos'),d=await r.json();
+    if(!d.ok) throw Error(d.error||'Error');
+    metaItems=d.metadatos||[];renderMetadatos();
+  }catch(e){metaList.innerHTML='<div class="meta-empty">No se pudieron cargar las fichas.</div>'}
+}
+async function cargarMetadato(id){
+  try{
+    const r=await fetch('/api/metadatos/'+id),d=await r.json();
+    if(!d.ok) throw Error(d.error||'Error');
+    metaActualId=id;
+    document.getElementById('metaEmpty').classList.add('hidden');
+    document.getElementById('metaEditor').classList.remove('hidden');
+    metaTitulo.value=d.metadato.titulo||'';
+    metaContenido.value=d.metadato.contenido||'';
+    metaStatus.textContent='Guardado';metaStatus.className='word-status ok';
+    renderMetadatos();
+  }catch(e){metaStatus.textContent='No se pudo cargar la ficha';metaStatus.className='word-status error'}
+}
+async function guardarMetadato(){
+  if(metaActualId===null) return;
+  const titulo=metaTitulo.value.trim();
+  const contenido=metaContenido.value;
+  if(!titulo){metaStatus.textContent='El título es obligatorio';metaStatus.className='word-status error';return}
+  if(!contenido.trim()){metaStatus.textContent='El contenido no puede estar vacío';metaStatus.className='word-status error';return}
+  metaStatus.textContent='Guardando...';metaStatus.className='word-status';
+  try{
+    const r=await fetch('/api/metadatos/'+metaActualId,{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify({titulo,contenido})}),d=await r.json();
+    if(!d.ok) throw Error(d.error||'Error');
+    const idx=metaItems.findIndex(x=>x.id===metaActualId);
+    if(idx>=0){metaItems[idx].titulo=d.metadato.titulo;metaItems[idx].actualizado_en=d.metadato.actualizado_en}
+    renderMetadatos();metaStatus.textContent='Guardado';metaStatus.className='word-status ok';
+  }catch(e){metaStatus.textContent=e.message||'Error al guardar';metaStatus.className='word-status error'}
+}
+function programarGuardadoMetadato(){
+  clearTimeout(metaSaveTimer);
+  metaStatus.textContent='Guardando...';metaStatus.className='word-status';
+  metaSaveTimer=setTimeout(guardarMetadato,700);
+}
+metaTitulo.addEventListener('input',programarGuardadoMetadato);
+metaContenido.addEventListener('input',programarGuardadoMetadato);
+document.getElementById('nuevoMetadato').onclick=async()=>{
+  const titulo='Nueva ficha';
+  try{
+    const r=await fetch('/api/metadatos',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({titulo,contenido:'Contenido pendiente de cargar.'})}),d=await r.json();
+    if(!d.ok) throw Error(d.error||'Error');
+    metaItems.unshift({id:d.metadato.id,titulo:d.metadato.titulo,actualizado_en:d.metadato.actualizado_en});
+    await cargarMetadato(d.metadato.id);
+  }catch(e){alert(e.message||'No se pudo crear la ficha')}
+};
+
 let wordSaveTimer=null;const wordEditor=document.getElementById('editorWord'),wordStatus=document.getElementById('wordStatus');
 async function cargarWord(){try{const r=await fetch('/api/word'),d=await r.json();if(!d.ok)throw Error();wordEditor.value=d.contenido||'';wordStatus.textContent='Documento listo';wordStatus.className='word-status ok'}catch(e){wordStatus.textContent='No se pudo cargar el documento';wordStatus.className='word-status error'}}
 wordEditor.addEventListener('input',()=>{clearTimeout(wordSaveTimer);wordStatus.textContent='Guardando...';wordSaveTimer=setTimeout(async()=>{try{const r=await fetch('/api/word',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({contenido:wordEditor.value})}),d=await r.json();if(!d.ok)throw Error();wordStatus.textContent='Guardado';wordStatus.className='word-status ok'}catch(e){wordStatus.textContent='Error al guardar';wordStatus.className='word-status error'}},700)});
-document.querySelectorAll('.workspace-tab').forEach(btn=>btn.onclick=()=>{document.querySelectorAll('.workspace-tab').forEach(b=>b.classList.remove('active'));document.querySelectorAll('.workspace-panel').forEach(p=>p.classList.add('hidden'));btn.classList.add('active');document.getElementById(btn.dataset.tab).classList.remove('hidden');if(btn.dataset.tab==='excelPanel'&&!window.excelLoaded)cargarExcel();if(btn.dataset.tab==='wordPanel'&&!window.wordLoaded){cargarWord();window.wordLoaded=true}});
+document.querySelectorAll('.workspace-tab').forEach(btn=>btn.onclick=()=>{document.querySelectorAll('.workspace-tab').forEach(b=>b.classList.remove('active'));document.querySelectorAll('.workspace-panel').forEach(p=>p.classList.add('hidden'));btn.classList.add('active');document.getElementById(btn.dataset.tab).classList.remove('hidden');if(btn.dataset.tab==='excelPanel'&&!window.excelLoaded)cargarExcel();if(btn.dataset.tab==='wordPanel'&&!window.wordLoaded){cargarWord();window.wordLoaded=true}if(btn.dataset.tab==='metaPanel'&&!window.metaLoaded){cargarListaMetadatos();window.metaLoaded=true}});
 cargarExcel();
 </script>{% endblock %}
