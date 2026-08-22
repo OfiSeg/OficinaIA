@@ -2356,10 +2356,17 @@ def api_excel_agregar_fila():
             )
 
         session.pop("guardar_asegurado_libro_id", None)
+        texto_envios_ya = None
+        if not es_flota and libro_id == "1":
+            try:
+                texto_envios_ya = _armar_texto_envios_ya(campos)
+            except Exception as error:
+                print("ERROR ARMANDO TEXTO ENVIOS YA:", error)
         return jsonify({
             "ok": True,
             "libro_id": libro_id,
             "filas_agregadas": len(filas_propuesta) if es_flota else 1,
+            "texto_envios_ya": texto_envios_ya,
             **leer_excel_interno(libro_id),
         })
     except ValueError as error:
@@ -2399,8 +2406,15 @@ _MARCAS_TRANSPORTE_CONOCIDAS = sorted(
 # Enumerados fijos del formato de flota de La Segunda: es una tabla sin
 # etiquetas por campo, pero con columnas en orden constante, así que se
 # puede anclar con estos valores conocidos en vez de depender de Gemini.
-_LASEGUNDA_TIPOS = ["SEMI-REMOLQUE", "ACOPLADO", "CAMION", "CAMIÓN", "P GI H/1000Kg"]
-_LASEGUNDA_CARROCERIAS = ["FURGON DE FABRICA", "FURGÓN DE FABRICA", "GRANEL", "ABIERTA", "CERRADA"]
+_LASEGUNDA_TIPOS = [
+    "SEMI-REMOLQUE", "ACOPLADO", "CAMION", "CAMIÓN",
+    "P GI H/1000Kg", "P GII +1000Kg", "P GII H/1000Kg",
+    "AUT/FAM/M.VAN", "JEEP/CAM.FAM",
+]
+_LASEGUNDA_CARROCERIAS = [
+    "FURGON DE FABRICA", "FURGÓN DE FABRICA", "GRANEL", "ABIERTA", "CERRADA",
+    "CARGAS GENERALES", "CON BARANDAS", "SEDAN", "RURAL", "DOBLE CABINA",
+]
 _LASEGUNDA_USOS = ["COMER.H/4 TT LD", "CARG PELIG L.D.", "COMERCIAL LD", "PARTICULAR"]
 
 
@@ -2417,6 +2431,26 @@ _PATRON_LASEGUNDA = re.compile(
     r"(?P<patente>[A-Z0-9]{6,7})\s+"
     r"(?P<motor>\S+)\s+"
     r"(?P<chasis>\S+)\s+"
+    r"\$(?P<limite>[\d,]+\.\d{2})\s+"
+    r"(?P<plan>\d{2})\s+"
+    r"\$(?P<suma>[\d,]+\.\d{2})\s+"
+    r"(?:SI|--)\s+(?:SI|--)\s+(?:SI|--)\s+(?:SI|--)\s+(?:SI|--)\s+(?:SI|--)",
+    re.IGNORECASE,
+)
+
+# Variante de respaldo: algunas filas (típicamente IVECO/FIAT) traen motor
+# y chasis pegados sin espacio en el texto original de la póliza (bug del
+# parser de origen de La Segunda). En vez de perder toda la fila, se
+# captura el bloque motor+chasis como un solo token y se marca "sospechoso"
+# para que se revise/separe a mano en vez de asumir un corte automático.
+_PATRON_LASEGUNDA_MOTOR_CHASIS_PEGADO = re.compile(
+    r"(?P<tipo>" + _alt_regex(_LASEGUNDA_TIPOS) + r")\s+"
+    r"(?P<carroceria>" + _alt_regex(_LASEGUNDA_CARROCERIAS) + r")\s+"
+    r"(?P<marca_modelo>.+?)\s+"
+    r"(?P<anio>(?:19|20)\d{2})\s+"
+    r"(?P<uso>" + _alt_regex(_LASEGUNDA_USOS) + r")\s+"
+    r"(?P<patente>[A-Z0-9]{6,7})\s+"
+    r"(?P<motor_chasis>\S{15,})\s+"
     r"\$(?P<limite>[\d,]+\.\d{2})\s+"
     r"(?P<plan>\d{2})\s+"
     r"\$(?P<suma>[\d,]+\.\d{2})\s+"
@@ -2449,31 +2483,117 @@ def _lasegunda_conteo_bloques(texto):
     return len(patron_tipo.findall(texto_norm))
 
 
+# Marca el FINAL de cada fila de La Segunda: los 6 flags fijos SI/-- de
+# coberturas puntuales, seguidos opcionalmente del importe de costo
+# mensual que a veces viene pegado justo después en el mismo renglón.
+# Se usa como límite de fila en vez del TIPO/CARROCERÍA del principio
+# porque los vehículos PARTICULARES no traen esas dos columnas: si se
+# ancla el corte solo por TIPO, el texto de un auto particular queda
+# pegado a la fila del camión anterior y termina mezclado con ella (el
+# caso del Fiat Strada + Ford Bronco fusionados en una sola celda).
+_PATRON_TERMINADOR_FILA_LASEGUNDA = re.compile(
+    r"(?:SI|--)(?:\s+(?:SI|--)){5}(?:\s+\$[\d,]+\.\d+)?",
+    re.IGNORECASE,
+)
+
+
+def _dividir_filas_lasegunda(texto_plano):
+    """Divide el texto (ya aplanado a una sola línea) en un bloque por
+    fila de vehículo, cortando después de cada terminador de fila. Cada
+    bloque resultante se procesa después de forma AISLADA, así un error
+    de lectura en una fila (campos pegados, formato distinto) no puede
+    arrastrar texto hacia la fila vecina."""
+    terminadores = list(_PATRON_TERMINADOR_FILA_LASEGUNDA.finditer(texto_plano))
+    if not terminadores:
+        return [texto_plano] if texto_plano.strip() else []
+    bloques = []
+    inicio = 0
+    for term in terminadores:
+        bloque = texto_plano[inicio:term.end()].strip()
+        # Un bloque que es sólo guiones/espacios (el separador
+        # "----------" del formato de La Segunda cuando queda aislado
+        # entre dos filas) no es un vehículo: se descarta para no
+        # generar un vehículo fantasma "sin_parsear" vacío.
+        if bloque and re.sub(r"[-\s]+", "", bloque):
+            bloques.append(bloque)
+        inicio = term.end()
+    resto = texto_plano[inicio:].strip()
+    if resto and re.sub(r"[-\s]+", "", resto):
+        bloques.append(resto)
+    return bloques
+
+
 def _parsear_flota_lasegunda(texto):
     """Parser determinístico para el formato tabular de La Segunda (sin
     etiquetas por campo, columnas fijas). Devuelve una lista de vehículos
     en el mismo formato que usa el resto de /flota, o [] si no matchea
-    nada (en ese caso el llamador sigue con el flujo normal)."""
+    nada (en ese caso el llamador sigue con el flujo normal).
+
+    Primero se corta el texto en bloques por fila (ver
+    `_dividir_filas_lasegunda`) y recién después se aplica el regex de
+    campos a cada bloque por separado. Una fila que no matchea el patrón
+    estricto de camión (típicamente un vehículo PARTICULAR, sin
+    TIPO/CARROCERÍA) no se pierde ni se mezcla con la vecina: queda como
+    fila "sin parsear" con el texto crudo, para completar a mano."""
     texto_plano = re.sub(r"\s+", " ", str(texto or "")).strip()
     vehiculos = []
-    for indice, m in enumerate(_PATRON_LASEGUNDA.finditer(texto_plano), start=1):
-        marca, modelo = _dividir_marca_modelo_flota(m.group("marca_modelo"))
-        vehiculos.append({
-            "patente": m.group("patente").upper(),
-            "marca_modelo": m.group("marca_modelo").strip(),
-            "marca": marca,
-            "modelo": modelo,
-            "año": m.group("anio"),
-            "motor": m.group("motor"),
-            "chasis": m.group("chasis"),
-            "uso": m.group("uso"),
-            "suma_asegurada": m.group("suma"),
-            # La Segunda no trae un texto de cobertura tipo "TODO RIESGO":
-            # tiene un código de Plan + 6 flags SI/-- de coberturas
-            # puntuales. Dejamos cobertura vacía a propósito en vez de
-            # inventar una equivalencia; se completa a mano si hace falta.
-            "cobertura": "",
-        })
+    for bloque in _dividir_filas_lasegunda(texto_plano):
+        m = _PATRON_LASEGUNDA.search(bloque)
+        if m:
+            marca, modelo = _dividir_marca_modelo_flota(m.group("marca_modelo"))
+            vehiculos.append({
+                "patente": m.group("patente").upper(),
+                "marca_modelo": m.group("marca_modelo").strip(),
+                "marca": marca,
+                "modelo": modelo,
+                "año": m.group("anio"),
+                "motor": m.group("motor"),
+                "chasis": m.group("chasis"),
+                "uso": m.group("uso"),
+                "suma_asegurada": m.group("suma"),
+                # La Segunda no trae un texto de cobertura tipo "TODO
+                # RIESGO": tiene un código de Plan + 6 flags SI/-- de
+                # coberturas puntuales. Dejamos cobertura vacía a
+                # propósito en vez de inventar una equivalencia; se
+                # completa a mano si hace falta.
+                "cobertura": "",
+            })
+            continue
+        m2 = _PATRON_LASEGUNDA_MOTOR_CHASIS_PEGADO.search(bloque)
+        if m2:
+            marca, modelo = _dividir_marca_modelo_flota(m2.group("marca_modelo"))
+            vehiculos.append({
+                "patente": m2.group("patente").upper(),
+                "marca_modelo": m2.group("marca_modelo").strip(),
+                "marca": marca,
+                "modelo": modelo,
+                "año": m2.group("anio"),
+                "motor": "",
+                # Motor y chasis venían pegados sin espacio en el texto
+                # original: se deja el bloque completo en chasis (no se
+                # adivina dónde cortar) y se marca sospechoso para que
+                # se revise/separe a mano antes de pegar en Excel.
+                "chasis": m2.group("motor_chasis"),
+                "uso": m2.group("uso"),
+                "suma_asegurada": m2.group("suma"),
+                "cobertura": "",
+                "sospechoso": True,
+                "motivo_sospecha": "Motor y chasis pegados sin espacio en el texto original — separar a mano.",
+            })
+        else:
+            vehiculos.append({
+                "patente": "",
+                "marca_modelo": bloque,
+                "marca": "",
+                "modelo": "",
+                "año": "",
+                "motor": "",
+                "chasis": "",
+                "uso": "",
+                "suma_asegurada": "",
+                "cobertura": "",
+                "sin_parsear": True,
+            })
     return vehiculos
 
 
@@ -2508,12 +2628,26 @@ def interpretar_flota_a_json(texto):
         vehiculos_lasegunda = _parsear_flota_lasegunda(texto)
         if vehiculos_lasegunda:
             resultado = {"vehiculos": vehiculos_lasegunda}
-            esperados = _lasegunda_conteo_bloques(texto)
-            if esperados > len(vehiculos_lasegunda):
+            sin_parsear = [v for v in vehiculos_lasegunda if v.get("sin_parsear")]
+            sospechosos = [v for v in vehiculos_lasegunda if v.get("sospechoso")]
+            avisos = []
+            if sin_parsear:
+                avisos.append(
+                    f"{len(sin_parsear)} fila(s) no matchearon el patrón de camión/acoplado "
+                    "conocido y quedaron con el texto original en MARCA/MODELO — completá "
+                    "esas a mano."
+                )
+            if sospechosos:
+                avisos.append(
+                    f"{len(sospechosos)} fila(s) tenían motor y chasis pegados sin espacio en "
+                    "el texto original: quedaron juntos en la columna CHASIS — separalos a "
+                    "mano antes de pegar."
+                )
+            total_ok = len(vehiculos_lasegunda) - len(sin_parsear) - len(sospechosos)
+            if avisos:
                 resultado["aviso_conteo"] = (
-                    f"Ojo: detecté {len(vehiculos_lasegunda)} vehículo(s) pero el texto "
-                    f"sugiere {esperados} — probablemente alguno se salteó por un problema "
-                    "de formato (campos pegados sin espacio, etc.). Revisá antes de pegar."
+                    f"Ojo: de {len(vehiculos_lasegunda)} vehículo(s) detectados, {total_ok} se "
+                    "cargaron completos. " + " ".join(avisos)
                 )
             return resultado
 
@@ -2690,11 +2824,37 @@ def interpretar_flota_a_json(texto):
         raise RuntimeError("La IA todavía no está configurada. Falta GEMINI_API_KEY.")
 
     instruccion = """
-Analizá exclusivamente el texto/documento proporcionado.
-Identificá TODOS los vehículos que aparezcan.
+Vas a recibir el texto crudo de un frente de póliza de flota de una compañía de
+seguros argentina, pegado sin formato. Tu tarea es dividirlo en un vehículo por
+fila e identificar sus datos.
 
-Devolvé ÚNICAMENTE JSON válido, sin markdown, comentarios ni texto fuera del JSON.
-La estructura obligatoria es:
+NO asumas que conocés el formato exacto de esta compañía. Cada aseguradora
+ordena las columnas distinto y usa sus propias etiquetas de tipo/carrocería/uso.
+En vez de buscar palabras específicas de una compañía, ancla la división de
+filas en estas tres señales, que SIEMPRE están presentes sin importar la
+compañía:
+
+1. PATENTE: una secuencia de 6-7 caracteres alfanuméricos en mayúscula con
+   formato argentino (3 letras + 3 números, o 2 letras + 3 números + 2 letras).
+   Aparece EXACTAMENTE UNA VEZ por vehículo. Es tu ancla principal: cada
+   patente que encontrás marca un vehículo distinto.
+2. AÑO: un número de 4 dígitos entre 1990 y el año actual.
+3. MONTOS EN PESOS: valores tipo $X.XXX.XXX,XX o $X,XXX,XXX.XX. Cada vehículo
+   trae al menos dos (límite de cobertura y suma asegurada).
+
+CÓMO DIVIDIR LAS FILAS:
+- Localizá todas las patentes del texto, en orden de aparición.
+- Para cada patente, el vehículo es el tramo de texto que va desde el final de
+  la fila anterior (o el inicio del texto, si es la primera patente) hasta el
+  final de los datos asociados a esa patente (generalmente después del último
+  monto o de los últimos flags SI/NO/-- de esa fila, antes de que empiece el
+  texto de tipo/carrocería del vehículo siguiente).
+- Si dos patentes aparecen muy cerca sin datos numéricos entre medio, revisá si
+  en verdad es la misma fila partida en dos renglones (unilas) o dos vehículos
+  distintos con muy poca descripción.
+
+Devolvé ÚNICAMENTE JSON válido, sin markdown, comentarios ni texto fuera del
+JSON. La estructura obligatoria es:
 {
   "vehiculos": [
     {
@@ -2709,17 +2869,33 @@ La estructura obligatoria es:
       "asegurado": "",
       "domicilio": "",
       "localidad": "",
-      "cp": ""
+      "cp": "",
+      "sospechoso": false,
+      "motivo_sospecha": ""
     }
   ]
 }
 
-REGLA CRÍTICA: MARCA/MODELO debe copiarse EXACTAMENTE como aparece en la póliza,
-sin separar, resumir, corregir, traducir ni reinterpretar. Por ejemplo,
+REGLA CRÍTICA: MARCA/MODELO (o el texto libre de tipo/carrocería/marca/modelo
+cuando no hay etiquetas separadas) debe copiarse EXACTAMENTE como aparece en la
+póliza, sin separar, resumir, corregir, traducir ni reinterpretar. Por ejemplo,
 "PEUGEOT PARTNER PATA. 1.6 VTC PLUS L10/17" debe quedar exactamente así.
 
-No mezcles información entre vehículos. No inventes datos. Si un campo no aparece,
-dejalo vacío. La cantidad de vehículos debe corresponder a la cantidad real detectada.
+CASOS QUE TENÉS QUE MARCAR EN VEZ DE ADIVINAR:
+- Si motor y chasis aparecen pegados sin espacio (una sola cadena muy larga,
+  más de 15 caracteres sin separación), NO intentes cortar arbitrariamente
+  dónde termina uno y empieza el otro. Poné el bloque completo en "chasis",
+  dejá "motor" vacío, "sospechoso": true y "motivo_sospecha": "motor y chasis
+  pegados, revisar a mano".
+- Si un tramo de texto no tiene una patente reconocible cerca, no lo conviertas
+  en un vehículo: probablemente es texto de cabecera (datos del asegurado) o
+  pie de página.
+
+No mezcles información entre vehículos. No inventes datos: si un campo no
+aparece con certeza, dejalo vacío en vez de adivinarlo. La cantidad de
+vehículos del resultado debe corresponder a la cantidad real de patentes
+detectadas — preferí dejar más texto libre en una fila antes que perder un
+vehículo o mezclar dos.
 """
     ultimo_error = None
     for modelo in MODELOS_GEMINI:
@@ -2743,11 +2919,24 @@ dejalo vacío. La cantidad de vehículos debe corresponder a la cantidad real de
             if not isinstance(vehiculos, list):
                 raise ValueError("Gemini no devolvió la lista de vehículos.")
             salida = []
+            sospechosos = 0
             for v in vehiculos:
                 if not isinstance(v, dict):
                     continue
-                salida.append({k: limpiar_valor(v.get(k, "")) for k in campos})
-            return {"vehiculos": salida}
+                fila = {k: limpiar_valor(v.get(k, "")) for k in campos}
+                if v.get("sospechoso"):
+                    fila["sospechoso"] = True
+                    fila["motivo_sospecha"] = limpiar_valor(v.get("motivo_sospecha", ""))
+                    sospechosos += 1
+                salida.append(fila)
+            resultado = {"vehiculos": salida}
+            if sospechosos:
+                resultado["aviso_conteo"] = (
+                    f"Ojo: de {len(salida)} vehículo(s) detectados, {sospechosos} quedaron "
+                    "marcados como sospechosos (campos pegados o poco claros en el texto "
+                    "original) — revisalos a mano antes de pegar en Excel."
+                )
+            return resultado
         except Exception as error:
             ultimo_error = error
             print("ERROR GEMINI /FLOTA", modelo, ":", error)
@@ -2880,6 +3069,8 @@ def _vehiculo_avisos(vehiculo):
     normal. No corrige nada solo; da una pista de qué revisar antes de
     pegar en el Excel."""
     avisos = []
+    if vehiculo.get("sin_parsear"):
+        avisos.append("fila no reconocida por el parser (revisar formato/columnas)")
     if not _patente_formato_valido(vehiculo.get("patente")):
         avisos.append("patente con formato raro")
     for campo, etiqueta in (("motor", "motor"), ("chasis", "chasis")):
@@ -3298,8 +3489,100 @@ def _flota_procesar_turno(chat_id, mensaje, contexto_pdf_adjunto):
     return respuesta, True, (bloque or None)
 
 
+def _normalizar_patente(valor):
+    """Deja sólo letras/números en mayúscula, para poder comparar patentes
+    sin importar espacios, guiones o mayúsculas/minúsculas."""
+    return re.sub(r"[^A-Z0-9]", "", str(valor or "").upper())
+
+
+def _normalizar_telefono(valor):
+    """Envíos Ya no acepta espacios ni guiones en el teléfono: se dejan
+    sólo los dígitos."""
+    return re.sub(r"\D", "", str(valor or ""))
+
+
+def _buscar_asegurado_por_patente(patente_buscada, libro_id="1"):
+    """Busca en el Excel interno (asegurados) la fila cuya columna PATENTE
+    coincide con la patente pedida, comparando sin espacios/guiones/mayúsculas.
+    Devuelve un dict {encabezado: valor} de esa fila, o None si no aparece."""
+    patente_norm = _normalizar_patente(patente_buscada)
+    if not patente_norm:
+        return None
+    datos = leer_excel_interno(libro_id)
+    filas = datos.get("filas") or []
+    if not filas:
+        return None
+    encabezados = filas[0]
+    indices = {
+        _normalizar_encabezado(encabezado): i
+        for i, encabezado in enumerate(encabezados)
+        if _normalizar_encabezado(encabezado)
+    }
+    indice_patente = indices.get(_normalizar_encabezado("PATENTE"))
+    if indice_patente is None:
+        return None
+    for fila in filas[1:]:
+        valor_patente = fila[indice_patente] if indice_patente < len(fila) else ""
+        if _normalizar_patente(valor_patente) == patente_norm:
+            return {
+                encabezado: (fila[i] if i < len(fila) else "")
+                for encabezado, i in (
+                    (encabezados[i], i) for i in range(len(encabezados))
+                )
+            }
+    return None
+
+
+def _armar_texto_envios_ya(datos_asegurado):
+    """Arma el bloque de texto listo para pegar en Envíos Ya a partir de un
+    dict de campos del asegurado (aceptando tanto encabezados de Excel como
+    las claves canónicas usadas en /guardar asegurado)."""
+    def obtener(*claves):
+        for clave in claves:
+            for k, v in datos_asegurado.items():
+                if _normalizar_encabezado(k) == _normalizar_encabezado(clave):
+                    if str(v or "").strip():
+                        return str(v).strip()
+        return ""
+
+    nombre = obtener("ASEGURADO", "nombre asegurado")
+    telefono = _normalizar_telefono(obtener("NUMERO"))
+    vehiculo = obtener("VEHICULO", "marca_modelo", "marca/modelo")
+    patente = obtener("PATENTE", "dominio", "chapa").upper()
+    cia = obtener("CIA", "compañia", "compania")
+
+    aviso_telefono = ""
+    if telefono and len(telefono) != 10:
+        aviso_telefono = f" (ojo: tiene {len(telefono)} dígitos, revisá que sea correcto)"
+
+    return (
+        f"NOMBRE Y APELLIDO: {nombre}\n"
+        f"TELEFONO: {telefono}{aviso_telefono}\n"
+        f"VEHICULO: {vehiculo}\n"
+        f"PATENTE: {patente}\n"
+        f"COMPAÑIA: {cia}"
+    )
+
+
+def _parsear_comando_envios_ya(mensaje):
+    """Parsea /envios ya (patente) o /envios ya patente, sin depender de
+    Gemini. Devuelve la patente pedida, o None si el mensaje no es este
+    comando."""
+    texto = str(mensaje or "").strip()
+    m = re.match(r"^/envios\s+ya\b\s*(.*)$", texto, re.IGNORECASE)
+    if not m:
+        return None
+    resto = m.group(1).strip()
+    resto = re.sub(r"^\(([^)]*)\)$", r"\1", resto).strip()
+    resto = resto.strip("'\" ")
+    if not resto:
+        return {"error": "Usá el formato /envios ya (patente), indicando la patente del vehículo."}
+    return {"patente": resto}
+
+
 def _parsear_comando_guardar_asegurado(mensaje):
     """
+
     Parsea el comando explícito /guardar asegurado sin depender de Gemini.
 
     Formato principal:
@@ -3666,6 +3949,37 @@ def chat():
             "propuesta_excel": None,
             "propuesta_metadato": None,
             "tabulado_flota": tabulado_flota,
+        })
+
+    # ======================================================
+    # COMANDO /ENVIOS YA — BUSCAR ASEGURADO POR PATENTE
+    # ======================================================
+    propuesta_envios_ya = _parsear_comando_envios_ya(mensaje)
+    if propuesta_envios_ya is not None:
+        if propuesta_envios_ya.get("error"):
+            respuesta = propuesta_envios_ya["error"]
+            texto_envios_ya = None
+        else:
+            fila_asegurado = _buscar_asegurado_por_patente(propuesta_envios_ya["patente"])
+            if fila_asegurado is None:
+                respuesta = (
+                    f"No encontré ningún asegurado con la patente "
+                    f"{propuesta_envios_ya['patente'].upper()} en el Excel. Revisá que esté "
+                    "bien escrita o que el asegurado ya esté guardado."
+                )
+                texto_envios_ya = None
+            else:
+                texto_envios_ya = _armar_texto_envios_ya(fila_asegurado)
+                respuesta = "Te dejo los datos listos para pegar en Envíos Ya:"
+
+        _guardar_mensaje(chat_id, "assistant", str(respuesta))
+        return jsonify({
+            "respuesta": respuesta,
+            "chat_id": chat_id,
+            "archivo_adjunto": nombre_pdf_adjunto or None,
+            "propuesta_excel": None,
+            "propuesta_metadato": None,
+            "texto_envios_ya": texto_envios_ya,
         })
 
     # El comando explícito se parsea de forma determinista en backend y no

@@ -77,6 +77,59 @@ function mostrarTabuladoFlota(texto){
   scroll();
 }
 
+function mostrarTextoEnviosYa(texto){
+  const c=document.getElementById('chat');
+  if(!c||!texto)return;
+
+  const r=document.createElement('div');
+  r.className='msg assistant';
+  const b=document.createElement('div');
+  b.className='bubble tabulado-flota';
+
+  const titulo=document.createElement('div');
+  titulo.className='tabulado-flota-title';
+  titulo.textContent='Datos para cargar en Envíos Ya';
+  b.appendChild(titulo);
+
+  const ayuda=document.createElement('div');
+  ayuda.className='tabulado-flota-help';
+  ayuda.textContent='Copiá y pegá directo en Envíos Ya. El teléfono ya viene sin espacios ni guiones.';
+  b.appendChild(ayuda);
+
+  const pre=document.createElement('pre');
+  pre.className='tabulado-flota-pre';
+  pre.textContent=texto;
+  b.appendChild(pre);
+
+  const acciones=document.createElement('div');
+  acciones.className='tabulado-flota-actions';
+  const btn=document.createElement('button');
+  btn.type='button';
+  btn.className='tabulado-flota-copy';
+  btn.textContent='Copiar';
+  btn.onclick=async()=>{
+    try{
+      await navigator.clipboard.writeText(texto);
+      btn.textContent='¡Copiado!';
+      setTimeout(()=>{btn.textContent='Copiar'},1800);
+    }catch(e){
+      pre.focus();
+      const sel=window.getSelection(),range=document.createRange();
+      range.selectNodeContents(pre);
+      sel.removeAllRanges();sel.addRange(range);
+      document.execCommand('copy');
+      btn.textContent='¡Copiado!';
+      setTimeout(()=>{btn.textContent='Copiar'},1800);
+    }
+  };
+  acciones.appendChild(btn);
+  b.appendChild(acciones);
+
+  r.appendChild(b);
+  c.appendChild(r);
+  scroll();
+}
+
 function mostrarPropuestaExcel(propuesta){
   const c=document.getElementById('chat');
   if(!c||!propuesta||typeof propuesta!=='object')return;
@@ -343,6 +396,7 @@ function mostrarPropuestaExcel(propuesta){
       estado.textContent='Guardado correctamente en Excel.';
       estado.classList.add('success');
       guardar.textContent='Guardado';
+      if(d.texto_envios_ya)mostrarTextoEnviosYa(d.texto_envios_ya);
     }catch(e){
       estado.textContent=e?.message||'No se pudo guardar.';
       guardar.disabled=false;
@@ -458,8 +512,33 @@ const COMANDOS_CHAT=[
     comando:'/coti',
     descripcion:'Generar una cotización rápida. Formato: /coti CIA COBERTURA SUMA PREMIO',
     plantilla:'/coti CIA COBERTURA SUMA PREMIO'
+  },
+  {
+    comando:'/envios ya',
+    descripcion:'Generar el texto para cargar el asegurado en Envíos Ya, buscando por patente.',
+    plantilla:'/envios ya (patente)'
   }
 ];
+function ejecutarClickComando(cmd,input){
+  if(cmd.comando==='/guardar asegurado'){
+    input.value='';
+    indiceComando=-1;
+    cerrarMenuComandos();
+    size();
+    mostrarPropuestaExcel({
+      LIBRO_ID:'1',
+      ASEGURADO:'',NUMERO:'',VEHICULO:'',PATENTE:'',
+      'ENVIOS YA':'',CIA:'','MEDIO DE PAGO':'',CP:'',MAIL:''
+    });
+    return;
+  }
+  input.value=cmd.plantilla;
+  indiceComando=-1;
+  cerrarMenuComandos();
+  size();
+  input.focus();
+}
+
 let indiceComando=-1;
 
 function obtenerMenuComandos(){
@@ -509,11 +588,7 @@ function actualizarMenuComandos(){
     item.innerHTML='<strong>'+esc(cmd.comando)+'</strong><small>'+esc(cmd.descripcion)+'</small>';
     item.addEventListener('mousedown',e=>e.preventDefault());
     item.addEventListener('click',()=>{
-      input.value=cmd.plantilla;
-      indiceComando=-1;
-      cerrarMenuComandos();
-      size();
-      input.focus();
+      ejecutarClickComando(cmd,input);
     });
     menu.appendChild(item);
   });
@@ -567,11 +642,7 @@ function mostrarMenuComandosCompleto(){
     item.innerHTML='<strong>'+esc(cmd.comando)+'</strong><small>'+esc(cmd.descripcion)+'</small>';
     item.addEventListener('mousedown',e=>e.preventDefault());
     item.addEventListener('click',()=>{
-      input.value=cmd.plantilla;
-      indiceComando=-1;
-      cerrarMenuComandos();
-      size();
-      input.focus();
+      ejecutarClickComando(cmd,input);
     });
     menu.appendChild(item);
   });
@@ -614,7 +685,7 @@ async function enviarMensaje(){
       if(!r.ok||d.ok===false)throw Error(d.error||'No se pudo consultar el asistente.');
       currentChatId=d.chat_id||currentChatId;
       thinking.querySelector('.bubble').innerHTML=fmt(d.respuesta||'No recibí una respuesta.');
-      if(d.propuesta_excel)mostrarPropuestaExcel(d.propuesta_excel);if(d.propuesta_metadato)mostrarPropuestaMetadato(d.propuesta_metadato);if(d.tabulado_flota)mostrarTabuladoFlota(d.tabulado_flota);
+      if(d.propuesta_excel)mostrarPropuestaExcel(d.propuesta_excel);if(d.propuesta_metadato)mostrarPropuestaMetadato(d.propuesta_metadato);if(d.tabulado_flota)mostrarTabuladoFlota(d.tabulado_flota);if(d.texto_envios_ya)mostrarTextoEnviosYa(d.texto_envios_ya);
       if(pdf)pdf.value='';
       mostrarPdf(null);
       try{await cargarListaChats()}catch(_){}
