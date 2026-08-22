@@ -2369,6 +2369,114 @@ def api_excel_agregar_fila():
         return jsonify({"ok": False, "error": "No se pudo agregar el registro al Excel."}), 500
 
 
+def _dividir_marca_modelo_flota(marca_modelo):
+    """Igual que _dividir_marca_modelo, pero para flotas de camiones/
+    acoplados: acá "primera palabra = marca" falla con marcas de dos
+    palabras (M. BENZ, SOLA Y BRUSA). Probamos contra una lista de marcas
+    conocidas del rubro transporte antes de caer al split simple."""
+    texto = str(marca_modelo or "").strip()
+    if not texto:
+        return "", ""
+    texto_norm = texto.upper()
+    for marca in _MARCAS_TRANSPORTE_CONOCIDAS:
+        if texto_norm == marca or texto_norm.startswith(marca + " "):
+            modelo = texto[len(marca):].strip()
+            return marca, modelo
+    partes = texto.split(" ", 1)
+    return partes[0], (partes[1].strip() if len(partes) > 1 else "")
+
+
+_MARCAS_TRANSPORTE_CONOCIDAS = sorted(
+    [
+        "M. BENZ", "MERCEDES BENZ", "SCANIA", "FORD", "RANDON", "SOLA Y BRUSA",
+        "ULTRANS", "FIAT", "IVECO", "VOLKSWAGEN", "VOLVO", "AGRALE", "DAF",
+        "HYUNDAI", "MAN", "TOYOTA", "CHEVROLET",
+    ],
+    key=len,
+    reverse=True,
+)
+
+# Enumerados fijos del formato de flota de La Segunda: es una tabla sin
+# etiquetas por campo, pero con columnas en orden constante, así que se
+# puede anclar con estos valores conocidos en vez de depender de Gemini.
+_LASEGUNDA_TIPOS = ["SEMI-REMOLQUE", "ACOPLADO", "CAMION", "CAMIÓN", "P GI H/1000Kg"]
+_LASEGUNDA_CARROCERIAS = ["FURGON DE FABRICA", "FURGÓN DE FABRICA", "GRANEL", "ABIERTA", "CERRADA"]
+_LASEGUNDA_USOS = ["COMER.H/4 TT LD", "CARG PELIG L.D.", "COMERCIAL LD", "PARTICULAR"]
+
+
+def _alt_regex(lista):
+    return "|".join(re.escape(x) for x in sorted(lista, key=len, reverse=True))
+
+
+_PATRON_LASEGUNDA = re.compile(
+    r"(?P<tipo>" + _alt_regex(_LASEGUNDA_TIPOS) + r")\s+"
+    r"(?P<carroceria>" + _alt_regex(_LASEGUNDA_CARROCERIAS) + r")\s+"
+    r"(?P<marca_modelo>.+?)\s+"
+    r"(?P<anio>(?:19|20)\d{2})\s+"
+    r"(?P<uso>" + _alt_regex(_LASEGUNDA_USOS) + r")\s+"
+    r"(?P<patente>[A-Z0-9]{6,7})\s+"
+    r"(?P<motor>\S+)\s+"
+    r"(?P<chasis>\S+)\s+"
+    r"\$(?P<limite>[\d,]+\.\d{2})\s+"
+    r"(?P<plan>\d{2})\s+"
+    r"\$(?P<suma>[\d,]+\.\d{2})\s+"
+    r"(?:SI|--)\s+(?:SI|--)\s+(?:SI|--)\s+(?:SI|--)\s+(?:SI|--)\s+(?:SI|--)",
+    re.IGNORECASE,
+)
+
+
+def _parece_formato_lasegunda(texto):
+    """Heurística barata para decidir si vale la pena probar este parser:
+    el formato de La Segunda no tiene etiquetas de campo, pero sí trae al
+    menos 2 de los enumerados fijos (tipo/carrocería/uso) + varios importes
+    en pesos con el patrón típico de la planilla."""
+    texto_norm = texto.upper()
+    hits = sum(1 for t in _LASEGUNDA_TIPOS if t in texto_norm)
+    hits += sum(1 for u in _LASEGUNDA_USOS if u in texto_norm)
+    tiene_importes = len(re.findall(r"\$[\d,]+\.\d{2}", texto)) >= 2
+    return hits >= 2 and tiene_importes
+
+
+def _lasegunda_conteo_bloques(texto):
+    """Cuenta cuántas filas de vehículo debería haber en el texto, contando
+    ocurrencias de los TIPO fijos (SEMI-REMOLQUE, ACOPLADO, CAMION...) que
+    marcan el arranque de cada fila en el formato de La Segunda. Sirve para
+    detectar si _parsear_flota_lasegunda se salteó alguna (p.ej. porque
+    motor y chasis vinieron pegados sin espacio, como pasó con el Fiat) sin
+    tener que revisar el Excel fila por fila."""
+    texto_norm = re.sub(r"\s+", " ", str(texto or "")).upper()
+    patron_tipo = re.compile(r"\b(?:" + _alt_regex(_LASEGUNDA_TIPOS) + r")\b")
+    return len(patron_tipo.findall(texto_norm))
+
+
+def _parsear_flota_lasegunda(texto):
+    """Parser determinístico para el formato tabular de La Segunda (sin
+    etiquetas por campo, columnas fijas). Devuelve una lista de vehículos
+    en el mismo formato que usa el resto de /flota, o [] si no matchea
+    nada (en ese caso el llamador sigue con el flujo normal)."""
+    texto_plano = re.sub(r"\s+", " ", str(texto or "")).strip()
+    vehiculos = []
+    for indice, m in enumerate(_PATRON_LASEGUNDA.finditer(texto_plano), start=1):
+        marca, modelo = _dividir_marca_modelo_flota(m.group("marca_modelo"))
+        vehiculos.append({
+            "patente": m.group("patente").upper(),
+            "marca_modelo": m.group("marca_modelo").strip(),
+            "marca": marca,
+            "modelo": modelo,
+            "año": m.group("anio"),
+            "motor": m.group("motor"),
+            "chasis": m.group("chasis"),
+            "uso": m.group("uso"),
+            "suma_asegurada": m.group("suma"),
+            # La Segunda no trae un texto de cobertura tipo "TODO RIESGO":
+            # tiene un código de Plan + 6 flags SI/-- de coberturas
+            # puntuales. Dejamos cobertura vacía a propósito en vez de
+            # inventar una equivalencia; se completa a mano si hace falta.
+            "cobertura": "",
+        })
+    return vehiculos
+
+
 def interpretar_flota_a_json(texto):
     """Interpreta una o varias descripciones de vehículos de una póliza.
 
@@ -2392,9 +2500,31 @@ def interpretar_flota_a_json(texto):
         m = re.search(patron, bloque, flags=re.IGNORECASE | re.DOTALL)
         return limpiar_valor(m.group(1)) if m else ""
 
-    # Cada aparición de DESCRIPCIÓN DEL VEHÍCULO ASEGURADO marca un vehículo.
+    # FORMATO LA SEGUNDA: tabla sin etiquetas por campo, columnas fijas
+    # (ver _parsear_flota_lasegunda). Se intenta ANTES del formato con
+    # etiquetas, porque si el texto matchea este patrón tabular no va a
+    # tener "DESCRIPCIÓN DEL VEHÍCULO ASEGURADO:" para lo otro.
+    if _parece_formato_lasegunda(texto):
+        vehiculos_lasegunda = _parsear_flota_lasegunda(texto)
+        if vehiculos_lasegunda:
+            resultado = {"vehiculos": vehiculos_lasegunda}
+            esperados = _lasegunda_conteo_bloques(texto)
+            if esperados > len(vehiculos_lasegunda):
+                resultado["aviso_conteo"] = (
+                    f"Ojo: detecté {len(vehiculos_lasegunda)} vehículo(s) pero el texto "
+                    f"sugiere {esperados} — probablemente alguno se salteó por un problema "
+                    "de formato (campos pegados sin espacio, etc.). Revisá antes de pegar."
+                )
+            return resultado
+
+    # Cada aparición de "DESCRIPCIÓN DEL <VEHÍCULO/AUTOMOTOR/RODADO/UNIDAD>
+    # ASEGURADO" marca un vehículo. Distintas compañías usan palabras
+    # distintas para lo mismo en el frente de póliza, así que el marcador
+    # acepta las variantes más comunes en vez de exigir "VEHÍCULO" literal.
     marcadores = list(re.finditer(
-        r"DESCRIPCI[ÓO]N\s+DEL\s+VEH[ÍI]CULO\s+ASEGURADO\s*:",
+        r"DESCRIPCI[ÓO]N\s+DEL\s+"
+        r"(?:VEH[ÍI]CULO|AUTOMOTOR|AUTOM[ÓO]VIL|RODADO|UNIDAD|AUTO|COCHE)\s+"
+        r"ASEGURAD[OA]\s*:",
         texto,
         flags=re.IGNORECASE,
     ))
@@ -2409,6 +2539,15 @@ def interpretar_flota_a_json(texto):
         for i, marcador in enumerate(marcadores):
             fin = marcadores[i + 1].start() if i + 1 < len(marcadores) else len(texto)
             bloque = texto[marcador.end():fin]
+            # Normalizamos sinónimos de "VEHÍCULO" dentro de la etiqueta
+            # "USO DEL ..." para no tener que duplicar cada regex de más
+            # abajo por cada variante (automotor, rodado, unidad, etc.).
+            bloque = re.sub(
+                r"USO\s+DEL\s+(?:AUTOMOTOR|AUTOM[ÓO]VIL|RODADO|UNIDAD|AUTO|COCHE)",
+                "USO DEL VEHICULO",
+                bloque,
+                flags=re.IGNORECASE,
+            )
             etiquetas_campos = [
                 "TIPO", "MARCA/MODELO", "AÑO", "PATENTE", "MOTOR", "CHASIS",
                 "USO DEL VEHÍCULO", "USO DEL VEHICULO", "SUMA ASEGURADA", "COBERTURA"
@@ -2714,6 +2853,41 @@ def _campos_pendientes_vehiculo(vehiculo):
     return [c for c in _CAMPOS_RELEVANTES_PARA_COMPLETITUD if _vacio(vehiculo.get(c))]
 
 
+# Patente argentina vieja (AAA000) o Mercosur (AA000AA). Sirve para marcar
+# como sospechosa una patente que no matchea ninguno de los dos formatos —
+# típicamente señal de que el parser agarró un pedazo de otro campo.
+_PATENTE_VIEJA = re.compile(r"^[A-Z]{3}\d{3}$")
+_PATENTE_MERCOSUR = re.compile(r"^[A-Z]{2}\d{3}[A-Z]{2}$")
+
+# Motor/chasis reales rondan entre 8 y 20 caracteres. Por encima de este
+# largo, lo más probable es que dos campos hayan quedado pegados sin
+# espacio en el texto original (el caso del Fiat de la flota de La
+# Segunda: motor+chasis llegaron como un solo bloque de 30+ caracteres).
+_LARGO_MOTOR_CHASIS_SOSPECHOSO = 30
+
+
+def _patente_formato_valido(patente):
+    p = re.sub(r"\s+", "", str(patente or "").strip().upper())
+    if not p:
+        return True  # patente vacía ya se reporta aparte como campo pendiente
+    return bool(_PATENTE_VIEJA.match(p) or _PATENTE_MERCOSUR.match(p))
+
+
+def _vehiculo_avisos(vehiculo):
+    """Chequeos baratos (regex, sin Gemini) para detectar filas que
+    probablemente tengan un problema de LECTURA (no de dato faltante):
+    patente con formato raro, o motor/chasis con longitud fuera de lo
+    normal. No corrige nada solo; da una pista de qué revisar antes de
+    pegar en el Excel."""
+    avisos = []
+    if not _patente_formato_valido(vehiculo.get("patente")):
+        avisos.append("patente con formato raro")
+    for campo, etiqueta in (("motor", "motor"), ("chasis", "chasis")):
+        if len(str(vehiculo.get(campo) or "")) > _LARGO_MOTOR_CHASIS_SOSPECHOSO:
+            avisos.append(f"{etiqueta} con longitud fuera de lo normal (¿campos pegados?)")
+    return avisos
+
+
 def _fusionar_flota(estado_flota, datos_generales_nuevos, vehiculos_nuevos):
     """Aplica la Sección 21/22/23: completa datos generales, y para cada
     vehículo nuevo busca coincidencia por patente/chasis antes de decidir
@@ -2858,66 +3032,97 @@ def _campos_flota_a_datos_generales(campos_flota):
     return datos_generales
 
 
-def _guardar_vehiculos_pendientes_excel(libro_id, vehiculos, items_a_intentar):
-    """Guarda (si es nuevo) o actualiza (si ya tenía fila) cada vehículo
-    tocado, en una sola lectura/escritura del Excel. Si falla uno, el resto
-    no se pierde (Sección 37/38) — se informa aparte."""
-    if not items_a_intentar:
-        return [], []
+def _dividir_marca_modelo(marca_modelo):
+    """El extractor guarda MARCA/MODELO combinado tal como figura en la
+    póliza (Sección 30) para no alterar el dato original. La planilla de
+    flotas, en cambio, tiene columnas separadas MARCA y MODELO. Acá lo
+    partimos SOLO para volcarlo al bloque tabulado: la primera palabra se
+    asume marca, el resto modelo. Es una heurística simple a propósito —
+    cualquier caso raro se corrige a mano en el bloque antes de pegar."""
+    texto = str(marca_modelo or "").strip()
+    if not texto:
+        return "", ""
+    partes = texto.split(" ", 1)
+    marca = partes[0]
+    modelo = partes[1].strip() if len(partes) > 1 else ""
+    return marca, modelo
 
-    por_item = {v["item"]: v for v in vehiculos}
-    guardados, con_error = [], []
-    try:
-        datos = leer_excel_interno(libro_id)
-        filas = list(datos.get("filas") or [])
-        hoja_actual = datos.get("hoja", "Datos")
-        if not filas:
-            for item in items_a_intentar:
-                con_error.append((item, "El Excel interno no tiene encabezados."))
-            return guardados, con_error
 
-        encabezados = filas[0]
-        cantidad_columnas = max(len(encabezados), 1)
-        indices = {
-            _normalizar_encabezado(encabezado): i
-            for i, encabezado in enumerate(encabezados)
-            if _normalizar_encabezado(encabezado)
+# Orden EXACTO de columnas de la fila 16 de la planilla de flotas
+# (excel/flotas), sólo las columnas que la IA completa. COSTO MENSUAL,
+# PREMIO ANUAL y la SUMA ASEGURADA de "COMPETENCIA" son de cotización
+# manual y no se tocan.
+_COLUMNAS_TSV_FLOTA = (
+    "ITEM", "MARCA", "MODELO", "AÑO", "COBERTURA SOLICITADA", "USO",
+    "MOTOR", "CHASIS", "ACCESORIO", "PATENTE", "SUMA ASEGURADA",
+)
+
+
+def _normalizar_suma_asegurada(valor):
+    """Dos frentes de póliza de compañías distintas casi nunca escriben la
+    suma asegurada igual: una la pone como "$ 15.000.000,00", otra como
+    "ARS 15000000", otra sin símbolo. El extractor guarda el valor tal cual
+    vino (para no perder el dato original), pero para el bloque que se pega
+    en Excel conviene sacarle cualquier símbolo de moneda y espacio interno:
+    así entra como número real sin importar de qué compañía salió, en vez
+    de depender de que cada frente use el mismo formato que La Segunda."""
+    texto = str(valor or "").strip()
+    if not texto:
+        return ""
+    texto = re.sub(r"(?i)^\s*(ars|usd|u\$s|\$)\s*", "", texto)
+    return re.sub(r"\s+", "", texto)
+
+
+def _armar_bloque_tsv_flota(vehiculos):
+    """Arma el bloque de texto separado por TABULADORES (uno por vehículo),
+    en el mismo orden de columnas que la fila 16 de la planilla de flotas.
+    Este bloque es lo que el usuario copia y pega directo en Excel a partir
+    de la fila del ITEM correspondiente — Excel interpreta cada \\t como un
+    salto de columna, así que las celdas quedan alineadas solas."""
+    lineas = []
+    for indice, vehiculo in enumerate(vehiculos, start=1):
+        if not _vehiculo_guardable(vehiculo):
+            continue
+        # Si el extractor de origen ya calculó marca/modelo separados (caso
+        # La Segunda, con marcas de dos palabras como "M. BENZ"), se
+        # respetan tal cual. Sólo se recalcula con la heurística genérica
+        # cuando no vinieron ya resueltos (formato con etiquetas).
+        if vehiculo.get("marca") or vehiculo.get("modelo"):
+            marca, modelo = vehiculo.get("marca", ""), vehiculo.get("modelo", "")
+        else:
+            marca, modelo = _dividir_marca_modelo_flota(vehiculo.get("marca_modelo"))
+        fila = {
+            "ITEM": str(vehiculo.get("item") or indice),
+            "MARCA": marca,
+            "MODELO": modelo,
+            "AÑO": vehiculo.get("año", ""),
+            "COBERTURA SOLICITADA": vehiculo.get("cobertura", ""),
+            "USO": vehiculo.get("uso", ""),
+            "MOTOR": vehiculo.get("motor", ""),
+            "CHASIS": vehiculo.get("chasis", ""),
+            "ACCESORIO": "",
+            "PATENTE": vehiculo.get("patente", ""),
+            "SUMA ASEGURADA": _normalizar_suma_asegurada(vehiculo.get("suma_asegurada", "")),
         }
-
-        for item in items_a_intentar:
-            vehiculo = por_item.get(item)
-            if vehiculo is None or not _vehiculo_guardable(vehiculo):
-                continue
-            try:
-                fila_construida = _construir_fila_excel(vehiculo, indices, cantidad_columnas, libro_id)
-            except ValueError as error:
-                con_error.append((item, str(error)))
-                continue
-
-            if vehiculo.get("fila_excel") is not None and vehiculo["fila_excel"] < len(filas):
-                filas[vehiculo["fila_excel"]] = fila_construida
-            else:
-                vehiculo["fila_excel"] = len(filas)
-                filas.append(fila_construida)
-            guardados.append(item)
-
-        if guardados:
-            guardar_matriz_excel(filas, hoja_actual, libro_id=libro_id)
-    except Exception as error:
-        print("ERROR GUARDANDO VEHÍCULOS DE FLOTA:", error)
-        for item in items_a_intentar:
-            if item not in guardados:
-                con_error.append((item, "error interno al guardar"))
-
-    return guardados, con_error
+        valores = [str(fila[col] or "").strip() for col in _COLUMNAS_TSV_FLOTA]
+        lineas.append("\t".join(valores))
+    return "\n".join(lineas)
 
 
-def _resumen_estado_flota(estado_flota, guardados_ahora, con_error, es_primera_vez):
+def _resumen_estado_flota(estado_flota, items_tocados_ahora, con_error, es_primera_vez, aviso_conteo=None):
+    """Ya no reporta "guardado en Excel" (Sección rediseño: /flota no
+    escribe el archivo real, sólo arma el bloque tabulado). Acá sólo se
+    informa cuántos vehículos se detectaron/actualizaron y cuáles quedaron
+    con campos incompletos o con datos sospechosos, como guía para revisar
+    antes de pegar."""
     vehiculos = estado_flota.get("vehiculos") or []
     datos_generales = estado_flota.get("datos_generales") or {}
     total = len(vehiculos)
-    guardados_total = sum(1 for v in vehiculos if v.get("fila_excel") is not None)
-    pendientes = [v for v in vehiculos if _campos_pendientes_vehiculo(v) and v.get("fila_excel") is not None]
+    tocados_ahora = len(items_tocados_ahora) if items_tocados_ahora else 0
+    pendientes = [v for v in vehiculos if _campos_pendientes_vehiculo(v) and _vehiculo_guardable(v)]
+    sospechosos = [
+        (v, _vehiculo_avisos(v)) for v in vehiculos if _vehiculo_guardable(v) and _vehiculo_avisos(v)
+    ]
 
     partes = []
     encabezado_datos = ", ".join(
@@ -2926,19 +3131,30 @@ def _resumen_estado_flota(estado_flota, guardados_ahora, con_error, es_primera_v
     if es_primera_vez and encabezado_datos:
         partes.append(f"Flota iniciada ({encabezado_datos}).")
 
-    if guardados_ahora:
+    if tocados_ahora:
         if es_primera_vez:
-            partes.append(
-                f"Detecté {total} vehículo(s). Guardé {len(guardados_ahora)} en el Excel de flotas."
-            )
+            partes.append(f"Detecté {total} vehículo(s). Te dejo el bloque para copiar y pegar en el Excel.")
         else:
-            partes.append(f"Actualicé/guardé {len(guardados_ahora)} vehículo(s) más (total en flota: {total}).")
+            partes.append(f"Sumé/actualicé {tocados_ahora} vehículo(s) más (total en la flota: {total}).")
     elif total and es_primera_vez:
-        partes.append(f"Detecté {total} vehículo(s), pero ninguno tiene todavía datos suficientes para guardar.")
+        partes.append(f"Detecté {total} vehículo(s), pero ninguno tiene todavía datos suficientes para armar la fila.")
 
     if con_error:
         items = ", ".join(str(i) for i, _ in con_error)
         partes.append(f"El/los vehículo(s) {items} quedaron pendientes por un error puntual; el resto no se vio afectado.")
+
+    if aviso_conteo:
+        partes.append(aviso_conteo)
+
+    if sospechosos:
+        detalle = "; ".join(
+            f"#{v['item']} ({', '.join(avisos)})" for v, avisos in sospechosos[:6]
+        )
+        extra = "" if len(sospechosos) <= 6 else f" y {len(sospechosos) - 6} más"
+        partes.append(
+            f"Revisá antes de pegar {len(sospechosos)} fila(s) con datos sospechosos "
+            f"({detalle}{extra})."
+        )
 
     if pendientes:
         detalle = "; ".join(
@@ -2946,7 +3162,7 @@ def _resumen_estado_flota(estado_flota, guardados_ahora, con_error, es_primera_v
             for v in pendientes[:6]
         )
         extra = "" if len(pendientes) <= 6 else f" y {len(pendientes) - 6} más"
-        partes.append(f"Quedan {len(pendientes)} con datos incompletos ({detalle}{extra}). Pasámelos cuando los tengas.")
+        partes.append(f"Quedan {len(pendientes)} con datos incompletos ({detalle}{extra}). Pasámelos cuando los tengas y actualizo el bloque.")
 
     if not partes:
         partes.append(
@@ -2954,24 +3170,35 @@ def _resumen_estado_flota(estado_flota, guardados_ahora, con_error, es_primera_v
             "(podés mandarlos todos juntos, en tandas, o uno por uno)."
         )
 
-    partes.append(f"Guardados en total: {guardados_total}/{total}.")
+    if total:
+        partes.append(f"Vehículos en la flota activa: {total}.")
     return " ".join(partes)
 
 
 def _flota_procesar_turno(chat_id, mensaje, contexto_pdf_adjunto):
-    """Punto central del flujo /flota persistente. Devuelve (respuesta, True)
-    si el mensaje fue absorbido por la tarea de flota, o (None, False) si no
-    tiene nada que ver y debe seguir el flujo normal (Gemini / otros comandos)."""
+    """Punto central del flujo /flota persistente. Devuelve
+    (respuesta, True, bloque_tsv) si el mensaje fue absorbido por la tarea
+    de flota, o (None, False, None) si no tiene nada que ver y debe seguir
+    el flujo normal (Gemini / otros comandos).
+
+    IMPORTANTE (rediseño): /flota YA NO escribe directo en excel/flotas.xlsx.
+    Sólo interpreta el/los frente(s) de póliza pegados, acumula el contexto
+    de la flota en `flotas_activas` (para poder seguir sumando vehículos en
+    mensajes sucesivos) y devuelve un bloque de texto separado por
+    TABULADORES con TODOS los vehículos detectados hasta el momento, listo
+    para copiar y pegar manualmente en el Excel. El usuario revisa el
+    bloque, corrige lo que haga falta y pega — así ningún error de lectura
+    llega al Excel real sin que se vea antes."""
 
     es_comando_flota = bool(re.match(r"^/flota\b", mensaje, re.IGNORECASE))
     estado_flota = _flota_obtener(chat_id)
     es_primera_vez = estado_flota is None
 
     if not es_comando_flota and estado_flota is None:
-        return None, False
+        return None, False, None
 
     if not es_comando_flota and estado_flota is not None and estado_flota.get("estado") == "completada":
-        return None, False
+        return None, False, None
 
     if es_comando_flota:
         texto_flota = re.sub(r"^/flota\s*", "", mensaje, count=1, flags=re.IGNORECASE).strip()
@@ -2980,12 +3207,14 @@ def _flota_procesar_turno(chat_id, mensaje, contexto_pdf_adjunto):
 
     if re.match(r"^(termin(a|ar|amos|é)|listo|finaliza(r)?|cerrar\s+flota|flota\s+completa)\b", texto_flota, re.IGNORECASE) and estado_flota:
         vehiculos = estado_flota.get("vehiculos") or []
-        guardados_total = sum(1 for v in vehiculos if v.get("fila_excel") is not None)
+        bloque_final = _armar_bloque_tsv_flota(vehiculos)
         _flota_guardar(chat_id, "completada", estado_flota.get("libro_id", "2"), estado_flota.get("datos_generales", {}), vehiculos)
         return (
-            f"Flota cerrada. Quedaron {guardados_total}/{len(vehiculos)} vehículos guardados en el Excel. "
-            "Si aparece más información después, escribí /flota de nuevo y la sumo.",
+            f"Flota cerrada con {len(vehiculos)} vehículo(s). Te dejo el bloque completo abajo para "
+            "copiar y pegar en el Excel. Si aparece más información después, escribí /flota de nuevo "
+            "y la sumo.",
             True,
+            bloque_final or None,
         )
 
     if estado_flota is None:
@@ -3014,6 +3243,7 @@ def _flota_procesar_turno(chat_id, mensaje, contexto_pdf_adjunto):
         or len(fuente) > 200
     )
 
+    aviso_conteo = None
     if fuente and not tocados and parece_volcado_vehiculos:
         try:
             campos_flota = interpretar_flota_a_json(fuente)
@@ -3021,9 +3251,11 @@ def _flota_procesar_turno(chat_id, mensaje, contexto_pdf_adjunto):
         except Exception as error:
             print("ERROR PROCESANDO /FLOTA:", error)
             vehiculos_nuevos = []
+            campos_flota = {}
         if vehiculos_nuevos:
             datos_generales_nuevos = _campos_flota_a_datos_generales(campos_flota)
             tocados |= _fusionar_flota(estado_flota, datos_generales_nuevos, vehiculos_nuevos)
+        aviso_conteo = campos_flota.get("aviso_conteo")
 
     if not tocados and not fuente and es_comando_flota:
         # "/flota" pelado: si es la primera vez, arrancamos la tarea. Si ya
@@ -3034,21 +3266,24 @@ def _flota_procesar_turno(chat_id, mensaje, contexto_pdf_adjunto):
             return (
                 "Entendido, arranco una flota nueva. Pasame los datos generales de la póliza "
                 "(asegurado, número de póliza, compañía, etc.) y los vehículos — en el orden y de "
-                "a la cantidad que te resulte más cómoda.",
+                "a la cantidad que te resulte más cómoda, todos juntos o de a tandas. Cuando tenga "
+                "algo, te devuelvo el bloque tabulado para copiar y pegar en el Excel.",
                 True,
+                None,
             )
-        return _resumen_estado_flota(estado_flota, [], [], es_primera_vez=False), True
+        bloque = _armar_bloque_tsv_flota(estado_flota["vehiculos"])
+        return _resumen_estado_flota(estado_flota, [], [], es_primera_vez=False), True, (bloque or None)
 
     if not tocados and not es_comando_flota:
         # No era ni un dato de flota ni una actualización reconocible:
         # dejamos pasar el mensaje al flujo normal (puede ser una pregunta
         # sin relación, Sección 27).
-        return None, False
+        return None, False, None
 
-    guardados_ahora, con_error = _guardar_vehiculos_pendientes_excel(
-        estado_flota.get("libro_id", "2"), estado_flota["vehiculos"], tocados
-    )
-
+    # Ya NO se escribe directo en excel/flotas.xlsx (Sección rediseño): se
+    # arma el bloque tabulado con TODOS los vehículos acumulados hasta acá
+    # para que el usuario lo copie y pegue a mano, revisando antes de tocar
+    # el Excel real.
     estado_flota["estado"] = "en_progreso" if estado_flota["vehiculos"] else "nueva"
     _flota_guardar(
         chat_id,
@@ -3058,8 +3293,9 @@ def _flota_procesar_turno(chat_id, mensaje, contexto_pdf_adjunto):
         estado_flota["vehiculos"],
     )
 
-    respuesta = _resumen_estado_flota(estado_flota, guardados_ahora, con_error, es_primera_vez)
-    return respuesta, True
+    bloque = _armar_bloque_tsv_flota(estado_flota["vehiculos"])
+    respuesta = _resumen_estado_flota(estado_flota, tocados, [], es_primera_vez, aviso_conteo=aviso_conteo)
+    return respuesta, True, (bloque or None)
 
 
 def _parsear_comando_guardar_asegurado(mensaje):
@@ -3418,7 +3654,7 @@ def chat():
     # que empiezan con "/flota" — para poder reconocer continuaciones
     # ("vehículos 11-20"), correcciones ("el 7 es C3") y el cierre de la
     # tarea sin que el usuario tenga que repetir el comando cada vez.
-    respuesta_flota, atendido_por_flota = _flota_procesar_turno(
+    respuesta_flota, atendido_por_flota, tabulado_flota = _flota_procesar_turno(
         chat_id, mensaje, contexto_pdf_adjunto
     )
     if atendido_por_flota:
@@ -3429,6 +3665,7 @@ def chat():
             "archivo_adjunto": nombre_pdf_adjunto or None,
             "propuesta_excel": None,
             "propuesta_metadato": None,
+            "tabulado_flota": tabulado_flota,
         })
 
     # El comando explícito se parsea de forma determinista en backend y no
