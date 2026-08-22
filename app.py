@@ -31,6 +31,10 @@ from database_pg import (
     actualizar_manual,
     eliminar_manual as eliminar_manual_pg,
     obtener_manual_por_r2_key,
+    listar_polizas as pg_listar_polizas,
+    obtener_poliza_por_r2_key,
+    registrar_poliza,
+    eliminar_poliza as eliminar_poliza_pg,
     listar_usuarios as pg_listar_usuarios,
     obtener_usuario as pg_obtener_usuario,
     obtener_usuario_por_id as pg_obtener_usuario_por_id,
@@ -38,6 +42,19 @@ from database_pg import (
     crear_usuario as pg_crear_usuario,
     actualizar_usuario as pg_actualizar_usuario,
     eliminar_usuario as pg_eliminar_usuario,
+    crear_conversacion as pg_crear_conversacion,
+    listar_chats as pg_listar_chats,
+    validar_chat as pg_validar_chat,
+    obtener_chat_con_mensajes as pg_obtener_chat_con_mensajes,
+    eliminar_chat as pg_eliminar_chat,
+    agregar_mensaje as pg_agregar_mensaje,
+    obtener_configuracion as pg_obtener_configuracion,
+    guardar_configuracion as pg_guardar_configuracion,
+    obtener_documento_interno as pg_obtener_documento_interno,
+    guardar_documento_interno as pg_guardar_documento_interno,
+    obtener_flota_activa as pg_obtener_flota_activa,
+    guardar_flota_activa as pg_guardar_flota_activa,
+    borrar_flota_activa as pg_borrar_flota_activa,
 )
 from storage_r2 import (
     subir_pdf as r2_subir_pdf,
@@ -74,6 +91,19 @@ WORD_FILE = BASE_DIR / "documento_interno.docx"
 
 # Planilla interna editable de Oficina IA.
 EXCEL_FILE = BASE_DIR / "excel_interno.xlsx"
+
+LIBROS_EXCEL = {
+    "1": {
+        "archivo": "excel_interno.xlsx",
+        "r2_key": EXCEL_INTERNO_R2_KEY,
+        "nombre": "Asegurados",
+    },
+    "2": {
+        "archivo": "excel_flotas.xlsx",
+        "r2_key": "excel/flotas.xlsx",
+        "nombre": "Flotas",
+    },
+}
 
 DOCUMENTOS_DIR.mkdir(
     exist_ok=True
@@ -205,6 +235,21 @@ def _usuarios_usar_pg():
     return bool(os.getenv("DATABASE_URL"))
 
 
+# Los chats (conversaciones + mensajes) usan la misma regla que los usuarios:
+# con Neon configurada viven en Postgres y sobreviven a los redeploys de
+# Render; sin Neon, caen a SQLite local (solo development).
+_chats_usar_pg = _usuarios_usar_pg
+
+# La configuración global (nombre de oficina, colores, herramientas
+# visibles) sigue la misma regla: Neon si está configurada, archivo JSON
+# local como respaldo de desarrollo.
+_config_usar_pg = _usuarios_usar_pg
+
+# El documento interno (Word / "Notas") es texto plano: con Neon vive en
+# Postgres; sin Neon cae al .docx local como respaldo de desarrollo.
+_documento_interno_usar_pg = _usuarios_usar_pg
+
+
 def inicializar_base_datos():
     with closing(conectar_db()) as db:
         db.execute("CREATE TABLE IF NOT EXISTS usuarios (id INTEGER PRIMARY KEY AUTOINCREMENT, usuario TEXT UNIQUE NOT NULL, password TEXT NOT NULL)")
@@ -221,6 +266,16 @@ def inicializar_base_datos():
             rol TEXT NOT NULL,
             contenido TEXT NOT NULL,
             creado_en TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            FOREIGN KEY(conversacion_id) REFERENCES conversaciones(id) ON DELETE CASCADE
+        )""")
+        db.execute("""CREATE TABLE IF NOT EXISTS flotas_activas (
+            conversacion_id INTEGER PRIMARY KEY,
+            estado TEXT NOT NULL DEFAULT 'nueva',
+            libro_id TEXT NOT NULL DEFAULT '2',
+            datos_generales TEXT NOT NULL DEFAULT '{}',
+            vehiculos TEXT NOT NULL DEFAULT '[]',
+            creado_en TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            actualizado_en TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
             FOREIGN KEY(conversacion_id) REFERENCES conversaciones(id) ON DELETE CASCADE
         )""")
         db.execute("""CREATE TABLE IF NOT EXISTS metadatos (
@@ -303,21 +358,29 @@ def cargar_configuracion():
         "excel_visible": True,
     }
     try:
-        if CONFIG_FILE.exists():
+        datos = None
+        if _config_usar_pg():
+            try:
+                datos = pg_obtener_configuracion()
+            except Exception as error:
+                print("ERROR cargar_configuracion PG:", error)
+                datos = None
+        elif CONFIG_FILE.exists():
             datos = json.loads(CONFIG_FILE.read_text(encoding="utf-8"))
-            if isinstance(datos, dict):
-                config.update(datos)
-                visibles = config.get("herramientas_visibles", {})
-                if not isinstance(visibles, dict):
-                    visibles = {}
-                defaults_visibles = {
-                    "gmail": True, "whatsapp": True, "datacar": True,
-                    "nosis": True, "chatgpt": True, "drive": True,
-                    "envios_ya": True,
-                }
-                defaults_visibles.update(visibles)
-                config["herramientas_visibles"] = defaults_visibles
-                config["excel_visible"] = bool(config.get("excel_visible", True))
+
+        if isinstance(datos, dict):
+            config.update(datos)
+            visibles = config.get("herramientas_visibles", {})
+            if not isinstance(visibles, dict):
+                visibles = {}
+            defaults_visibles = {
+                "gmail": True, "whatsapp": True, "datacar": True,
+                "nosis": True, "chatgpt": True, "drive": True,
+                "envios_ya": True,
+            }
+            defaults_visibles.update(visibles)
+            config["herramientas_visibles"] = defaults_visibles
+            config["excel_visible"] = bool(config.get("excel_visible", True))
     except Exception:
         pass
     return config
@@ -800,6 +863,46 @@ def _manuales_r2_por_ruta(consulta="", max_manuales=None):
     return mapa
 
 
+def _polizas_r2_por_ruta(consulta="", max_polizas=8):
+    """
+    Descarga a caché temporal una cantidad acotada de pólizas de R2,
+    priorizadas por coincidencia de nombre con la consulta, para que
+    buscar_en_documentos() pueda indexarlas igual que a los manuales.
+    """
+    mapa = {}
+    try:
+        polizas = pg_listar_polizas()
+        tokens = set(_tokens_busqueda(consulta))
+
+        candidatos = []
+        for fila in polizas:
+            nombre = str(fila.get("nombre") or "")
+            r2_key = str(fila.get("r2_key") or "")
+            if not r2_key:
+                continue
+            texto_nombre = _normalizar_busqueda(nombre)
+            score = sum(1 for token in tokens if token in texto_nombre)
+            candidatos.append((score, nombre, fila))
+
+        candidatos.sort(key=lambda x: (x[0], x[1].lower()), reverse=True)
+        limite = max_polizas if max_polizas else len(candidatos)
+        seleccion = candidatos[:max(0, limite)]
+
+        for score, _, fila in seleccion:
+            r2_key = str(fila.get("r2_key") or "")
+            try:
+                path = descargar_pdf_temporal(r2_key)
+            except Exception as error:
+                print(f"ERROR PREPARANDO POLIZA R2 {r2_key}: {error}")
+                continue
+            mapa[str(path.resolve())] = fila
+
+    except Exception as error:
+        print("ERROR CONSULTANDO POLIZAS R2:", error)
+
+    return mapa
+
+
 def buscar_en_documentos(consulta, limite=16):
     """
     Recuperación por relevancia de PDFs.
@@ -824,15 +927,12 @@ def buscar_en_documentos(consulta, limite=16):
         companias_detectadas = set()
 
     r2_por_ruta = _manuales_r2_por_ruta(consulta)
+    r2_por_ruta.update(_polizas_r2_por_ruta(consulta))
 
     archivos_locales = []
     if DOCUMENTOS_DIR.exists():
         archivos_locales.extend(
             p for p in DOCUMENTOS_DIR.rglob("*.pdf") if p.is_file()
-        )
-    if POLIZAS_DIR.exists():
-        archivos_locales.extend(
-            p for p in POLIZAS_DIR.glob("*.pdf") if p.is_file()
         )
 
     archivos = archivos_locales + [Path(ruta) for ruta in r2_por_ruta]
@@ -856,22 +956,23 @@ def buscar_en_documentos(consulta, limite=16):
                 if ruta_clave in r2_por_ruta:
                     fila = r2_por_ruta[ruta_clave]
                     r2_key = str(fila.get("r2_key") or "")
-                    partes = r2_key.split("/")
-                    slug = partes[1] if len(partes) > 1 else ""
-                    compania = next(
-                        (c for c in MANUALES_COMPANIAS
-                         if slug_manual_compania(c) == slug),
-                        "",
-                    )
-                    nombre_archivo = fila.get("nombre") or archivo.name
-                    tipo = "manual"
-                    ruta_relativa = r2_key
 
-                elif archivo.parent.resolve() == POLIZAS_DIR.resolve():
-                    nombre_archivo = archivo.name
-                    compania = "Biblioteca de pólizas"
-                    tipo = "poliza"
-                    ruta_relativa = archivo.name
+                    if r2_key.startswith("polizas/"):
+                        nombre_archivo = fila.get("nombre") or archivo.name
+                        compania = "Biblioteca de pólizas"
+                        tipo = "poliza"
+                        ruta_relativa = r2_key
+                    else:
+                        partes = r2_key.split("/")
+                        slug = partes[1] if len(partes) > 1 else ""
+                        compania = next(
+                            (c for c in MANUALES_COMPANIAS
+                             if slug_manual_compania(c) == slug),
+                            "",
+                        )
+                        nombre_archivo = fila.get("nombre") or archivo.name
+                        tipo = "manual"
+                        ruta_relativa = r2_key
 
                 else:
                     relativa = archivo.relative_to(DOCUMENTOS_DIR)
@@ -1397,49 +1498,59 @@ def _crear_excel_inicial():
     wb.save(EXCEL_FILE)
 
 
-def asegurar_excel_interno():
+def asegurar_excel_interno(libro_id="1"):
     """
-    Mantiene una copia local de trabajo del Excel, pero utiliza R2 como
-    almacenamiento persistente cuando está configurado.
+    Mantiene una copia local de trabajo del Excel seleccionado, pero utiliza
+    R2 como almacenamiento persistente cuando está configurado.
+    """
+    libro_id = str(libro_id or "1")
+    if libro_id not in LIBROS_EXCEL:
+        raise ValueError("Libro de Excel no válido.")
+    libro = LIBROS_EXCEL[libro_id]
+    archivo = BASE_DIR / libro["archivo"]
+    r2_key = libro["r2_key"]
 
-    - Si existe una copia en R2, se descarga y pasa a ser la copia local.
-    - Si R2 todavía no tiene el archivo, conserva/crea la copia local y la sube.
-    - Si R2 no está configurado o está temporalmente caído, se puede seguir
-      trabajando con la copia local existente, dejando el problema registrado.
-    """
     if _r2_excel_configurado():
         try:
-            descargado = descargar_excel_interno(EXCEL_FILE, EXCEL_INTERNO_R2_KEY)
+            descargado = descargar_excel_interno(archivo, r2_key)
             if descargado:
                 return
 
-            # Primera instalación: si ya existe un Excel local (por ejemplo,
-            # el que venía con la aplicación), lo convertimos en la copia
-            # persistente inicial de R2.
-            if not EXCEL_FILE.exists():
-                _crear_excel_inicial()
+            if not archivo.exists():
+                wb = Workbook()
+                ws = wb.active
+                ws.title = "Datos"
+                ws.append(["Dato", "Valor", "Observaciones"])
+                wb.save(archivo)
 
-            subir_excel_interno(EXCEL_FILE, EXCEL_INTERNO_R2_KEY)
+            subir_excel_interno(archivo, r2_key)
             return
         except Exception as error:
-            if EXCEL_FILE.exists():
+            if archivo.exists():
                 print("ADVERTENCIA EXCEL R2:", error)
-                print("Se utilizará temporalmente la copia local del Excel.")
+                print(f"Se utilizará temporalmente la copia local del libro {libro_id}.")
                 return
             raise RuntimeError(
-                "No se pudo recuperar el Excel interno desde Cloudflare R2 "
+                f"No se pudo recuperar el libro Excel {libro_id} desde Cloudflare R2 "
                 "y tampoco existe una copia local."
             ) from error
 
-    if not EXCEL_FILE.exists():
-        _crear_excel_inicial()
+    if not archivo.exists():
+        wb = Workbook()
+        ws = wb.active
+        ws.title = "Datos"
+        ws.append(["Dato", "Valor", "Observaciones"])
+        wb.save(archivo)
 
 
 
-
-def leer_excel_interno():
-    asegurar_excel_interno()
-    wb = load_workbook(EXCEL_FILE, data_only=False)
+def leer_excel_interno(libro_id="1"):
+    libro_id = str(libro_id or "1")
+    if libro_id not in LIBROS_EXCEL:
+        raise ValueError("Libro de Excel no válido.")
+    archivo = BASE_DIR / LIBROS_EXCEL[libro_id]["archivo"]
+    asegurar_excel_interno(libro_id)
+    wb = load_workbook(archivo, data_only=False)
     ws = wb.active
     filas = [["" if value is None else str(value) for value in row] for row in ws.iter_rows(values_only=True)]
     filas = _limpiar_filas_excel(filas, conservar_vacias=True)
@@ -1449,7 +1560,12 @@ def leer_excel_interno():
     return {"hoja": ws.title, "filas": filas, "columnas": columnas}
 
 
-def guardar_matriz_excel(filas, nombre_hoja="Datos"):
+def guardar_matriz_excel(filas, nombre_hoja="Datos", libro_id="1"):
+    libro_id = str(libro_id or "1")
+    if libro_id not in LIBROS_EXCEL:
+        raise ValueError("Libro de Excel no válido.")
+    libro = LIBROS_EXCEL[libro_id]
+    archivo = BASE_DIR / libro["archivo"]
     filas = _limpiar_filas_excel(filas, conservar_vacias=True)
     max_cols = max([len(f) for f in filas], default=1)
     max_cols = min(max_cols, 30)
@@ -1468,16 +1584,16 @@ def guardar_matriz_excel(filas, nombre_hoja="Datos"):
         valores = [str(ws.cell(r, c).value or "") for r in range(1, min(ws.max_row, 30) + 1)]
         ancho = min(max([len(v) for v in valores] + [10]) + 2, 32)
         ws.column_dimensions[letra].width = ancho
-    wb.save(EXCEL_FILE)
+    wb.save(archivo)
 
     # R2 es la persistencia permanente. Si la sincronización falla, elevamos
     # el error para que la API no informe falsamente que el guardado fue
     # exitoso y quede registrado en los logs de Render.
     if _r2_excel_configurado():
         try:
-            subir_excel_interno(EXCEL_FILE, EXCEL_INTERNO_R2_KEY)
+            subir_excel_interno(archivo, libro["r2_key"])
         except Exception as error:
-            print("ERROR SINCRONIZANDO EXCEL INTERNO CON R2:", error)
+            print(f"ERROR SINCRONIZANDO LIBRO {libro_id} CON R2:", error)
             raise
 
 def asegurar_word_interno():
@@ -1488,16 +1604,40 @@ def asegurar_word_interno():
 
 
 def leer_word_interno():
+    if _documento_interno_usar_pg():
+        try:
+            contenido = pg_obtener_documento_interno()
+            return contenido if contenido is not None else ""
+        except Exception as error:
+            print("ERROR leer_word_interno PG:", error)
+            return ""
     asegurar_word_interno()
     doc = Document(WORD_FILE)
     return "\n\n".join(p.text for p in doc.paragraphs)
 
 
 def guardar_word_interno(contenido):
+    if _documento_interno_usar_pg():
+        pg_guardar_documento_interno(str(contenido or ""))
+        return
     doc = Document()
     for linea in str(contenido or "").splitlines():
         doc.add_paragraph(linea)
     doc.save(WORD_FILE)
+
+
+def _generar_docx_documento_interno():
+    """Arma un .docx en memoria/disco con el contenido actual (Neon o
+    local), para exportarlo. Devuelve la ruta del archivo generado."""
+    if _documento_interno_usar_pg():
+        contenido = leer_word_interno()
+        doc = Document()
+        for linea in contenido.splitlines():
+            doc.add_paragraph(linea)
+        doc.save(WORD_FILE)
+    else:
+        asegurar_word_interno()
+    return WORD_FILE
 
 
 @app.route("/notas")
@@ -1510,8 +1650,9 @@ def notas():
 @app.route("/api/excel", methods=["GET"])
 @requiere_login
 def api_excel():
+    libro_id = request.args.get("libro_id", "1")
     try:
-        return jsonify({"ok": True, **leer_excel_interno()})
+        return jsonify({"ok": True, **leer_excel_interno(libro_id)})
     except Exception as error:
         print("ERROR LEYENDO EXCEL INTERNO:", error)
         return jsonify({"ok": False, "error": "No se pudo leer la planilla."}), 500
@@ -1521,9 +1662,10 @@ def api_excel():
 @requiere_login
 def api_excel_guardar():
     data = request.get_json(silent=True) or {}
+    libro_id = data.get("libro_id", request.args.get("libro_id", "1"))
     try:
-        guardar_matriz_excel(data.get("filas", []), data.get("hoja", "Datos"))
-        return jsonify({"ok": True, **leer_excel_interno()})
+        guardar_matriz_excel(data.get("filas", []), data.get("hoja", "Datos"), libro_id)
+        return jsonify({"ok": True, **leer_excel_interno(libro_id)})
     except Exception as error:
         print("ERROR GUARDANDO EXCEL INTERNO:", error)
         return jsonify({"ok": False, "error": "No se pudo guardar la planilla."}), 500
@@ -1532,11 +1674,13 @@ def api_excel_guardar():
 @app.route("/api/excel/limpiar", methods=["POST"])
 @requiere_login
 def api_excel_limpiar():
+    data = request.get_json(silent=True) or {}
+    libro_id = data.get("libro_id", request.args.get("libro_id", "1"))
     try:
-        datos = leer_excel_interno()
+        datos = leer_excel_interno(libro_id)
         filas_limpias = _limpiar_filas_excel(datos["filas"], conservar_vacias=False)
-        guardar_matriz_excel(filas_limpias, datos["hoja"])
-        return jsonify({"ok": True, **leer_excel_interno()})
+        guardar_matriz_excel(filas_limpias, datos["hoja"], libro_id)
+        return jsonify({"ok": True, **leer_excel_interno(libro_id)})
     except Exception as error:
         print("ERROR LIMPIANDO EXCEL:", error)
         return jsonify({"ok": False, "error": "No se pudieron eliminar las filas vacías."}), 500
@@ -1545,11 +1689,13 @@ def api_excel_limpiar():
 @app.route("/api/excel/limpiar-columnas", methods=["POST"])
 @requiere_login
 def api_excel_limpiar_columnas():
+    data = request.get_json(silent=True) or {}
+    libro_id = data.get("libro_id", request.args.get("libro_id", "1"))
     try:
-        datos = leer_excel_interno()
+        datos = leer_excel_interno(libro_id)
         filas_limpias = _limpiar_columnas_excel(datos["filas"])
-        guardar_matriz_excel(filas_limpias, datos["hoja"])
-        return jsonify({"ok": True, **leer_excel_interno()})
+        guardar_matriz_excel(filas_limpias, datos["hoja"], libro_id)
+        return jsonify({"ok": True, **leer_excel_interno(libro_id)})
     except Exception:
         return jsonify({"ok": False, "error": "No se pudieron eliminar las columnas vacías."}), 500
 
@@ -1563,7 +1709,11 @@ def api_excel_importar():
     nombre = secure_filename(archivo.filename)
     if not nombre.lower().endswith((".xlsx", ".xlsm")):
         return jsonify({"ok": False, "error": "Usá un archivo Excel .xlsx o .xlsm."}), 400
-    temporal = EXCEL_FILE.with_suffix(".upload.xlsx")
+    libro_id = request.form.get("libro_id", request.args.get("libro_id", "1"))
+    if str(libro_id) not in LIBROS_EXCEL:
+        return jsonify({"ok": False, "error": "Libro de Excel no válido."}), 400
+    archivo_libro = BASE_DIR / LIBROS_EXCEL[str(libro_id)]["archivo"]
+    temporal = archivo_libro.with_suffix(".upload.xlsx")
     try:
         archivo.save(temporal)
         wb = load_workbook(temporal, data_only=False)
@@ -1571,8 +1721,8 @@ def api_excel_importar():
             raise ValueError("El Excel no contiene hojas.")
         ws = wb[wb.sheetnames[0]]
         filas = [["" if value is None else str(value) for value in row] for row in ws.iter_rows(values_only=True)]
-        guardar_matriz_excel(filas, ws.title)
-        return jsonify({"ok": True, **leer_excel_interno()})
+        guardar_matriz_excel(filas, ws.title, libro_id)
+        return jsonify({"ok": True, **leer_excel_interno(libro_id)})
     except Exception as error:
         print("ERROR IMPORTANDO EXCEL:", error)
         return jsonify({"ok": False, "error": "No se pudo importar el Excel."}), 400
@@ -1584,8 +1734,17 @@ def api_excel_importar():
 @app.route("/excel/exportar")
 @requiere_login
 def excel_exportar():
-    asegurar_excel_interno()
-    return send_from_directory(EXCEL_FILE.parent, EXCEL_FILE.name, as_attachment=True, download_name="OficinaIA.xlsx")
+    libro_id = request.args.get("libro_id", "1")
+    if str(libro_id) not in LIBROS_EXCEL:
+        return jsonify({"ok": False, "error": "Libro de Excel no válido."}), 400
+    archivo = BASE_DIR / LIBROS_EXCEL[str(libro_id)]["archivo"]
+    asegurar_excel_interno(libro_id)
+    return send_from_directory(
+        archivo.parent,
+        archivo.name,
+        as_attachment=True,
+        download_name="OficinaIA.xlsx" if str(libro_id) == "1" else archivo.name,
+    )
 
 
 @app.route("/api/word", methods=["GET"])
@@ -1613,7 +1772,7 @@ def api_word_guardar():
 @app.route("/word/exportar")
 @requiere_login
 def word_exportar():
-    asegurar_word_interno()
+    _generar_docx_documento_interno()
     return send_from_directory(WORD_FILE.parent, WORD_FILE.name, as_attachment=True, download_name="OficinaIA.docx")
 
 
@@ -1782,17 +1941,143 @@ def eliminar_metadato(metadato_id):
 # ==========================================================
 
 def _crear_conversacion(usuario, titulo="Nueva conversación"):
+    titulo = (titulo or "Nueva conversación")[:100] or "Nueva conversación"
+    if _chats_usar_pg():
+        try:
+            return pg_crear_conversacion(usuario, titulo)
+        except Exception as error:
+            print("ERROR _crear_conversacion PG:", error)
+            raise
     with closing(conectar_db()) as db:
         cur = db.execute(
             "INSERT INTO conversaciones (usuario,titulo) VALUES (?,?)",
-            (usuario, titulo[:100] or "Nueva conversación")
+            (usuario, titulo)
         )
         db.commit()
         return cur.lastrowid
 
+
+def _validar_chat(chat_id, usuario):
+    """True si la conversación existe y pertenece al usuario."""
+    if _chats_usar_pg():
+        try:
+            return pg_validar_chat(chat_id, usuario)
+        except Exception as error:
+            print("ERROR _validar_chat PG:", error)
+            return False
+    with closing(conectar_db()) as db:
+        row = db.execute(
+            "SELECT id FROM conversaciones WHERE id=? AND usuario=?",
+            (chat_id, usuario)
+        ).fetchone()
+        return row is not None
+
+
+def _guardar_mensaje(chat_id, rol, contenido):
+    """Inserta un mensaje y actualiza el timestamp de la conversación."""
+    if _chats_usar_pg():
+        try:
+            pg_agregar_mensaje(chat_id, rol, contenido)
+            return
+        except Exception as error:
+            print("ERROR _guardar_mensaje PG:", error)
+            return
+    with closing(conectar_db()) as db:
+        db.execute(
+            "INSERT INTO mensajes (conversacion_id,rol,contenido) VALUES (?,?,?)",
+            (chat_id, rol, contenido)
+        )
+        db.execute(
+            "UPDATE conversaciones SET actualizado_en=CURRENT_TIMESTAMP WHERE id=?",
+            (chat_id,)
+        )
+        db.commit()
+
+
+_flota_usar_pg = _usuarios_usar_pg
+
+
+def _flota_obtener(chat_id):
+    """Devuelve el estado de la flota activa de esta conversación, o None."""
+    if _flota_usar_pg():
+        try:
+            return pg_obtener_flota_activa(chat_id)
+        except Exception as error:
+            print("ERROR _flota_obtener PG:", error)
+            return None
+    with closing(conectar_db()) as db:
+        fila = db.execute(
+            "SELECT conversacion_id, estado, libro_id, datos_generales, vehiculos "
+            "FROM flotas_activas WHERE conversacion_id=?",
+            (chat_id,),
+        ).fetchone()
+        if not fila:
+            return None
+        return {
+            "conversacion_id": fila[0],
+            "estado": fila[1],
+            "libro_id": fila[2],
+            "datos_generales": json.loads(fila[3] or "{}"),
+            "vehiculos": json.loads(fila[4] or "[]"),
+        }
+
+
+def _flota_guardar(chat_id, estado, libro_id, datos_generales, vehiculos):
+    """Persiste (crea o actualiza) el estado de trabajo de una flota."""
+    if _flota_usar_pg():
+        try:
+            pg_guardar_flota_activa(chat_id, estado, libro_id, datos_generales, vehiculos)
+            return
+        except Exception as error:
+            print("ERROR _flota_guardar PG:", error)
+            return
+    with closing(conectar_db()) as db:
+        db.execute(
+            """
+            INSERT INTO flotas_activas (conversacion_id, estado, libro_id, datos_generales, vehiculos, actualizado_en)
+            VALUES (?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+            ON CONFLICT(conversacion_id) DO UPDATE SET
+                estado=excluded.estado,
+                libro_id=excluded.libro_id,
+                datos_generales=excluded.datos_generales,
+                vehiculos=excluded.vehiculos,
+                actualizado_en=CURRENT_TIMESTAMP
+            """,
+            (
+                chat_id,
+                estado,
+                libro_id,
+                json.dumps(datos_generales or {}, ensure_ascii=False),
+                json.dumps(vehiculos or [], ensure_ascii=False),
+            ),
+        )
+        db.commit()
+
+
+def _flota_borrar(chat_id):
+    """Cierra/limpia el contexto de flota activa (al finalizar la tarea)."""
+    if _flota_usar_pg():
+        try:
+            pg_borrar_flota_activa(chat_id)
+            return
+        except Exception as error:
+            print("ERROR _flota_borrar PG:", error)
+            return
+    with closing(conectar_db()) as db:
+        db.execute("DELETE FROM flotas_activas WHERE conversacion_id=?", (chat_id,))
+        db.commit()
+
+
 @app.route("/api/chats", methods=["GET"])
 @requiere_login
 def listar_chats():
+    if _chats_usar_pg():
+        try:
+            chats = pg_listar_chats(session["usuario"])
+            return jsonify({"ok": True, "chats": chats})
+        except Exception as error:
+            print("ERROR listar_chats PG:", error)
+            return jsonify({"ok": False, "error": "No se pudieron cargar las conversaciones."}), 500
     with closing(conectar_db()) as db:
         rows = db.execute(
             "SELECT id,titulo,creado_en,actualizado_en FROM conversaciones WHERE usuario=? ORDER BY actualizado_en DESC, id DESC",
@@ -1805,12 +2090,24 @@ def listar_chats():
 def crear_chat():
     data=request.get_json(silent=True) or {}
     titulo=str(data.get("titulo","Nueva conversación")).strip()[:100] or "Nueva conversación"
-    cid=_crear_conversacion(session["usuario"], titulo)
+    try:
+        cid=_crear_conversacion(session["usuario"], titulo)
+    except Exception:
+        return jsonify({"ok": False, "error": "No se pudo crear la conversación."}), 500
     return jsonify({"ok":True,"id":cid,"titulo":titulo})
 
 @app.route("/api/chats/<int:chat_id>", methods=["GET"])
 @requiere_login
 def obtener_chat(chat_id):
+    if _chats_usar_pg():
+        try:
+            chat, mensajes = pg_obtener_chat_con_mensajes(chat_id, session["usuario"])
+        except Exception as error:
+            print("ERROR obtener_chat PG:", error)
+            return jsonify({"ok": False, "error": "No se pudo cargar la conversación."}), 500
+        if not chat:
+            return jsonify({"ok": False, "error": "Conversación no encontrada."}), 404
+        return jsonify({"ok": True, "chat": chat, "mensajes": mensajes})
     with closing(conectar_db()) as db:
         chat=db.execute("SELECT id,titulo FROM conversaciones WHERE id=? AND usuario=?",(chat_id,session["usuario"])).fetchone()
         if not chat: return jsonify({"ok":False,"error":"Conversación no encontrada."}),404
@@ -1820,6 +2117,15 @@ def obtener_chat(chat_id):
 @app.route("/api/chats/<int:chat_id>", methods=["DELETE"])
 @requiere_login
 def eliminar_chat(chat_id):
+    if _chats_usar_pg():
+        try:
+            borrado = pg_eliminar_chat(chat_id, session["usuario"])
+        except Exception as error:
+            print("ERROR eliminar_chat PG:", error)
+            return jsonify({"ok": False, "error": "No se pudo eliminar la conversación."}), 500
+        if not borrado:
+            return jsonify({"ok": False, "error": "Conversación no encontrada."}), 404
+        return jsonify({"ok": True})
     with closing(conectar_db()) as db:
         row=db.execute("SELECT id FROM conversaciones WHERE id=? AND usuario=?",(chat_id,session["usuario"])).fetchone()
         if not row: return jsonify({"ok":False,"error":"Conversación no encontrada."}),404
@@ -1831,21 +2137,197 @@ def eliminar_chat(chat_id):
 # CHAT
 # ==========================================================
 
+def _normalizar_encabezado(valor):
+    texto = unicodedata.normalize("NFKD", str(valor or ""))
+    texto = "".join(c for c in texto if not unicodedata.combining(c))
+    return re.sub(r"[^a-z0-9]+", "", texto.lower())
+
+
+def _construir_fila_excel(campos_fila, indices, cantidad_columnas, libro_id):
+    """Mapea un dict de campos (asegurado, patente, marca_modelo, etc.) a una
+    fila del Excel real, usando los encabezados/alias existentes.
+
+    Extraída de la propuesta manual (`/api/excel/agregar-fila`) para poder
+    reutilizarse también desde el guardado autónomo de `/flota`: ambos casos
+    necesitan exactamente el mismo mapeo de columnas.
+    """
+    normalizar = _normalizar_encabezado
+    fila_nueva = [""] * cantidad_columnas
+
+    alias = {
+        normalizar("dominio"): "patente",
+        normalizar("chapa"): "patente",
+        normalizar("marca/modelo"): "marca_modelo",
+        normalizar("marca_modelo"): "marca_modelo",
+        normalizar("marca - modelo"): "marca_modelo",
+        normalizar("vehiculo"): "vehiculo",
+        normalizar("descripcion del vehiculo"): "vehiculo",
+        normalizar("anio"): "año",
+        normalizar("uso del vehiculo"): "uso",
+        normalizar("suma asegurada"): "suma",
+        normalizar("suma_asegurada"): "suma",
+        normalizar("asegurado"): "asegurado",
+        normalizar("domicilio"): "domicilio",
+        normalizar("localidad"): "localidad",
+        normalizar("cp"): "cp",
+        normalizar("codigo postal"): "cp",
+    }
+    campos_canonicos = {}
+    for clave, valor in campos_fila.items():
+        clave_normalizada = normalizar(clave)
+        canonico = alias.get(clave_normalizada, str(clave or "").strip())
+        if clave_normalizada in {
+            normalizar("patente"),
+            normalizar("dominio"),
+            normalizar("chapa"),
+        }:
+            canonico = "PATENTE"
+        campos_canonicos[normalizar(canonico)] = str(valor or "").strip()
+
+    marca_modelo = str(campos_fila.get("marca_modelo") or "").strip()
+    marca = str(campos_fila.get("marca") or "").strip()
+    modelo = str(campos_fila.get("modelo") or "").strip()
+    vehiculo = str(campos_fila.get("vehiculo") or "").strip()
+    if marca_modelo:
+        vehiculo = marca_modelo
+    elif marca and modelo:
+        vehiculo = f"{marca} {modelo}".strip()
+    if vehiculo:
+        campos_canonicos.setdefault(normalizar("vehiculo"), vehiculo)
+        campos_canonicos.setdefault(normalizar("marca/modelo"), vehiculo)
+        campos_canonicos.setdefault(normalizar("marca_modelo"), vehiculo)
+
+    for campo, valor in campos_fila.items():
+        clave = str(campo or "").strip()
+        canonico = alias.get(normalizar(clave), clave)
+        if normalizar(canonico) not in campos_canonicos:
+            campos_canonicos[normalizar(canonico)] = str(valor or "").strip()
+
+    if libro_id == "1":
+        indice_asegurado = indices.get(normalizar("ASEGURADO"))
+        indice_numero = indices.get(normalizar("NUMERO"))
+        indice_patente = indices.get(normalizar("PATENTE"))
+        asegurado = campos_canonicos.get(normalizar("ASEGURADO"), "")
+        numero = campos_canonicos.get(normalizar("NUMERO"), "")
+        patente = campos_canonicos.get(normalizar("PATENTE"), "")
+
+        if not asegurado:
+            raise ValueError(
+                "Antes de guardar, el registro necesita al menos el nombre del ASEGURADO."
+            )
+        if not numero and not patente:
+            raise ValueError(
+                "Antes de guardar, indicá al menos NUMERO (DNI/póliza) o PATENTE."
+            )
+        if indice_asegurado is None:
+            raise ValueError("El Excel no tiene la columna ASEGURADO.")
+        if indice_numero is None and indice_patente is None:
+            raise ValueError(
+                "El Excel no tiene NUMERO ni PATENTE para identificar el registro."
+            )
+
+    for campo, valor in campos_canonicos.items():
+        indice = indices.get(campo)
+        if indice is not None:
+            fila_nueva[indice] = valor
+
+    if libro_id == "2":
+        for encabezado, indice in indices.items():
+            if encabezado in {
+                normalizar("patente"),
+                normalizar("dominio"),
+                normalizar("chapa"),
+            }:
+                fila_nueva[indice] = campos_canonicos.get(
+                    normalizar("patente"), fila_nueva[indice]
+                )
+            elif encabezado in {
+                normalizar("marca"),
+                normalizar("marca del vehiculo"),
+            }:
+                fila_nueva[indice] = str(
+                    campos_fila.get("marca") or fila_nueva[indice]
+                ).strip()
+            elif encabezado in {
+                normalizar("modelo"),
+                normalizar("modelo del vehiculo"),
+            }:
+                fila_nueva[indice] = str(
+                    campos_fila.get("modelo") or fila_nueva[indice]
+                ).strip()
+            elif encabezado in {
+                normalizar("marca/modelo"),
+                normalizar("marca_modelo"),
+                normalizar("marca - modelo"),
+                normalizar("vehiculo"),
+                normalizar("descripcion del vehiculo"),
+            }:
+                fila_nueva[indice] = vehiculo or fila_nueva[indice]
+            elif encabezado in {normalizar("asegurado"), normalizar("nombre asegurado")}:
+                fila_nueva[indice] = campos_canonicos.get(normalizar("asegurado"), fila_nueva[indice])
+            elif encabezado in {normalizar("domicilio"), normalizar("direccion")}:
+                fila_nueva[indice] = campos_canonicos.get(normalizar("domicilio"), fila_nueva[indice])
+            elif encabezado in {normalizar("localidad"), normalizar("ciudad")}:
+                fila_nueva[indice] = campos_canonicos.get(normalizar("localidad"), fila_nueva[indice])
+            elif encabezado in {normalizar("cp"), normalizar("codigo postal")}:
+                fila_nueva[indice] = campos_canonicos.get(normalizar("cp"), fila_nueva[indice])
+            elif encabezado in {normalizar("año"), normalizar("anio")}:
+                fila_nueva[indice] = campos_canonicos.get(
+                    normalizar("año"), fila_nueva[indice]
+                )
+            elif encabezado in {
+                normalizar("uso"),
+                normalizar("uso del vehiculo"),
+            }:
+                fila_nueva[indice] = campos_canonicos.get(
+                    normalizar("uso"), fila_nueva[indice]
+                )
+            elif encabezado in {
+                normalizar("suma"),
+                normalizar("suma asegurada"),
+            }:
+                fila_nueva[indice] = campos_canonicos.get(
+                    normalizar("suma"), fila_nueva[indice]
+                )
+            elif encabezado == normalizar("cobertura"):
+                fila_nueva[indice] = campos_canonicos.get(
+                    normalizar("cobertura"), fila_nueva[indice]
+                )
+            elif encabezado in {normalizar("motor")}:
+                fila_nueva[indice] = campos_canonicos.get(normalizar("motor"), fila_nueva[indice])
+            elif encabezado in {normalizar("chasis")}:
+                fila_nueva[indice] = campos_canonicos.get(normalizar("chasis"), fila_nueva[indice])
+
+    if not any(str(valor).strip() for valor in fila_nueva):
+        raise ValueError(
+            "Ninguno de los campos propuestos coincide con las columnas existentes del Excel."
+        )
+    return fila_nueva
+
+
 @app.route("/api/excel/agregar-fila", methods=["POST"])
 @requiere_login
 def api_excel_agregar_fila():
     data = request.get_json(silent=True) or {}
+    tipo_propuesta = str(data.get("tipo_propuesta") or "").strip().lower()
+    filas_propuesta = data.get("filas")
     campos = data.get("campos")
-    if not isinstance(campos, dict) or not campos:
+    libro_id = str(data.get("libro_id") or session.get("guardar_asegurado_libro_id") or "1")
+
+    es_flota = tipo_propuesta == "flota"
+    if es_flota:
+        if not isinstance(filas_propuesta, list) or not filas_propuesta:
+            return jsonify({"ok": False, "error": "No se recibieron vehículos para agregar."}), 400
+        if not all(isinstance(fila, dict) and fila for fila in filas_propuesta):
+            return jsonify({"ok": False, "error": "La propuesta de flota contiene vehículos inválidos."}), 400
+    elif not isinstance(campos, dict) or not campos:
         return jsonify({"ok": False, "error": "No se recibieron campos para agregar."}), 400
 
-    def normalizar(valor):
-        texto = unicodedata.normalize("NFKD", str(valor or ""))
-        texto = "".join(c for c in texto if not unicodedata.combining(c))
-        return re.sub(r"[^a-z0-9]+", "", texto.lower())
+    if libro_id not in LIBROS_EXCEL:
+        return jsonify({"ok": False, "error": "Libro de Excel no válido."}), 400
 
     try:
-        datos = leer_excel_interno()
+        datos = leer_excel_interno(libro_id)
         filas = list(datos.get("filas") or [])
         hoja_actual = datos.get("hoja", "Datos")
         if not filas:
@@ -1853,66 +2335,731 @@ def api_excel_agregar_fila():
 
         encabezados = filas[0]
         cantidad_columnas = max(len(encabezados), 1)
-        fila_nueva = [""] * cantidad_columnas
         indices = {
-            normalizar(encabezado): i
+            _normalizar_encabezado(encabezado): i
             for i, encabezado in enumerate(encabezados)
-            if normalizar(encabezado)
+            if _normalizar_encabezado(encabezado)
         }
 
-        campos_normalizados = {
-            normalizar(clave): str(valor or "").strip()
-            for clave, valor in campos.items()
-        }
+        if es_flota:
+            filas_nuevas = [
+                _construir_fila_excel(fila, indices, cantidad_columnas, libro_id)
+                for fila in filas_propuesta
+            ]
+            guardar_matriz_excel(
+                filas + filas_nuevas, hoja_actual, libro_id=libro_id
+            )
+        else:
+            fila_nueva = _construir_fila_excel(campos, indices, cantidad_columnas, libro_id)
+            guardar_matriz_excel(
+                filas + [fila_nueva], hoja_actual, libro_id=libro_id
+            )
 
-        indice_asegurado = indices.get(normalizar("ASEGURADO"))
-        indice_numero = indices.get(normalizar("NUMERO"))
-        indice_patente = indices.get(normalizar("PATENTE"))
-
-        asegurado = campos_normalizados.get(normalizar("ASEGURADO"), "")
-        numero = campos_normalizados.get(normalizar("NUMERO"), "")
-        patente = campos_normalizados.get(normalizar("PATENTE"), "")
-
-        if not asegurado:
-            return jsonify({
-                "ok": False,
-                "error": "Antes de guardar, el registro necesita al menos el nombre del ASEGURADO."
-            }), 400
-
-        if not numero and not patente:
-            return jsonify({
-                "ok": False,
-                "error": "Antes de guardar, indicá al menos NUMERO (DNI/póliza) o PATENTE."
-            }), 400
-
-        if indice_asegurado is None:
-            return jsonify({
-                "ok": False,
-                "error": "El Excel no tiene la columna ASEGURADO."
-            }), 400
-
-        if indice_numero is None and indice_patente is None:
-            return jsonify({
-                "ok": False,
-                "error": "El Excel no tiene NUMERO ni PATENTE para identificar el registro."
-            }), 400
-
-        for campo, valor in campos.items():
-            indice = indices.get(normalizar(campo))
-            if indice is not None:
-                fila_nueva[indice] = str(valor or "").strip()
-
-        if not any(str(valor).strip() for valor in fila_nueva):
-            return jsonify({
-                "ok": False,
-                "error": "Ninguno de los campos propuestos coincide con las columnas existentes del Excel."
-            }), 400
-
-        guardar_matriz_excel(filas + [fila_nueva], hoja_actual)
-        return jsonify({"ok": True, **leer_excel_interno()})
+        session.pop("guardar_asegurado_libro_id", None)
+        return jsonify({
+            "ok": True,
+            "libro_id": libro_id,
+            "filas_agregadas": len(filas_propuesta) if es_flota else 1,
+            **leer_excel_interno(libro_id),
+        })
+    except ValueError as error:
+        return jsonify({"ok": False, "error": str(error)}), 400
     except Exception as error:
         print("ERROR AGREGANDO FILA DESDE CHAT:", error)
         return jsonify({"ok": False, "error": "No se pudo agregar el registro al Excel."}), 500
+
+
+def interpretar_flota_a_json(texto):
+    """Interpreta una o varias descripciones de vehículos de una póliza.
+
+    Primero intenta extraer de forma determinista los campos que vienen con
+    etiquetas explícitas en el frente de póliza. Gemini queda como respaldo
+    para textos que no respeten ese formato.
+    """
+    texto = str(texto or "").replace("\r", "")
+
+    campos = (
+        "patente", "marca_modelo", "marca", "modelo", "año", "motor",
+        "chasis", "uso", "suma_asegurada", "cobertura",
+        "asegurado", "domicilio", "localidad", "cp"
+    )
+
+    def limpiar_valor(valor):
+        return re.sub(r"\s+", " ", str(valor or "")).strip(" \t\n:;,-")
+
+    def campo_etiquetado(bloque, etiqueta, etiquetas_siguientes):
+        patron = rf"{re.escape(etiqueta)}\s*:\s*(.*?)(?=\s+(?:{'|'.join(re.escape(x) for x in etiquetas_siguientes)})\s*:|$)"
+        m = re.search(patron, bloque, flags=re.IGNORECASE | re.DOTALL)
+        return limpiar_valor(m.group(1)) if m else ""
+
+    # Cada aparición de DESCRIPCIÓN DEL VEHÍCULO ASEGURADO marca un vehículo.
+    marcadores = list(re.finditer(
+        r"DESCRIPCI[ÓO]N\s+DEL\s+VEH[ÍI]CULO\s+ASEGURADO\s*:",
+        texto,
+        flags=re.IGNORECASE,
+    ))
+
+    if marcadores:
+        vehiculos = []
+        etiquetas = [
+            "TIPO", "MARCA/MODELO", "AÑO", "PATENTE", "MOTOR", "CHASIS",
+            "AUTO/JEEP/SUV PARTICULARES Y FAMILIARES (1-1-1)",
+            "USO DEL VEHÍCULO", "USO DEL VEHICULO", "SUMA ASEGURADA", "COBERTURA",
+        ]
+        for i, marcador in enumerate(marcadores):
+            fin = marcadores[i + 1].start() if i + 1 < len(marcadores) else len(texto)
+            bloque = texto[marcador.end():fin]
+            etiquetas_campos = [
+                "TIPO", "MARCA/MODELO", "AÑO", "PATENTE", "MOTOR", "CHASIS",
+                "USO DEL VEHÍCULO", "USO DEL VEHICULO", "SUMA ASEGURADA", "COBERTURA"
+            ]
+            marca_modelo = campo_etiquetado(bloque, "MARCA/MODELO", [
+                "AÑO", "PATENTE", "MOTOR", "CHASIS", "USO DEL VEHÍCULO",
+                "USO DEL VEHICULO", "SUMA ASEGURADA", "COBERTURA"
+            ])
+            patente = campo_etiquetado(bloque, "PATENTE", [
+                "MOTOR", "CHASIS", "USO DEL VEHÍCULO", "USO DEL VEHICULO",
+                "SUMA ASEGURADA", "COBERTURA"
+            ])
+            anio = campo_etiquetado(bloque, "AÑO", [
+                "PATENTE", "MOTOR", "CHASIS", "USO DEL VEHÍCULO",
+                "USO DEL VEHICULO", "SUMA ASEGURADA", "COBERTURA"
+            ])
+            motor = campo_etiquetado(bloque, "MOTOR", [
+                "CHASIS", "USO DEL VEHÍCULO", "USO DEL VEHICULO",
+                "SUMA ASEGURADA", "COBERTURA"
+            ])
+            m_chasis = re.search(
+                r"CHASIS\s*:\s*(.*?)(?=\s+AUTO/JEEP/SUV\s+PARTICULARES\s+Y\s+FAMILIARES\s+\(1-1-1\)|\s+USO\s+DEL\s+VEH[ÍI]CULO\s*:|\s+SUMA\s+ASEGURADA\s*:|\s+COBERTURA\s*:|$)",
+                bloque,
+                flags=re.IGNORECASE | re.DOTALL,
+            )
+            chasis = limpiar_valor(m_chasis.group(1)) if m_chasis else ""
+            uso = campo_etiquetado(bloque, "USO DEL VEHÍCULO", ["SUMA ASEGURADA", "COBERTURA"])
+            if not uso:
+                uso = campo_etiquetado(bloque, "USO DEL VEHICULO", ["SUMA ASEGURADA", "COBERTURA"])
+            suma = campo_etiquetado(bloque, "SUMA ASEGURADA", ["COBERTURA"])
+            cobertura = campo_etiquetado(bloque, "COBERTURA", [])
+            # Los frentes pueden traer pie de página después de COBERTURA.
+            cobertura = re.split(
+                r"\s+-\s+(?:Advertencia\b|\d{4,}\s+Tel\.?|Tel\.?\s*:|Provincia\b|Condición\b|ASEGURADO\b|PRODUCTOR\b)",
+                cobertura,
+                maxsplit=1,
+                flags=re.IGNORECASE,
+            )[0].strip()
+
+
+            # MARCA/MODELO se conserva EXACTAMENTE como figura en la póliza.
+            # No se separa en marca y modelo para no alterar el dato original.
+            vehiculo = {
+                "patente": patente,
+                "marca_modelo": marca_modelo,
+                "marca": "",
+                "modelo": "",
+                "año": anio,
+                "motor": motor,
+                "chasis": chasis,
+                "uso": uso,
+                "suma_asegurada": suma,
+                "cobertura": cobertura,
+            }
+            if any(vehiculo[k] for k in ("patente", "marca_modelo", "año", "motor", "chasis")):
+                vehiculos.append(vehiculo)
+
+        # Datos generales del asegurado: se aplican a todos los vehículos.
+        # El CP se obtiene del bloque de cabecera si está presente como (NNNN)
+        # o junto a una localidad/código postal explícito.
+        cabecera = texto[:marcadores[0].start()]
+        cp = ""
+        m_cp = re.search(r"(?:\(|\b)(\d{4})\)?\b", cabecera)
+        if m_cp:
+            cp = m_cp.group(1)
+        m_cp2 = re.search(r"(?:C[ÓO]D(?:IGO)?\s*POSTAL|CP)\s*:?\s*(\d{4})", cabecera, re.IGNORECASE)
+        if m_cp2:
+            cp = m_cp2.group(1)
+
+        # En muchos frentes el nombre del asegurado aparece en la cabecera
+        # antes del domicilio. Intentamos extraerlo sin tocar los datos de los
+        # vehículos. Si no hay suficiente estructura, dejamos el campo vacío
+        # antes que inventarlo.
+        asegurado = ""
+        domicilio = ""
+        localidad = ""
+        cabecera_limpia = re.sub(r"^/flota\s*", "", cabecera, flags=re.IGNORECASE).strip()
+        cabecera_limpia = re.sub(r"\s+", " ", cabecera_limpia)
+
+        # Caso habitual: NOMBRE + CALLE + ALTURA + LOCALIDAD + DNI/IVA + (CP).
+        # Para no confundir nombre y calle, buscamos un número de altura y
+        # usamos el segmento anterior como candidato. Si hay una etiqueta
+        # explícita, ésta tiene prioridad.
+        m_aseg_et = re.search(r"(?:ASEGURADO|TOMADOR)\s*:\s*([^:]{2,100})", cabecera_limpia, re.IGNORECASE)
+        if m_aseg_et and limpiar_valor(m_aseg_et.group(1)):
+            asegurado = limpiar_valor(m_aseg_et.group(1))
+
+        if not asegurado:
+            # Casos frecuentes de domicilios cuyo nombre de calle es fácilmente
+            # identificable en el texto corrido (LA RIOJA, AVENIDA, CALLE, etc.).
+            m_aseg_calle = re.search(
+                r"^(.+?)\s+(?=(?:LA\s+RIOJA|AV(?:ENIDA)?|CALLE|RUTA|BARRIO)\b[^0-9]{0,50}\s+\d{1,6}\b)",
+                cabecera_limpia,
+                re.IGNORECASE,
+            )
+            if m_aseg_calle:
+                asegurado = limpiar_valor(m_aseg_calle.group(1))
+
+        if not asegurado:
+            # El formato de ejemplo del frente usa tres palabras para el
+            # nombre antes de la calle. Preferimos esa estructura cuando está
+            # seguida por una calle + altura.
+            m_aseg = re.search(
+                r"^([A-ZÁÉÍÓÚÑ][A-ZÁÉÍÓÚÑ'’-]+(?:\s+[A-ZÁÉÍÓÚÑ][A-ZÁÉÍÓÚÑ'’-]+){1,4})\s+(?=[A-ZÁÉÍÓÚÑ][A-ZÁÉÍÓÚÑ .'-]{2,40}\s+\d{1,6}\b)",
+                cabecera_limpia,
+                re.IGNORECASE,
+            )
+            if m_aseg:
+                asegurado = limpiar_valor(m_aseg.group(1))
+
+        # Extraer domicilio/localidad si la cabecera tiene una calle + altura.
+        if asegurado:
+            resto = cabecera_limpia[len(asegurado):].strip()
+        else:
+            resto = cabecera_limpia
+        m_dir = re.search(
+            r"^([A-ZÁÉÍÓÚÑ][A-ZÁÉÍÓÚÑ .'-]{2,50}?)\s+(\d{1,6})\s+([A-ZÁÉÍÓÚÑ][A-ZÁÉÍÓÚÑ .'-]{2,40}?)(?=\s+\d{6,11}\b|\s+CONSUMIDOR\b|\s+RESPONSABLE\b|\s+\(|$)",
+            resto,
+            re.IGNORECASE,
+        )
+        if m_dir:
+            domicilio = limpiar_valor(f"{m_dir.group(1)} {m_dir.group(2)}")
+            localidad = limpiar_valor(m_dir.group(3))
+
+
+        for v in vehiculos:
+            v["asegurado"] = asegurado
+            v["domicilio"] = domicilio
+            v["localidad"] = localidad
+            v["cp"] = cp
+
+        return {"vehiculos": vehiculos}
+
+    # Fallback Gemini para formatos no estructurados.
+    from servicios_ia import obtener_cliente_gemini, MODELOS_GEMINI
+    from google.genai import types
+
+    cliente = obtener_cliente_gemini()
+    if cliente is None:
+        raise RuntimeError("La IA todavía no está configurada. Falta GEMINI_API_KEY.")
+
+    instruccion = """
+Analizá exclusivamente el texto/documento proporcionado.
+Identificá TODOS los vehículos que aparezcan.
+
+Devolvé ÚNICAMENTE JSON válido, sin markdown, comentarios ni texto fuera del JSON.
+La estructura obligatoria es:
+{
+  "vehiculos": [
+    {
+      "patente": "",
+      "marca_modelo": "",
+      "año": "",
+      "motor": "",
+      "chasis": "",
+      "uso": "",
+      "suma_asegurada": "",
+      "cobertura": "",
+      "asegurado": "",
+      "domicilio": "",
+      "localidad": "",
+      "cp": ""
+    }
+  ]
+}
+
+REGLA CRÍTICA: MARCA/MODELO debe copiarse EXACTAMENTE como aparece en la póliza,
+sin separar, resumir, corregir, traducir ni reinterpretar. Por ejemplo,
+"PEUGEOT PARTNER PATA. 1.6 VTC PLUS L10/17" debe quedar exactamente así.
+
+No mezcles información entre vehículos. No inventes datos. Si un campo no aparece,
+dejalo vacío. La cantidad de vehículos debe corresponder a la cantidad real detectada.
+"""
+    ultimo_error = None
+    for modelo in MODELOS_GEMINI:
+        try:
+            config = types.GenerateContentConfig(
+                temperature=0,
+                max_output_tokens=4000,
+                response_mime_type="application/json",
+                system_instruction=instruccion.strip(),
+            )
+            respuesta = cliente.models.generate_content(
+                model=modelo,
+                contents=texto.strip(),
+                config=config,
+            )
+            bruto = str(getattr(respuesta, "text", "") or "").strip()
+            if not bruto:
+                raise ValueError("Gemini no devolvió JSON.")
+            datos = json.loads(bruto)
+            vehiculos = datos.get("vehiculos")
+            if not isinstance(vehiculos, list):
+                raise ValueError("Gemini no devolvió la lista de vehículos.")
+            salida = []
+            for v in vehiculos:
+                if not isinstance(v, dict):
+                    continue
+                salida.append({k: limpiar_valor(v.get(k, "")) for k in campos})
+            return {"vehiculos": salida}
+        except Exception as error:
+            ultimo_error = error
+            print("ERROR GEMINI /FLOTA", modelo, ":", error)
+    raise RuntimeError(f"No pude interpretar el frente de póliza como JSON: {ultimo_error}")
+
+
+# ==========================================================
+# /FLOTA — CONTEXTO PERSISTENTE, FUSIÓN, DEDUP Y AUTOGUARDADO
+# ==========================================================
+#
+# Estas funciones implementan el comportamiento pedido para /flota:
+# la flota vive en `flotas_activas` (una fila por conversación) y cada
+# mensaje nuevo ENRIQUECE ese estado en vez de arrancar de cero. Los
+# vehículos se identifican por patente/chasis (o por ITEM si no hay
+# ninguno de los dos) para no crear duplicados, se guardan en el Excel
+# real apenas tienen algo mínimamente identificable, y las correcciones
+# posteriores ("el 7 es C3") pisan la fila ya guardada en vez de agregar
+# una nueva.
+
+CAMPOS_VEHICULO = (
+    "patente", "marca_modelo", "marca", "modelo", "año", "motor",
+    "chasis", "uso", "suma_asegurada", "cobertura",
+)
+
+_ETIQUETAS_CAMPO_NATURAL = {
+    "patente": ("patente", "dominio", "chapa"),
+    "chasis": ("chasis",),
+    "motor": ("motor",),
+    "suma_asegurada": ("suma asegurada", "suma"),
+    "año": ("año", "anio", "modelo año", "año modelo"),
+    "uso": ("uso",),
+    "cobertura": ("cobertura",),
+}
+
+
+def _vacio(valor):
+    return not str(valor or "").strip()
+
+
+def _normalizar_identificador(valor):
+    texto = unicodedata.normalize("NFKD", str(valor or ""))
+    texto = "".join(c for c in texto if not unicodedata.combining(c))
+    return re.sub(r"[^A-Z0-9]", "", texto.upper())
+
+
+def _vehiculo_nuevo_vacio(item):
+    vehiculo = {campo: "" for campo in CAMPOS_VEHICULO}
+    vehiculo["item"] = item
+    vehiculo["fila_excel"] = None
+    return vehiculo
+
+
+def _mismo_vehiculo(existente, nuevo):
+    """True si `nuevo` describe el mismo vehículo físico que `existente`,
+    usando patente o chasis como identificador confiable (Sección 22)."""
+    pat_a = _normalizar_identificador(existente.get("patente"))
+    pat_b = _normalizar_identificador(nuevo.get("patente"))
+    if pat_a and pat_b:
+        return pat_a == pat_b
+    cha_a = _normalizar_identificador(existente.get("chasis"))
+    cha_b = _normalizar_identificador(nuevo.get("chasis"))
+    if cha_a and cha_b:
+        return cha_a == cha_b
+    return False
+
+
+def _fusionar_campos_vehiculo(existente, nuevo):
+    """Completa campos vacíos con datos nuevos. Nunca pisa un dato ya
+    presente con uno vacío; si llega un valor distinto para un campo ya
+    completo, lo actualiza (se asume que es una corrección del usuario,
+    Sección 20/21) salvo que sea idéntico."""
+    cambio = False
+    for campo in CAMPOS_VEHICULO:
+        valor_nuevo = str(nuevo.get(campo, "") or "").strip()
+        if not valor_nuevo:
+            continue
+        if valor_nuevo != str(existente.get(campo, "") or "").strip():
+            existente[campo] = valor_nuevo
+            cambio = True
+    return cambio
+
+
+def _vehiculo_guardable(vehiculo):
+    """Mínimo para que un registro ya tenga sentido guardado en el Excel
+    (Sección 15/20): algo que lo identifique (patente o chasis) o al menos
+    la descripción del vehículo."""
+    return bool(
+        str(vehiculo.get("patente") or "").strip()
+        or str(vehiculo.get("chasis") or "").strip()
+        or str(vehiculo.get("marca_modelo") or "").strip()
+    )
+
+
+_CAMPOS_RELEVANTES_PARA_COMPLETITUD = (
+    "patente", "marca_modelo", "año", "motor", "chasis", "uso", "suma_asegurada", "cobertura",
+)
+
+
+def _campos_pendientes_vehiculo(vehiculo):
+    # "marca" y "modelo" quedan afuera del reporte de faltantes: el extractor
+    # siempre trabaja con "marca_modelo" combinado (Sección 30) y nunca llena
+    # esos dos por separado, así que reportarlos como "faltantes" sería ruido.
+    return [c for c in _CAMPOS_RELEVANTES_PARA_COMPLETITUD if _vacio(vehiculo.get(c))]
+
+
+def _fusionar_flota(estado_flota, datos_generales_nuevos, vehiculos_nuevos):
+    """Aplica la Sección 21/22/23: completa datos generales, y para cada
+    vehículo nuevo busca coincidencia por patente/chasis antes de decidir
+    si actualiza uno existente o agrega uno nuevo con el próximo ITEM."""
+    datos_generales = estado_flota.setdefault("datos_generales", {})
+    for campo, valor in (datos_generales_nuevos or {}).items():
+        valor = str(valor or "").strip()
+        if valor and _vacio(datos_generales.get(campo)):
+            datos_generales[campo] = valor
+
+    vehiculos = estado_flota.setdefault("vehiculos", [])
+    tocados = set()
+    for nuevo in vehiculos_nuevos or []:
+        nuevo = {campo: str(nuevo.get(campo, "") or "").strip() for campo in CAMPOS_VEHICULO}
+        if not any(nuevo.values()):
+            continue
+        coincidencia = next((v for v in vehiculos if _mismo_vehiculo(v, nuevo)), None)
+        if coincidencia is not None:
+            _fusionar_campos_vehiculo(coincidencia, nuevo)
+            tocados.add(coincidencia["item"])
+        else:
+            item = (max((v["item"] for v in vehiculos), default=0)) + 1
+            registro = _vehiculo_nuevo_vacio(item)
+            _fusionar_campos_vehiculo(registro, nuevo)
+            vehiculos.append(registro)
+            tocados.add(item)
+    return tocados
+
+
+_PATRON_ACTUALIZACION_ETIQUETADA = re.compile(
+    r"\b(?:la\s+)?(patente|dominio|chapa|chasis|motor|suma\s+asegurada|suma|"
+    r"cobertura|a[ñn]o|uso)\s+(?:del|de(?:l)?\s+veh[íi]culo)\s+(\d{1,3})\s+"
+    r"(?:es|son|queda|qued[oó])\s*:?\s*(.+?)(?:[.;]|$|\by\b)",
+    re.IGNORECASE,
+)
+
+_PATRON_ACTUALIZACION_POR_ITEM = re.compile(
+    r"\b(?:el|al|vehiculo|veh[íi]culo|unidad)\s*(?:n[úu]mero)?\s*(\d{1,3})\b\s*"
+    r"(?:es|son|tiene|tambi[ée]n|queda|qued[oó])?\s*[:\-]?\s*"
+    r"(.*?)(?=(?:\s*(?:,|\by\b)\s*(?:el|al|vehiculo|veh[íi]culo|unidad)\s*\d)|[.;]|$)",
+    re.IGNORECASE,
+)
+
+
+def _campo_por_etiqueta(etiqueta):
+    etiqueta = etiqueta.lower().strip()
+    for campo, alias in _ETIQUETAS_CAMPO_NATURAL.items():
+        if etiqueta in alias:
+            return campo
+    return None
+
+
+def _adivinar_campo_por_valor(valor):
+    valor = valor.strip()
+    if re.fullmatch(r"[A-Z]{1,2}\s?-?\s?\d{1,3}", valor, re.IGNORECASE):
+        return "cobertura"
+    if re.fullmatch(r"[A-Z]{2,3}\s?\d{3}\s?[A-Z]{0,2}", valor, re.IGNORECASE):
+        return "patente"
+    if re.fullmatch(r"\d{4}", valor):
+        return "año"
+    return None
+
+
+def _extraer_campo_explicito(resto):
+    """Si el texto empieza nombrando el campo ('cobertura C3', 'patente
+    AB123CD'), lo separa del valor en vez de guardar la etiqueta pegada al
+    dato (evita guardar 'cobertura C3' como si fuera el valor)."""
+    m = re.match(
+        r"^(patente|dominio|chapa|chasis|motor|suma\s+asegurada|suma|cobertura|a[ñn]o|uso)\s*[:\-]?\s*(.+)$",
+        resto,
+        re.IGNORECASE,
+    )
+    if not m:
+        return None, resto
+    campo = _campo_por_etiqueta(m.group(1))
+    return campo, m.group(2).strip()
+
+
+def _detectar_actualizaciones_naturales(mensaje):
+    """Lee frases como 'el 7 tiene C3', 'la patente del 8 es AB123CD' o
+    'el 4 es C3 y el 18 también' y devuelve una lista de
+    {item, campo, valor}. No inventa: si no puede determinar el campo con
+    confianza, descarta esa coincidencia en vez de adivinar mal (Sección 16)."""
+    actualizaciones = []
+    ultimo_valor = None
+    ultimo_campo = None
+
+    for m in _PATRON_ACTUALIZACION_ETIQUETADA.finditer(mensaje):
+        etiqueta, item, valor = m.group(1), int(m.group(2)), m.group(3).strip(" .")
+        campo = _campo_por_etiqueta(etiqueta)
+        if campo and valor:
+            actualizaciones.append({"item": item, "campo": campo, "valor": valor})
+
+    if actualizaciones:
+        return actualizaciones
+
+    for m in _PATRON_ACTUALIZACION_POR_ITEM.finditer(mensaje):
+        item = int(m.group(1))
+        resto = (m.group(2) or "").strip(" .:-")
+        if not resto or resto.lower() in {"tambien", "también"}:
+            if ultimo_valor and ultimo_campo:
+                actualizaciones.append({"item": item, "campo": ultimo_campo, "valor": ultimo_valor})
+            continue
+        campo_explicito, valor_sin_etiqueta = _extraer_campo_explicito(resto)
+        if campo_explicito:
+            campo, valor = campo_explicito, valor_sin_etiqueta
+        else:
+            campo, valor = (_adivinar_campo_por_valor(resto) or "cobertura"), resto
+        actualizaciones.append({"item": item, "campo": campo, "valor": valor})
+        ultimo_valor, ultimo_campo = valor, campo
+
+    return actualizaciones
+
+
+def _aplicar_actualizaciones_naturales(estado_flota, mensaje):
+    actualizaciones = _detectar_actualizaciones_naturales(mensaje)
+    if not actualizaciones:
+        return set()
+    vehiculos = estado_flota.setdefault("vehiculos", [])
+    por_item = {v["item"]: v for v in vehiculos}
+    tocados = set()
+    for cambio in actualizaciones:
+        vehiculo = por_item.get(cambio["item"])
+        if vehiculo is None:
+            continue
+        vehiculo[cambio["campo"]] = cambio["valor"]
+        tocados.add(cambio["item"])
+    return tocados
+
+
+def _campos_flota_a_datos_generales(campos_flota):
+    """interpretar_flota_a_json ya adjunta asegurado/domicilio/localidad/cp
+    a cada vehículo; acá los desprendemos para que vivan una sola vez a
+    nivel flota (Sección 8), no repetidos por vehículo."""
+    vehiculos = campos_flota.get("vehiculos") or []
+    datos_generales = {}
+    if vehiculos:
+        primero = vehiculos[0]
+        for campo in ("asegurado", "domicilio", "localidad", "cp"):
+            if primero.get(campo):
+                datos_generales[campo] = primero[campo]
+    return datos_generales
+
+
+def _guardar_vehiculos_pendientes_excel(libro_id, vehiculos, items_a_intentar):
+    """Guarda (si es nuevo) o actualiza (si ya tenía fila) cada vehículo
+    tocado, en una sola lectura/escritura del Excel. Si falla uno, el resto
+    no se pierde (Sección 37/38) — se informa aparte."""
+    if not items_a_intentar:
+        return [], []
+
+    por_item = {v["item"]: v for v in vehiculos}
+    guardados, con_error = [], []
+    try:
+        datos = leer_excel_interno(libro_id)
+        filas = list(datos.get("filas") or [])
+        hoja_actual = datos.get("hoja", "Datos")
+        if not filas:
+            for item in items_a_intentar:
+                con_error.append((item, "El Excel interno no tiene encabezados."))
+            return guardados, con_error
+
+        encabezados = filas[0]
+        cantidad_columnas = max(len(encabezados), 1)
+        indices = {
+            _normalizar_encabezado(encabezado): i
+            for i, encabezado in enumerate(encabezados)
+            if _normalizar_encabezado(encabezado)
+        }
+
+        for item in items_a_intentar:
+            vehiculo = por_item.get(item)
+            if vehiculo is None or not _vehiculo_guardable(vehiculo):
+                continue
+            try:
+                fila_construida = _construir_fila_excel(vehiculo, indices, cantidad_columnas, libro_id)
+            except ValueError as error:
+                con_error.append((item, str(error)))
+                continue
+
+            if vehiculo.get("fila_excel") is not None and vehiculo["fila_excel"] < len(filas):
+                filas[vehiculo["fila_excel"]] = fila_construida
+            else:
+                vehiculo["fila_excel"] = len(filas)
+                filas.append(fila_construida)
+            guardados.append(item)
+
+        if guardados:
+            guardar_matriz_excel(filas, hoja_actual, libro_id=libro_id)
+    except Exception as error:
+        print("ERROR GUARDANDO VEHÍCULOS DE FLOTA:", error)
+        for item in items_a_intentar:
+            if item not in guardados:
+                con_error.append((item, "error interno al guardar"))
+
+    return guardados, con_error
+
+
+def _resumen_estado_flota(estado_flota, guardados_ahora, con_error, es_primera_vez):
+    vehiculos = estado_flota.get("vehiculos") or []
+    datos_generales = estado_flota.get("datos_generales") or {}
+    total = len(vehiculos)
+    guardados_total = sum(1 for v in vehiculos if v.get("fila_excel") is not None)
+    pendientes = [v for v in vehiculos if _campos_pendientes_vehiculo(v) and v.get("fila_excel") is not None]
+
+    partes = []
+    encabezado_datos = ", ".join(
+        f"{k}: {v}" for k, v in datos_generales.items() if v
+    )
+    if es_primera_vez and encabezado_datos:
+        partes.append(f"Flota iniciada ({encabezado_datos}).")
+
+    if guardados_ahora:
+        if es_primera_vez:
+            partes.append(
+                f"Detecté {total} vehículo(s). Guardé {len(guardados_ahora)} en el Excel de flotas."
+            )
+        else:
+            partes.append(f"Actualicé/guardé {len(guardados_ahora)} vehículo(s) más (total en flota: {total}).")
+    elif total and es_primera_vez:
+        partes.append(f"Detecté {total} vehículo(s), pero ninguno tiene todavía datos suficientes para guardar.")
+
+    if con_error:
+        items = ", ".join(str(i) for i, _ in con_error)
+        partes.append(f"El/los vehículo(s) {items} quedaron pendientes por un error puntual; el resto no se vio afectado.")
+
+    if pendientes:
+        detalle = "; ".join(
+            f"#{v['item']} falta {', '.join(_campos_pendientes_vehiculo(v))}"
+            for v in pendientes[:6]
+        )
+        extra = "" if len(pendientes) <= 6 else f" y {len(pendientes) - 6} más"
+        partes.append(f"Quedan {len(pendientes)} con datos incompletos ({detalle}{extra}). Pasámelos cuando los tengas.")
+
+    if not partes:
+        partes.append(
+            "Flota iniciada. Pasame los datos generales de la póliza y/o los vehículos "
+            "(podés mandarlos todos juntos, en tandas, o uno por uno)."
+        )
+
+    partes.append(f"Guardados en total: {guardados_total}/{total}.")
+    return " ".join(partes)
+
+
+def _flota_procesar_turno(chat_id, mensaje, contexto_pdf_adjunto):
+    """Punto central del flujo /flota persistente. Devuelve (respuesta, True)
+    si el mensaje fue absorbido por la tarea de flota, o (None, False) si no
+    tiene nada que ver y debe seguir el flujo normal (Gemini / otros comandos)."""
+
+    es_comando_flota = bool(re.match(r"^/flota\b", mensaje, re.IGNORECASE))
+    estado_flota = _flota_obtener(chat_id)
+    es_primera_vez = estado_flota is None
+
+    if not es_comando_flota and estado_flota is None:
+        return None, False
+
+    if not es_comando_flota and estado_flota is not None and estado_flota.get("estado") == "completada":
+        return None, False
+
+    if es_comando_flota:
+        texto_flota = re.sub(r"^/flota\s*", "", mensaje, count=1, flags=re.IGNORECASE).strip()
+    else:
+        texto_flota = mensaje.strip()
+
+    if re.match(r"^(termin(a|ar|amos|é)|listo|finaliza(r)?|cerrar\s+flota|flota\s+completa)\b", texto_flota, re.IGNORECASE) and estado_flota:
+        vehiculos = estado_flota.get("vehiculos") or []
+        guardados_total = sum(1 for v in vehiculos if v.get("fila_excel") is not None)
+        _flota_guardar(chat_id, "completada", estado_flota.get("libro_id", "2"), estado_flota.get("datos_generales", {}), vehiculos)
+        return (
+            f"Flota cerrada. Quedaron {guardados_total}/{len(vehiculos)} vehículos guardados en el Excel. "
+            "Si aparece más información después, escribí /flota de nuevo y la sumo.",
+            True,
+        )
+
+    if estado_flota is None:
+        estado_flota = {"estado": "nueva", "libro_id": "2", "datos_generales": {}, "vehiculos": []}
+
+    fuente = texto_flota
+    if contexto_pdf_adjunto:
+        fuente = f"{texto_flota}\n\n{contexto_pdf_adjunto}".strip() if texto_flota else contexto_pdf_adjunto
+
+    tocados = set()
+
+    # Las correcciones/updates cortos en lenguaje natural ("el 7 es C3") se
+    # intentan primero y son baratos (regex, sin llamar a nada externo). El
+    # parser de "volcado de vehículos" (interpretar_flota_a_json, que puede
+    # caer a Gemini si el texto no trae etiquetas explícitas) sólo se invoca
+    # cuando el mensaje realmente parece traer datos de póliza/vehículos, no
+    # en cada corrección puntual — para no gastar una llamada a Gemini de
+    # más ni arriesgarse a que reinterprete mal una frase corta.
+    if not es_comando_flota:
+        tocados |= _aplicar_actualizaciones_naturales(estado_flota, mensaje)
+
+    parece_volcado_vehiculos = (
+        es_comando_flota
+        or bool(contexto_pdf_adjunto)
+        or re.search(r"DESCRIPCI[ÓO]N\s+DEL\s+VEH[ÍI]CULO", fuente, re.IGNORECASE)
+        or len(fuente) > 200
+    )
+
+    if fuente and not tocados and parece_volcado_vehiculos:
+        try:
+            campos_flota = interpretar_flota_a_json(fuente)
+            vehiculos_nuevos = campos_flota.get("vehiculos") or []
+        except Exception as error:
+            print("ERROR PROCESANDO /FLOTA:", error)
+            vehiculos_nuevos = []
+        if vehiculos_nuevos:
+            datos_generales_nuevos = _campos_flota_a_datos_generales(campos_flota)
+            tocados |= _fusionar_flota(estado_flota, datos_generales_nuevos, vehiculos_nuevos)
+
+    if not tocados and not fuente and es_comando_flota:
+        # "/flota" pelado: si es la primera vez, arrancamos la tarea. Si ya
+        # había una flota activa, sólo informamos el estado (Sección 40).
+        estado_flota["estado"] = estado_flota.get("estado") or "nueva"
+        _flota_guardar(chat_id, estado_flota["estado"], estado_flota.get("libro_id", "2"), estado_flota["datos_generales"], estado_flota["vehiculos"])
+        if es_primera_vez:
+            return (
+                "Entendido, arranco una flota nueva. Pasame los datos generales de la póliza "
+                "(asegurado, número de póliza, compañía, etc.) y los vehículos — en el orden y de "
+                "a la cantidad que te resulte más cómoda.",
+                True,
+            )
+        return _resumen_estado_flota(estado_flota, [], [], es_primera_vez=False), True
+
+    if not tocados and not es_comando_flota:
+        # No era ni un dato de flota ni una actualización reconocible:
+        # dejamos pasar el mensaje al flujo normal (puede ser una pregunta
+        # sin relación, Sección 27).
+        return None, False
+
+    guardados_ahora, con_error = _guardar_vehiculos_pendientes_excel(
+        estado_flota.get("libro_id", "2"), estado_flota["vehiculos"], tocados
+    )
+
+    estado_flota["estado"] = "en_progreso" if estado_flota["vehiculos"] else "nueva"
+    _flota_guardar(
+        chat_id,
+        estado_flota["estado"],
+        estado_flota.get("libro_id", "2"),
+        estado_flota["datos_generales"],
+        estado_flota["vehiculos"],
+    )
+
+    respuesta = _resumen_estado_flota(estado_flota, guardados_ahora, con_error, es_primera_vez)
+    return respuesta, True
 
 
 def _parsear_comando_guardar_asegurado(mensaje):
@@ -1921,7 +3068,7 @@ def _parsear_comando_guardar_asegurado(mensaje):
 
     Formato principal:
       /guardar asegurado (asegurado) (numero) (vehiculo) (patente) (cia)
-      (medio de pago) (cp) (mail)
+      (medio de pago) (cp) (mail) [1|2]
 
     También acepta los mismos campos separados por comas. ENVIOS YA no forma
     parte del comando corto; puede completarse luego en la propuesta.
@@ -1943,6 +3090,12 @@ def _parsear_comando_guardar_asegurado(mensaje):
         "MAIL",
     )
 
+    libro_id = "1"
+    sufijo = re.search(r"(?:,\s*|\s+)([12])\s*$", resto)
+    if sufijo:
+        libro_id = sufijo.group(1)
+        resto = resto[:sufijo.start()].rstrip(" ,")
+
     valores = re.findall(r"\(([^)]*)\)", resto)
     if valores:
         if len(valores) > len(campos):
@@ -1953,8 +3106,6 @@ def _parsear_comando_guardar_asegurado(mensaje):
         if len(valores) > len(campos):
             return {"error": "El comando tiene más campos de los esperados."}
     else:
-        # Sin delimitadores no se puede distinguir de forma segura un nombre
-        # con espacios de un vehículo u otro campo.
         return {
             "error": (
                 "Usá el formato /guardar asegurado (asegurado) (numero) "
@@ -1967,8 +3118,6 @@ def _parsear_comando_guardar_asegurado(mensaje):
         for i, campo in enumerate(campos)
     }
 
-    # La plantilla puede enviarse accidentalmente sin reemplazar los textos
-    # entre paréntesis. Esos valores no cuentan como datos reales.
     placeholders = {
         "ASEGURADO": "asegurado",
         "NUMERO": "numero",
@@ -1987,6 +3136,7 @@ def _parsear_comando_guardar_asegurado(mensaje):
 
     return {
         "propuesta": propuesta,
+        "libro_id": libro_id,
         "valida": bool(propuesta["ASEGURADO"] and (
             propuesta["NUMERO"] or propuesta["PATENTE"]
         )),
@@ -2051,11 +3201,53 @@ def _formatear_metadatos_para_contexto(resultado):
     return "\n".join(partes)
 
 
+def _mensaje_error_chat(error):
+    """Clasifica errores escapados del chat sin modificar su causa ni el logging."""
+    texto = f"{type(error).__module__} {type(error).__name__} {error}".lower()
+
+    indicadores_ia = (
+        "gemini", "google.genai", "genai", "resource_exhausted",
+        "quota", "api key", "apikey", "model", "generate_content",
+    )
+    if any(indicador in texto for indicador in indicadores_ia):
+        return (
+            "No pude procesar la consulta con el servicio de IA en este momento. "
+            "Intentá nuevamente en unos segundos."
+        )
+
+    indicadores_metadatos = (
+        "metadato", "metadata", "buscar_en_metadatos", "_cargar_metadatos",
+    )
+    if any(indicador in texto for indicador in indicadores_metadatos):
+        return (
+            "No pude completar la búsqueda de información en este momento. "
+            "Intentá nuevamente."
+        )
+
+    return (
+        "Ocurrió un problema al procesar la consulta. Intentá nuevamente. "
+        "Si el problema continúa, avisá al administrador."
+    )
+
+
+def _envolver_chat_con_manejo_de_errores(func):
+    """Evita que una excepción no clasificada del chat termine en un 500 genérico."""
+    @wraps(func)
+    def wrapper(*args, **kwargs):
+        try:
+            return func(*args, **kwargs)
+        except Exception as error:
+            print("ERROR CHAT NO CONTROLADO:", error)
+            return jsonify({"ok": False, "error": _mensaje_error_chat(error)}), 500
+    return wrapper
+
+
 @app.route(
     "/api/chat",
     methods=["POST"]
 )
 @requiere_login
+@_envolver_chat_con_manejo_de_errores
 def chat():
 
     # El chat acepta JSON para consultas normales y multipart/form-data
@@ -2082,21 +3274,21 @@ def chat():
     if not data and not archivo_pdf:
         return jsonify({"respuesta": "No recibí ningún mensaje."})
 
+    # El libro de un /guardar asegurado queda pendiente sólo para su confirmación
+    # inmediata; cualquier nuevo mensaje de chat invalida ese destino para no
+    # arrastrarlo accidentalmente a otra propuesta.
+    session.pop("guardar_asegurado_libro_id", None)
+
     try:
         chat_id = int(chat_id) if chat_id else None
     except (TypeError, ValueError):
         chat_id = None
 
-    with closing(conectar_db()) as db:
-        if chat_id:
-            valido = db.execute("SELECT id FROM conversaciones WHERE id=? AND usuario=?",(chat_id,session["usuario"])).fetchone()
-            if not valido:
-                chat_id = None
-        if not chat_id:
-            titulo = " ".join(mensaje.split())[:58] or "Nueva conversación"
-            cur=db.execute("INSERT INTO conversaciones (usuario,titulo) VALUES (?,?)",(session["usuario"],titulo))
-            chat_id=cur.lastrowid
-            db.commit()
+    if chat_id and not _validar_chat(chat_id, session["usuario"]):
+        chat_id = None
+    if not chat_id:
+        titulo = " ".join(mensaje.split())[:58] or "Nueva conversación"
+        chat_id = _crear_conversacion(session["usuario"], titulo)
 
     if not isinstance(historial, list):
         historial = []
@@ -2194,13 +3386,10 @@ def chat():
                 "Escribime una consulta."
         })
 
-    with closing(conectar_db()) as db:
-        mensaje_guardado = mensaje
-        if nombre_pdf_adjunto:
-            mensaje_guardado = f"[PDF adjunto: {nombre_pdf_adjunto}]\n{mensaje}"
-        db.execute("INSERT INTO mensajes (conversacion_id,rol,contenido) VALUES (?,?,?)",(chat_id,"user",mensaje_guardado))
-        db.execute("UPDATE conversaciones SET actualizado_en=CURRENT_TIMESTAMP WHERE id=?",(chat_id,))
-        db.commit()
+    mensaje_guardado = mensaje
+    if nombre_pdf_adjunto:
+        mensaje_guardado = f"[PDF adjunto: {nombre_pdf_adjunto}]\n{mensaje}"
+    _guardar_mensaje(chat_id, "user", mensaje_guardado)
 
     # ======================================================
     # COMANDO /COTI — RESOLUCIÓN LOCAL Y DETERMINÍSTICA
@@ -2209,19 +3398,33 @@ def chat():
     # parser viven en coti.py para que puedan ampliarse sin tocar /api/chat.
     respuesta_coti = procesar_comando_coti(mensaje)
     if respuesta_coti is not None:
-        with closing(conectar_db()) as db:
-            db.execute(
-                "INSERT INTO mensajes (conversacion_id,rol,contenido) VALUES (?,?,?)",
-                (chat_id, "assistant", str(respuesta_coti))
-            )
-            db.execute(
-                "UPDATE conversaciones SET actualizado_en=CURRENT_TIMESTAMP WHERE id=?",
-                (chat_id,)
-            )
-            db.commit()
+        _guardar_mensaje(chat_id, "assistant", str(respuesta_coti))
 
         return jsonify({
             "respuesta": respuesta_coti,
+            "chat_id": chat_id,
+            "archivo_adjunto": nombre_pdf_adjunto or None,
+            "propuesta_excel": None,
+            "propuesta_metadato": None,
+        })
+
+    # ======================================================
+    # COMANDO /FLOTA — TAREA CONVERSACIONAL PERSISTENTE
+    # ======================================================
+    # A diferencia de /coti y /guardar asegurado, /flota no se resuelve en
+    # un solo turno: el contexto (datos generales + vehículos, guardados o
+    # pendientes) vive en `flotas_activas` atado a chat_id, así que TODOS
+    # los mensajes de esta conversación pasan por acá primero — no sólo los
+    # que empiezan con "/flota" — para poder reconocer continuaciones
+    # ("vehículos 11-20"), correcciones ("el 7 es C3") y el cierre de la
+    # tarea sin que el usuario tenga que repetir el comando cada vez.
+    respuesta_flota, atendido_por_flota = _flota_procesar_turno(
+        chat_id, mensaje, contexto_pdf_adjunto
+    )
+    if atendido_por_flota:
+        _guardar_mensaje(chat_id, "assistant", str(respuesta_flota))
+        return jsonify({
+            "respuesta": respuesta_flota,
             "chat_id": chat_id,
             "archivo_adjunto": nombre_pdf_adjunto or None,
             "propuesta_excel": None,
@@ -2236,22 +3439,25 @@ def chat():
             respuesta = propuesta_comando["error"]
             propuesta_excel = None
         else:
+            libro_id = str(propuesta_comando.get("libro_id") or "1")
+            libro = LIBROS_EXCEL[libro_id]
+            session["guardar_asegurado_libro_id"] = libro_id
             respuesta = (
-                "Preparé el registro con el orden fijo del comando. "
-                "Revisá los campos y confirmá antes de guardarlo."
+                f"Voy a guardar este asegurado en Excel {libro_id} ({libro['nombre']}):\n\n"
+                f"ASEGURADO: {propuesta_comando['propuesta'].get('ASEGURADO', '')}\n"
+                f"NUMERO: {propuesta_comando['propuesta'].get('NUMERO', '')}\n"
+                f"VEHICULO: {propuesta_comando['propuesta'].get('VEHICULO', '')}\n"
+                f"PATENTE: {propuesta_comando['propuesta'].get('PATENTE', '')}\n"
+                f"CIA: {propuesta_comando['propuesta'].get('CIA', '')}\n"
+                f"MEDIO DE PAGO: {propuesta_comando['propuesta'].get('MEDIO DE PAGO', '')}\n"
+                f"CP: {propuesta_comando['propuesta'].get('CP', '')}\n"
+                f"MAIL: {propuesta_comando['propuesta'].get('MAIL', '')}\n\n"
+                "¿Confirmás?"
             )
             propuesta_excel = propuesta_comando.get("propuesta")
+            propuesta_excel["LIBRO_ID"] = libro_id
 
-        with closing(conectar_db()) as db:
-            db.execute(
-                "INSERT INTO mensajes (conversacion_id,rol,contenido) VALUES (?,?,?)",
-                (chat_id, "assistant", str(respuesta))
-            )
-            db.execute(
-                "UPDATE conversaciones SET actualizado_en=CURRENT_TIMESTAMP WHERE id=?",
-                (chat_id,)
-            )
-            db.commit()
+        _guardar_mensaje(chat_id, "assistant", str(respuesta))
 
         return jsonify({
             "respuesta": respuesta,
@@ -2268,21 +3474,30 @@ def chat():
     # para que el modelo no tenga que decidir si necesita consultarlos.
     # La tool buscar_en_metadatos sigue disponible para búsquedas adicionales.
     contexto = contexto_pdf_adjunto
+    error_pre_routing_metadatos = False
 
     if _consulta_requiere_metadatos(mensaje):
         try:
             resultado_metadatos = buscar_en_metadatos(mensaje)
-            contexto_metadatos = _formatear_metadatos_para_contexto(resultado_metadatos)
-            if contexto_metadatos:
-                contexto += contexto_metadatos
+            if isinstance(resultado_metadatos, dict) and resultado_metadatos.get("error"):
+                error_pre_routing_metadatos = True
                 print(
-                    "PRE-ROUTING METADATOS: resultados=%s consulta=%r"
-                    % (resultado_metadatos.get("cantidad", 0), mensaje)
+                    "ERROR PRE-ROUTING METADATOS: %s consulta=%r"
+                    % (resultado_metadatos.get("error"), mensaje)
                 )
             else:
-                print("PRE-ROUTING METADATOS: sin resultados consulta=%r" % mensaje)
+                contexto_metadatos = _formatear_metadatos_para_contexto(resultado_metadatos)
+                if contexto_metadatos:
+                    contexto += contexto_metadatos
+                    print(
+                        "PRE-ROUTING METADATOS: resultados=%s consulta=%r"
+                        % (resultado_metadatos.get("cantidad", 0), mensaje)
+                    )
+                else:
+                    print("PRE-ROUTING METADATOS: sin resultados consulta=%r" % mensaje)
         except Exception as error:
-            # No romper el chat si falla la precarga; Gemini conserva sus tools.
+            error_pre_routing_metadatos = True
+            # No se elimina el detalle técnico del log; el usuario recibe un mensaje controlado.
             print("ERROR PRE-ROUTING METADATOS:", error)
 
     # ======================================================
@@ -2316,7 +3531,12 @@ def chat():
             error
         )
 
-        if contexto:
+        if error_pre_routing_metadatos:
+            respuesta = (
+                "No pude completar la búsqueda de información en este momento. "
+                "Intentá nuevamente."
+            )
+        elif contexto:
 
             respuesta = (
                 "Encontré información "
@@ -2327,15 +3547,14 @@ def chat():
         else:
 
             respuesta = (
-                "No encontré información "
-                "relacionada en los documentos "
-                "ni en el Excel interno."
+                "No encontré información suficiente sobre ese punto en las fuentes "
+                "disponibles actualmente. Puede que todavía no tengamos esa información "
+                "cargada en los metadatos. Si querés, podemos revisar la documentación "
+                "correspondiente o cargar esa información para que OfIA pueda utilizarla "
+                "en futuras consultas."
             )
 
-    with closing(conectar_db()) as db:
-        db.execute("INSERT INTO mensajes (conversacion_id,rol,contenido) VALUES (?,?,?)",(chat_id,"assistant",str(respuesta)))
-        db.execute("UPDATE conversaciones SET actualizado_en=CURRENT_TIMESTAMP WHERE id=?",(chat_id,))
-        db.commit()
+    _guardar_mensaje(chat_id, "assistant", str(respuesta))
 
     return jsonify({
         "respuesta": respuesta,
@@ -2360,11 +3579,20 @@ def manuales():
 @app.route("/biblioteca")
 @requiere_login
 def biblioteca():
-    polizas = sorted(
-        [{"archivo":p.name, "nombre":p.name, "fecha":__import__("datetime").datetime.fromtimestamp(p.stat().st_mtime).strftime("%d/%m/%Y %H:%M"),
-          "tamaño":round(p.stat().st_size/1024,1)} for p in POLIZAS_DIR.glob("*.pdf") if p.is_file()],
-        key=lambda x:x["fecha"], reverse=True
-    )
+    try:
+        filas = pg_listar_polizas()
+        polizas = [
+            {
+                "archivo": f["r2_key"],
+                "nombre": f["nombre"],
+                "fecha": f["fecha_subida"].strftime("%d/%m/%Y %H:%M") if f.get("fecha_subida") else "",
+                "tamaño": round((f.get("tamaño") or 0) / 1024, 1),
+            }
+            for f in filas
+        ]
+    except Exception as error:
+        print("ERROR LISTANDO POLIZAS:", error)
+        polizas = []
     return render_template("biblioteca.html", manuales=manuales_companias(), polizas=polizas,
                            usuario=session["usuario"], usuario_rol=session.get("rol","usuario"),
                            usuario_es_admin=usuario_es_admin())
@@ -2378,42 +3606,123 @@ def subir_poliza():
     nombre=secure_filename(Path(archivo.filename).name)
     if not nombre.lower().endswith(".pdf"):
         return jsonify(ok=False,error="El archivo debe ser un PDF."),400
-    destino=POLIZAS_DIR/nombre
-    if destino.exists():
-        stem=destino.stem; suf=destino.suffix; n=2
-        while destino.exists():
-            destino=POLIZAS_DIR/f"{stem}_{n}{suf}"; n+=1
-    temporal=POLIZAS_DIR/f".upload_{__import__('time').time_ns()}.tmp"
+
     try:
-        archivo.save(temporal)
-        if temporal.read_bytes()[:5] != b"%PDF-": raise ValueError("El archivo no parece ser un PDF válido.")
-        documento = fitz.open(str(temporal))
-        documento.close()
-        temporal.replace(destino)
-        return jsonify(ok=True,archivo=destino.name)
-    except ValueError as e:
-        temporal.unlink(missing_ok=True); return jsonify(ok=False,error=str(e)),400
+        archivo.stream.seek(0, os.SEEK_END)
+        tamaño = archivo.stream.tell()
+        archivo.stream.seek(0)
     except Exception:
-        temporal.unlink(missing_ok=True); return jsonify(ok=False,error="No se pudo guardar la póliza."),500
+        return jsonify(ok=False,error="No se pudo leer el archivo."),400
+
+    if tamaño <= 0:
+        return jsonify(ok=False,error="El PDF está vacío."),400
+    if tamaño > MAX_PDF_FILE_SIZE_BYTES:
+        return jsonify(ok=False,error=f"El PDF es demasiado grande. El máximo permitido es {MAX_PDF_FILE_SIZE_BYTES // (1024*1024)} MB."),413
+
+    try:
+        cabecera = archivo.stream.read(5)
+        archivo.stream.seek(0)
+        if cabecera != b"%PDF-":
+            return jsonify(ok=False,error="El archivo no parece ser un PDF válido."),400
+        datos_validacion = archivo.stream.read()
+        archivo.stream.seek(0)
+        documento = fitz.open(stream=datos_validacion, filetype="pdf")
+        documento.close()
+        del datos_validacion
+    except Exception:
+        return jsonify(ok=False,error="No se pudo leer el PDF. Verificá que no esté dañado."),400
+
+    import uuid
+    r2_key = f"polizas/{uuid.uuid4().hex}__{nombre}"
+
+    try:
+        r2_subir_pdf(archivo.stream, r2_key, tamaño)
+    except Exception as error:
+        print("ERROR SUBIENDO POLIZA A R2:", error)
+        return jsonify(ok=False,error="No se pudo guardar la póliza en Cloudflare R2."),502
+
+    try:
+        registrar_poliza(nombre, r2_key, tamaño)
+    except Exception as error:
+        print("ERROR REGISTRANDO POLIZA EN NEON:", error)
+        try:
+            r2_eliminar_pdf(r2_key)
+        except Exception as rollback_error:
+            print("ERROR ROLLBACK R2 POLIZA:", rollback_error)
+        return jsonify(ok=False,error="La póliza se subió a R2 pero no pudo registrarse en PostgreSQL. La operación no se completó."),502
+
+    return jsonify(ok=True,archivo=r2_key,nombre=nombre)
 
 @app.route("/api/polizas/<path:nombre>", methods=["DELETE"])
 @requiere_admin
 def eliminar_poliza(nombre):
-    archivo=(POLIZAS_DIR/Path(nombre).name).resolve()
-    base=POLIZAS_DIR.resolve()
-    if base not in archivo.parents or not archivo.exists() or archivo.suffix.lower()!=".pdf":
+    r2_key = str(nombre or "").strip()
+    if not r2_key.startswith("polizas/") or not r2_key.lower().endswith(".pdf"):
         return jsonify(ok=False,error="Póliza no encontrada."),404
-    archivo.unlink()
+
+    existente = obtener_poliza_por_r2_key(r2_key)
+    if not existente:
+        return jsonify(ok=False,error="Póliza no encontrada."),404
+
+    try:
+        eliminado = eliminar_poliza_pg(r2_key)
+        if not eliminado:
+            return jsonify(ok=False,error="Póliza no encontrada."),404
+    except Exception as error:
+        print("ERROR ELIMINANDO POLIZA DE NEON:", error)
+        return jsonify(ok=False,error="No se pudo actualizar PostgreSQL. La póliza no fue eliminada."),502
+
+    try:
+        r2_eliminar_pdf(r2_key)
+    except Exception as error:
+        print("ERROR ELIMINANDO POLIZA DE R2:", error)
+        try:
+            registrar_poliza(existente["nombre"], existente["r2_key"], existente["tamaño"])
+        except Exception as rollback_error:
+            print("ERROR RESTAURANDO POLIZA EN NEON:", rollback_error)
+        return jsonify(ok=False,error="No se pudo eliminar el PDF de Cloudflare R2. La póliza se mantuvo registrada."),502
+
     return jsonify(ok=True)
 
 @app.route("/polizas/<path:nombre>")
 @requiere_login
 def ver_poliza(nombre):
-    archivo=(POLIZAS_DIR/Path(nombre).name).resolve()
-    base=POLIZAS_DIR.resolve()
-    if base not in archivo.parents or not archivo.exists() or archivo.suffix.lower()!=".pdf":
+    r2_key = str(nombre or "").strip()
+    if not r2_key.startswith("polizas/") or not r2_key.lower().endswith(".pdf"):
         return ("Póliza no encontrada",404)
-    return send_from_directory(POLIZAS_DIR,archivo.name,mimetype="application/pdf",as_attachment=False)
+
+    existente = obtener_poliza_por_r2_key(r2_key)
+    if not existente:
+        return ("Póliza no encontrada",404)
+
+    try:
+        objeto = obtener_objeto_stream(r2_key)
+        body = objeto["Body"]
+        content_length = objeto.get("ContentLength")
+
+        @stream_with_context
+        def generar():
+            try:
+                while True:
+                    bloque = body.read(1024 * 1024)
+                    if not bloque:
+                        break
+                    yield bloque
+            finally:
+                body.close()
+
+        headers = {
+            "Content-Type": "application/pdf",
+            "Content-Disposition": f'inline; filename="{existente["nombre"]}"',
+            "Cache-Control": "private, max-age=300",
+        }
+        if content_length is not None:
+            headers["Content-Length"] = str(content_length)
+
+        return Response(generar(), headers=headers)
+    except Exception as error:
+        print("ERROR SIRVIENDO POLIZA R2:", error)
+        return ("No se pudo abrir la póliza.", 502)
 
 @app.route("/configuracion")
 @requiere_login
@@ -2468,9 +3777,13 @@ def guardar_configuracion():
     config["excel_visible"]=bool(data.get("excel_visible", config.get("excel_visible", True)))
     config.update(colores)
     try:
-        CONFIG_FILE.write_text(json.dumps(config,ensure_ascii=False,indent=2),encoding="utf-8")
+        if _config_usar_pg():
+            pg_guardar_configuracion(config)
+        else:
+            CONFIG_FILE.write_text(json.dumps(config,ensure_ascii=False,indent=2),encoding="utf-8")
         return jsonify(ok=True, config=config)
-    except Exception:
+    except Exception as error:
+        print("ERROR guardar_configuracion:", error)
         return jsonify(ok=False,error="No se pudo guardar la configuración."),500
 
 

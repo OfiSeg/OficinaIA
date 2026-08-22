@@ -1,3 +1,8 @@
+OficinaIA - actualización 2026-08-21 (favicon)
+
+- Se incorporó `static/favicon.png` usando el logo proporcionado.
+- Se agregó la referencia `<link rel="icon">` en `templates/base.html`.
+
 OficinaIA - fixes 2026-08-19 (pasada metadatos + PDFs)
 
 Archivos modificados:

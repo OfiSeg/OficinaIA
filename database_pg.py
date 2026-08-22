@@ -28,6 +28,16 @@ CREATE TABLE IF NOT EXISTS manuales (
 );
 """
 
+CREATE_TABLE_POLIZAS_SQL = """
+CREATE TABLE IF NOT EXISTS polizas (
+    id SERIAL PRIMARY KEY,
+    nombre VARCHAR(255) NOT NULL,
+    r2_key VARCHAR(500) NOT NULL UNIQUE,
+    tamaño BIGINT,
+    fecha_subida TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+"""
+
 CREATE_TABLE_METADATOS_SQL = """
 CREATE TABLE IF NOT EXISTS metadatos (
     id SERIAL PRIMARY KEY,
@@ -47,6 +57,61 @@ CREATE TABLE IF NOT EXISTS usuarios (
     email VARCHAR(255) NOT NULL DEFAULT '',
     rol VARCHAR(30) NOT NULL DEFAULT 'usuario',
     protegido BOOLEAN NOT NULL DEFAULT FALSE
+);
+"""
+
+CREATE_TABLE_CONFIGURACION_SQL = """
+CREATE TABLE IF NOT EXISTS configuracion (
+    id INTEGER PRIMARY KEY DEFAULT 1,
+    datos JSONB NOT NULL DEFAULT '{}'::jsonb,
+    actualizado_en TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    CONSTRAINT configuracion_singleton CHECK (id = 1)
+);
+"""
+
+CREATE_TABLE_DOCUMENTO_INTERNO_SQL = """
+CREATE TABLE IF NOT EXISTS documento_interno (
+    id INTEGER PRIMARY KEY DEFAULT 1,
+    contenido TEXT NOT NULL DEFAULT '',
+    actualizado_en TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    CONSTRAINT documento_interno_singleton CHECK (id = 1)
+);
+"""
+
+CREATE_TABLE_CONVERSACIONES_SQL = """
+CREATE TABLE IF NOT EXISTS conversaciones (
+    id SERIAL PRIMARY KEY,
+    usuario VARCHAR(120) NOT NULL,
+    titulo VARCHAR(200) NOT NULL DEFAULT 'Nueva conversación',
+    creado_en TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    actualizado_en TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+"""
+
+CREATE_TABLE_MENSAJES_SQL = """
+CREATE TABLE IF NOT EXISTS mensajes (
+    id SERIAL PRIMARY KEY,
+    conversacion_id INTEGER NOT NULL REFERENCES conversaciones(id) ON DELETE CASCADE,
+    rol VARCHAR(20) NOT NULL,
+    contenido TEXT NOT NULL,
+    creado_en TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+"""
+
+# Estado de trabajo de una flota en curso, atado a una conversación. Guarda
+# los datos generales de la póliza y la lista completa de vehículos (con sus
+# campos conocidos/pendientes y la fila del Excel donde ya se guardó cada
+# uno, si corresponde) para poder retomar la tarea en cualquier mensaje
+# posterior sin que el usuario tenga que repetir nada.
+CREATE_TABLE_FLOTAS_ACTIVAS_SQL = """
+CREATE TABLE IF NOT EXISTS flotas_activas (
+    conversacion_id INTEGER PRIMARY KEY REFERENCES conversaciones(id) ON DELETE CASCADE,
+    estado VARCHAR(30) NOT NULL DEFAULT 'nueva',
+    libro_id VARCHAR(10) NOT NULL DEFAULT '2',
+    datos_generales JSONB NOT NULL DEFAULT '{}'::jsonb,
+    vehiculos JSONB NOT NULL DEFAULT '[]'::jsonb,
+    creado_en TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    actualizado_en TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
 """
 
@@ -70,8 +135,14 @@ def inicializar_postgres():
     with closing(conectar_pg()) as db:
         with db.cursor() as cursor:
             cursor.execute(CREATE_TABLE_MANUALES_SQL)
+            cursor.execute(CREATE_TABLE_POLIZAS_SQL)
             cursor.execute(CREATE_TABLE_METADATOS_SQL)
             cursor.execute(CREATE_TABLE_USUARIOS_SQL)
+            cursor.execute(CREATE_TABLE_CONFIGURACION_SQL)
+            cursor.execute(CREATE_TABLE_DOCUMENTO_INTERNO_SQL)
+            cursor.execute(CREATE_TABLE_CONVERSACIONES_SQL)
+            cursor.execute(CREATE_TABLE_MENSAJES_SQL)
+            cursor.execute(CREATE_TABLE_FLOTAS_ACTIVAS_SQL)
             cursor.execute(
                 """
                 ALTER TABLE metadatos
@@ -291,6 +362,67 @@ def eliminar_manual(r2_key):
 
 
 # ==========================================================
+# PÓLIZAS (PDFs en R2, metadatos en Neon)
+# ==========================================================
+
+
+def listar_polizas():
+    with closing(conectar_pg()) as db:
+        with db.cursor(cursor_factory=RealDictCursor) as cursor:
+            cursor.execute(
+                """
+                SELECT id, nombre, r2_key, tamaño, fecha_subida
+                FROM polizas
+                ORDER BY fecha_subida DESC, id DESC
+                """
+            )
+            return [dict(fila) for fila in cursor.fetchall()]
+
+
+def obtener_poliza_por_r2_key(r2_key):
+    with closing(conectar_pg()) as db:
+        with db.cursor(cursor_factory=RealDictCursor) as cursor:
+            cursor.execute(
+                """
+                SELECT id, nombre, r2_key, tamaño, fecha_subida
+                FROM polizas
+                WHERE r2_key = %s
+                """,
+                (r2_key,),
+            )
+            fila = cursor.fetchone()
+            return dict(fila) if fila else None
+
+
+def registrar_poliza(nombre, r2_key, tamaño):
+    with closing(conectar_pg()) as db:
+        with db.cursor(cursor_factory=RealDictCursor) as cursor:
+            cursor.execute(
+                """
+                INSERT INTO polizas (nombre, r2_key, tamaño)
+                VALUES (%s, %s, %s)
+                RETURNING id, nombre, r2_key, tamaño, fecha_subida
+                """,
+                (nombre, r2_key, tamaño),
+            )
+            fila = dict(cursor.fetchone())
+        db.commit()
+        return fila
+
+
+def eliminar_poliza(r2_key):
+    with closing(conectar_pg()) as db:
+        with db.cursor() as cursor:
+            cursor.execute(
+                "DELETE FROM polizas WHERE r2_key = %s",
+                (r2_key,),
+            )
+            eliminado = cursor.rowcount > 0
+        db.commit()
+        return eliminado
+
+
+# ==========================================================
 # METADATOS (fichas de texto persistentes)
 # ==========================================================
 
@@ -372,3 +504,230 @@ def eliminar_metadato(metadato_id):
             eliminado = cursor.rowcount > 0
         db.commit()
         return eliminado
+
+
+# ==========================================================
+# CONFIGURACIÓN GLOBAL (fila única, sobrevive a redeploys)
+# ==========================================================
+
+import json as _json
+
+
+def obtener_configuracion():
+    """Devuelve el dict de configuración guardado en Neon, o None si
+    todavía no se guardó nada (primera vez)."""
+    with closing(conectar_pg()) as db:
+        with db.cursor() as cursor:
+            cursor.execute("SELECT datos FROM configuracion WHERE id = 1")
+            fila = cursor.fetchone()
+            if not fila:
+                return None
+            datos = fila[0]
+            # psycopg2 puede devolver JSONB ya parseado (dict) o como texto
+            # según la versión; cubrimos ambos casos.
+            if isinstance(datos, str):
+                try:
+                    datos = _json.loads(datos)
+                except Exception:
+                    return None
+            return datos if isinstance(datos, dict) else None
+
+
+def guardar_configuracion(config: dict):
+    with closing(conectar_pg()) as db:
+        with db.cursor() as cursor:
+            cursor.execute(
+                """
+                INSERT INTO configuracion (id, datos, actualizado_en)
+                VALUES (1, %s, CURRENT_TIMESTAMP)
+                ON CONFLICT (id) DO UPDATE
+                SET datos = EXCLUDED.datos, actualizado_en = CURRENT_TIMESTAMP
+                """,
+                (_json.dumps(config, ensure_ascii=False),),
+            )
+        db.commit()
+    return config
+
+
+# ==========================================================
+# DOCUMENTO INTERNO (Word en texto plano, fila única en Neon)
+# ==========================================================
+
+
+def obtener_documento_interno():
+    """Devuelve el texto guardado, o None si nunca se guardó nada."""
+    with closing(conectar_pg()) as db:
+        with db.cursor() as cursor:
+            cursor.execute("SELECT contenido FROM documento_interno WHERE id = 1")
+            fila = cursor.fetchone()
+            return fila[0] if fila else None
+
+
+def guardar_documento_interno(contenido: str):
+    with closing(conectar_pg()) as db:
+        with db.cursor() as cursor:
+            cursor.execute(
+                """
+                INSERT INTO documento_interno (id, contenido, actualizado_en)
+                VALUES (1, %s, CURRENT_TIMESTAMP)
+                ON CONFLICT (id) DO UPDATE
+                SET contenido = EXCLUDED.contenido, actualizado_en = CURRENT_TIMESTAMP
+                """,
+                (contenido or "",),
+            )
+        db.commit()
+
+
+# ==========================================================
+# CONVERSACIONES Y MENSAJES (chats persistentes entre redeploys)
+# ==========================================================
+
+
+def crear_conversacion(usuario, titulo="Nueva conversación"):
+    titulo = (titulo or "Nueva conversación")[:200]
+    with closing(conectar_pg()) as db:
+        with db.cursor(cursor_factory=RealDictCursor) as cursor:
+            cursor.execute(
+                """
+                INSERT INTO conversaciones (usuario, titulo)
+                VALUES (%s, %s)
+                RETURNING id
+                """,
+                (usuario, titulo),
+            )
+            chat_id = cursor.fetchone()["id"]
+        db.commit()
+        return chat_id
+
+
+def listar_chats(usuario):
+    with closing(conectar_pg()) as db:
+        with db.cursor(cursor_factory=RealDictCursor) as cursor:
+            cursor.execute(
+                """
+                SELECT id, titulo, creado_en, actualizado_en
+                FROM conversaciones
+                WHERE usuario = %s
+                ORDER BY actualizado_en DESC, id DESC
+                """,
+                (usuario,),
+            )
+            return [dict(fila) for fila in cursor.fetchall()]
+
+
+def validar_chat(chat_id, usuario):
+    """Devuelve True si la conversación existe y pertenece al usuario."""
+    with closing(conectar_pg()) as db:
+        with db.cursor() as cursor:
+            cursor.execute(
+                "SELECT id FROM conversaciones WHERE id = %s AND usuario = %s",
+                (chat_id, usuario),
+            )
+            return cursor.fetchone() is not None
+
+
+def obtener_chat_con_mensajes(chat_id, usuario):
+    with closing(conectar_pg()) as db:
+        with db.cursor(cursor_factory=RealDictCursor) as cursor:
+            cursor.execute(
+                "SELECT id, titulo FROM conversaciones WHERE id = %s AND usuario = %s",
+                (chat_id, usuario),
+            )
+            chat = cursor.fetchone()
+            if not chat:
+                return None, None
+            cursor.execute(
+                """
+                SELECT id, rol, contenido, creado_en
+                FROM mensajes
+                WHERE conversacion_id = %s
+                ORDER BY id
+                """,
+                (chat_id,),
+            )
+            mensajes = [dict(fila) for fila in cursor.fetchall()]
+            return dict(chat), mensajes
+
+
+def eliminar_chat(chat_id, usuario):
+    with closing(conectar_pg()) as db:
+        with db.cursor() as cursor:
+            cursor.execute(
+                "SELECT id FROM conversaciones WHERE id = %s AND usuario = %s",
+                (chat_id, usuario),
+            )
+            if cursor.fetchone() is None:
+                return False
+            # mensajes se borran solos por el ON DELETE CASCADE, pero lo
+            # dejamos explícito por claridad y por si algún día se saca el FK.
+            cursor.execute("DELETE FROM mensajes WHERE conversacion_id = %s", (chat_id,))
+            cursor.execute("DELETE FROM conversaciones WHERE id = %s", (chat_id,))
+        db.commit()
+        return True
+
+
+def agregar_mensaje(chat_id, rol, contenido):
+    with closing(conectar_pg()) as db:
+        with db.cursor() as cursor:
+            cursor.execute(
+                "INSERT INTO mensajes (conversacion_id, rol, contenido) VALUES (%s, %s, %s)",
+                (chat_id, rol, contenido),
+            )
+            cursor.execute(
+                "UPDATE conversaciones SET actualizado_en = CURRENT_TIMESTAMP WHERE id = %s",
+                (chat_id,),
+            )
+        db.commit()
+
+
+# ==========================================================
+# FLOTA ACTIVA (contexto de trabajo persistente de /flota)
+# ==========================================================
+
+
+def obtener_flota_activa(chat_id):
+    with closing(conectar_pg()) as db:
+        with db.cursor(cursor_factory=RealDictCursor) as cursor:
+            cursor.execute(
+                """
+                SELECT conversacion_id, estado, libro_id, datos_generales, vehiculos
+                FROM flotas_activas WHERE conversacion_id = %s
+                """,
+                (chat_id,),
+            )
+            fila = cursor.fetchone()
+            return dict(fila) if fila else None
+
+
+def guardar_flota_activa(chat_id, estado, libro_id, datos_generales, vehiculos):
+    import json as _json
+
+    with closing(conectar_pg()) as db:
+        with db.cursor() as cursor:
+            cursor.execute(
+                """
+                INSERT INTO flotas_activas (conversacion_id, estado, libro_id, datos_generales, vehiculos, actualizado_en)
+                VALUES (%s, %s, %s, %s, %s, CURRENT_TIMESTAMP)
+                ON CONFLICT (conversacion_id) DO UPDATE SET
+                    estado = EXCLUDED.estado,
+                    libro_id = EXCLUDED.libro_id,
+                    datos_generales = EXCLUDED.datos_generales,
+                    vehiculos = EXCLUDED.vehiculos,
+                    actualizado_en = CURRENT_TIMESTAMP
+                """,
+                (
+                    chat_id,
+                    estado,
+                    libro_id,
+                    _json.dumps(datos_generales or {}),
+                    _json.dumps(vehiculos or []),
+                ),
+            )
+        db.commit()
+
+
+def borrar_flota_activa(chat_id):
+    with closing(conectar_pg()) as db:
+        with db.cursor() as cursor:
+            cursor.execute("DELETE FROM flotas_activas WHERE conversacion_id = %s", (chat_id,))
+        db.commit()

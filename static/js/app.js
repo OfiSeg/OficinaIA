@@ -25,8 +25,199 @@ let enviandoMensaje=false;
 function mostrarPropuestaExcel(propuesta){
   const c=document.getElementById('chat');
   if(!c||!propuesta||typeof propuesta!=='object')return;
-  const orden=['ASEGURADO','NUMERO','VEHICULO','PATENTE','ENVIOS YA','CIA','MEDIO DE PAGO','CP','MAIL'];
-  const campos=orden.map(k=>[k,String(propuesta[k]??'')]);
+
+  const libroIdInicial=String(propuesta.LIBRO_ID||'1');
+  const esFlota=Array.isArray(propuesta.vehiculos);
+  if(esFlota){
+    const camposBase=['asegurado','domicilio','localidad','cp','patente','marca_modelo','año','motor','chasis','uso','suma_asegurada','cobertura'];
+    const vehiculos=propuesta.vehiculos.map(v=>{
+      const fila={};
+      if(v&&typeof v==='object')Object.keys(v).forEach(k=>fila[k]=String(v[k]??''));
+      camposBase.forEach(k=>{if(!Object.prototype.hasOwnProperty.call(fila,k))fila[k]='';});
+      return fila;
+    });
+    if(!vehiculos.length){
+      return;
+    }
+
+    const camposDetectados=[];
+    vehiculos.forEach(v=>{
+      Object.keys(v).forEach(k=>{
+        if(!camposDetectados.includes(k))camposDetectados.push(k);
+      });
+    });
+    const ordenCampos=camposBase.filter(k=>camposDetectados.includes(k))
+      .concat(camposDetectados.filter(k=>!camposBase.includes(k)));
+
+    const r=document.createElement('div');
+    r.className='msg assistant';
+    const b=document.createElement('div');
+    b.className='bubble excel-proposal';
+    const titulo=document.createElement('div');
+    titulo.className='excel-proposal-title';
+    titulo.textContent=`Propuesta de flota: ${vehiculos.length} vehículo(s)`;
+    b.appendChild(titulo);
+
+    const ayuda=document.createElement('div');
+    ayuda.className='excel-proposal-help';
+    ayuda.textContent='Revisá y editá los datos antes de guardar. Cada fila corresponde a un vehículo.';
+    b.appendChild(ayuda);
+
+    const selectorWrap=document.createElement('label');
+    selectorWrap.className='excel-proposal-field';
+    const selectorLabel=document.createElement('span');
+    selectorLabel.textContent='Libro destino';
+    const selector=document.createElement('select');
+    selector.dataset.libro=true;
+    [
+      ['1','Excel 1 — Asegurados'],
+      ['2','Excel 2 — Flotas']
+    ].forEach(([value,label])=>{
+      const option=document.createElement('option');
+      option.value=value;
+      option.textContent=label;
+      option.selected=value===libroIdInicial;
+      selector.appendChild(option);
+    });
+    selectorWrap.appendChild(selectorLabel);
+    selectorWrap.appendChild(selector);
+    b.appendChild(selectorWrap);
+
+    const tablaWrap=document.createElement('div');
+    tablaWrap.className='excel-proposal-table-wrap';
+    const tabla=document.createElement('table');
+    tabla.className='excel-proposal-table';
+    const thead=document.createElement('thead');
+    const trHead=document.createElement('tr');
+    const etiquetasCampo={
+      asegurado:'ASEGURADO',
+      domicilio:'DOMICILIO',
+      localidad:'LOCALIDAD',
+      cp:'CP',
+      patente:'PATENTE',
+      marca_modelo:'MARCA/MODELO',
+      año:'AÑO',
+      motor:'MOTOR',
+      chasis:'CHASIS',
+      uso:'USO DEL VEHÍCULO',
+      suma_asegurada:'SUMA ASEGURADA',
+      cobertura:'COBERTURA'
+    };
+    ordenCampos.forEach(campo=>{
+      const th=document.createElement('th');
+      th.textContent=etiquetasCampo[campo]||campo;
+      trHead.appendChild(th);
+    });
+    thead.appendChild(trHead);
+    tabla.appendChild(thead);
+
+    const tbody=document.createElement('tbody');
+    vehiculos.forEach((vehiculo)=>{
+      const tr=document.createElement('tr');
+      ordenCampos.forEach(campo=>{
+        const td=document.createElement('td');
+        const input=document.createElement('input');
+        input.type='text';
+        input.value=vehiculo[campo]??'';
+        input.dataset.campo=campo;
+        input.readOnly=true;
+        td.appendChild(input);
+        tr.appendChild(td);
+      });
+      tbody.appendChild(tr);
+    });
+    tabla.appendChild(tbody);
+    tablaWrap.appendChild(tabla);
+    b.appendChild(tablaWrap);
+
+    const acciones=document.createElement('div');
+    acciones.className='excel-proposal-actions';
+
+    const cancelar=document.createElement('button');
+    cancelar.type='button';
+    cancelar.className='excel-proposal-cancel';
+    cancelar.textContent='Cancelar';
+
+    const editar=document.createElement('button');
+    editar.type='button';
+    editar.className='excel-proposal-edit';
+    editar.textContent='Editar';
+
+    const guardar=document.createElement('button');
+    guardar.type='button';
+    guardar.className='excel-proposal-save';
+    guardar.textContent='Guardar';
+
+    const estado=document.createElement('span');
+    estado.className='excel-proposal-status';
+
+    acciones.appendChild(cancelar);
+    acciones.appendChild(editar);
+    acciones.appendChild(guardar);
+    acciones.appendChild(estado);
+    b.appendChild(acciones);
+    r.appendChild(b);
+    c.appendChild(r);
+
+    cancelar.addEventListener('click',()=>{
+      r.remove();
+    });
+
+    editar.addEventListener('click',()=>{
+      tabla.querySelectorAll('input[data-campo]').forEach(input=>input.readOnly=false);
+      editar.disabled=true;
+      estado.textContent='Modo edición activo.';
+    });
+
+    guardar.addEventListener('click',async()=>{
+      if(guardar.disabled)return;
+      const filas=[];
+      tbody.querySelectorAll('tr').forEach(tr=>{
+        const fila={};
+        tr.querySelectorAll('input[data-campo]').forEach(input=>{
+          fila[input.dataset.campo]=input.value.trim();
+        });
+        filas.push(fila);
+      });
+
+      guardar.disabled=true;
+      editar.disabled=true;
+      estado.textContent='Guardando…';
+      try{
+        const resp=await fetch('/api/excel/agregar-fila',{
+          method:'POST',
+          headers:{'Content-Type':'application/json'},
+          credentials:'same-origin',
+          body:JSON.stringify({
+            filas,
+            libro_id:String(selector.value),
+            tipo_propuesta:'flota'
+          })
+        });
+        const d=await leerJsonSeguro(resp);
+        if(!resp.ok||d.ok===false)throw Error(d.error||'No se pudo guardar la flota.');
+        estado.textContent=`Guardado correctamente: ${d.filas_agregadas||filas.length} fila(s).`;
+        estado.classList.add('success');
+        guardar.textContent='Guardado';
+      }catch(e){
+        estado.textContent=e?.message||'No se pudo guardar la flota.';
+        guardar.disabled=false;
+        editar.disabled=false;
+      }
+    });
+    scroll();
+    return;
+  }
+
+  const libroId=libroIdInicial;
+  const ordenAsegurado=['ASEGURADO','NUMERO','VEHICULO','PATENTE','ENVIOS YA','CIA','MEDIO DE PAGO','CP','MAIL'];
+  const ordenFlota=['patente','marca','modelo','año','motor','chasis','uso','suma_asegurada','cobertura'];
+  const orden=libroId==='2'?ordenFlota:ordenAsegurado;
+  const campos=[];
+  orden.forEach(k=>{if(Object.prototype.hasOwnProperty.call(propuesta,k))campos.push([k,String(propuesta[k]??'')])});
+  Object.keys(propuesta).forEach(k=>{
+    if(k!=='LIBRO_ID'&&!orden.includes(k)&&!campos.some(([clave])=>clave===k))campos.push([k,String(propuesta[k]??'')]);
+  });
   const r=document.createElement('div');
   r.className='msg assistant';
   const b=document.createElement('div');
@@ -90,7 +281,7 @@ function mostrarPropuestaExcel(propuesta){
         method:'POST',
         headers:{'Content-Type':'application/json'},
         credentials:'same-origin',
-        body:JSON.stringify({campos:valores})
+        body:JSON.stringify({campos:valores,libro_id:libroId})
       });
       const d=await leerJsonSeguro(resp);
       if(!resp.ok||d.ok===false)throw Error(d.error||'No se pudo guardar el registro.');
@@ -202,6 +393,11 @@ const COMANDOS_CHAT=[
     comando:'/guardar asegurado',
     descripcion:'Cargar un asegurado en la planilla con campos en orden fijo.',
     plantilla:'/guardar asegurado (asegurado) (numero) (vehiculo) (patente) (cia) (medio de pago) (cp) (mail)'
+  },
+  {
+    comando:'/flota',
+    descripcion:'Cargar datos de una póliza para completar una flota',
+    plantilla:'/flota'
   },
   {
     comando:'/coti',
@@ -399,7 +595,15 @@ async function initChat(){
       return;
     }
     if(e.key==='Enter'&&!e.shiftKey){
-      if(seleccionarComandoActual()){
+      // Si el menú está abierto, Enter solo completa el comando cuando el
+      // usuario todavía está escribiendo el comando (por ejemplo "/flo").
+      // Si ya hay texto después de /flota, Enter debe enviar el mensaje.
+      const valorActual=i.value.trimStart();
+      const menu=document.getElementById('chatCommandMenu');
+      const menuAbierto=menu&&!menu.hidden;
+      const esSoloComando=/^\/[^\s]+$/.test(valorActual);
+      const esComandoConTexto=/^\/[^\s]+\s+.+/s.test(valorActual);
+      if(menuAbierto && !esComandoConTexto && esSoloComando && seleccionarComandoActual()){
         e.preventDefault();
         return;
       }
