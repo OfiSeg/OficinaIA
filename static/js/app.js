@@ -22,6 +22,61 @@ async function nuevoChat(){const r=await fetch('/api/chats',{method:'POST',heade
 async function eliminarChat(id){const r=await fetch('/api/chats/'+id,{method:'DELETE'});if(!r.ok)return;if(currentChatId===id){currentChatId=null;const c=document.getElementById('chat');if(c)c.innerHTML='<div id="chatWelcome" class="welcome"><strong>✦</strong><h2>¿Qué necesitás resolver?</h2><p>Podés iniciar una nueva conversación cuando quieras.</p></div>'}await cargarListaChats()}
 async function borrarChatActual(){if(!currentChatId){return}await eliminarChat(currentChatId)}
 let enviandoMensaje=false;
+function mostrarTabuladoFlota(texto){
+  const c=document.getElementById('chat');
+  if(!c||!texto)return;
+  const lineas=String(texto).split('\n').filter(Boolean);
+
+  const r=document.createElement('div');
+  r.className='msg assistant';
+  const b=document.createElement('div');
+  b.className='bubble tabulado-flota';
+
+  const titulo=document.createElement('div');
+  titulo.className='tabulado-flota-title';
+  titulo.textContent=`Bloque para pegar en Excel: ${lineas.length} vehículo(s)`;
+  b.appendChild(titulo);
+
+  const ayuda=document.createElement('div');
+  ayuda.className='tabulado-flota-help';
+  ayuda.textContent='Copiá el bloque y pegalo en la celda ITEM de la primera fila vacía de excel/flotas. Las columnas están separadas por tabulador, así que Excel las va a acomodar solo.';
+  b.appendChild(ayuda);
+
+  const pre=document.createElement('pre');
+  pre.className='tabulado-flota-pre';
+  pre.textContent=texto;
+  b.appendChild(pre);
+
+  const acciones=document.createElement('div');
+  acciones.className='tabulado-flota-actions';
+  const btn=document.createElement('button');
+  btn.type='button';
+  btn.className='tabulado-flota-copy';
+  btn.textContent='Copiar bloque';
+  btn.onclick=async()=>{
+    try{
+      await navigator.clipboard.writeText(texto);
+      btn.textContent='¡Copiado!';
+      setTimeout(()=>{btn.textContent='Copiar bloque'},1800);
+    }catch(e){
+      // Fallback para navegadores/contextos sin permiso de clipboard API.
+      pre.focus();
+      const sel=window.getSelection(),range=document.createRange();
+      range.selectNodeContents(pre);
+      sel.removeAllRanges();sel.addRange(range);
+      document.execCommand('copy');
+      btn.textContent='¡Copiado!';
+      setTimeout(()=>{btn.textContent='Copiar bloque'},1800);
+    }
+  };
+  acciones.appendChild(btn);
+  b.appendChild(acciones);
+
+  r.appendChild(b);
+  c.appendChild(r);
+  scroll();
+}
+
 function mostrarPropuestaExcel(propuesta){
   const c=document.getElementById('chat');
   if(!c||!propuesta||typeof propuesta!=='object')return;
@@ -559,7 +614,7 @@ async function enviarMensaje(){
       if(!r.ok||d.ok===false)throw Error(d.error||'No se pudo consultar el asistente.');
       currentChatId=d.chat_id||currentChatId;
       thinking.querySelector('.bubble').innerHTML=fmt(d.respuesta||'No recibí una respuesta.');
-      if(d.propuesta_excel)mostrarPropuestaExcel(d.propuesta_excel);if(d.propuesta_metadato)mostrarPropuestaMetadato(d.propuesta_metadato);
+      if(d.propuesta_excel)mostrarPropuestaExcel(d.propuesta_excel);if(d.propuesta_metadato)mostrarPropuestaMetadato(d.propuesta_metadato);if(d.tabulado_flota)mostrarTabuladoFlota(d.tabulado_flota);
       if(pdf)pdf.value='';
       mostrarPdf(null);
       try{await cargarListaChats()}catch(_){}
