@@ -272,6 +272,7 @@ html[data-theme="dark"] .btn-soft{background:var(--surface,#1a222d);color:var(--
 
       let exitosos = 0;
       const errores = [];
+      const fichasSugeridas = [];
 
       try {
         for (let n = 0; n < files.length; n++) {
@@ -325,6 +326,10 @@ html[data-theme="dark"] .btn-soft{background:var(--surface,#1a222d);color:var(--
               const empty = filesBox.querySelector('.no-manual');
               if (empty) empty.remove();
               filesBox.appendChild(crearFilaManual(slug, info.archivo, info.nombre, 'Ahora'));
+              // P1.7 — ficha sugerida al subir manual
+              if (info.ficha_sugerida && info.ficha_sugerida.titulo) {
+                fichasSugeridas.push(info.ficha_sugerida);
+              }
             });
             exitosos++;
           } catch (error) {
@@ -343,6 +348,43 @@ html[data-theme="dark"] .btn-soft{background:var(--surface,#1a222d);color:var(--
         } else {
           status.textContent = `Error: ${errores.join(' | ')}`;
           if (window.showToast) showToast('No se pudieron guardar los manuales', 'error');
+        }
+
+        // Ofrecer guardar fichas sugeridas (confirmación humana).
+        if (fichasSugeridas.length) {
+          const nombres = fichasSugeridas.map(f => f.titulo).join('\n• ');
+          const ok = confirm(
+            `Se extrajo contenido operativo de ${fichasSugeridas.length} manual(es).\n\n` +
+            `• ${nombres}\n\n` +
+            `¿Crear ficha(s) de metadatos para que Sofia las use primero?\n` +
+            `(Podés editarlas después en la pestaña Metadatos.)`
+          );
+          if (ok) {
+            let guardadas = 0;
+            for (const ficha of fichasSugeridas) {
+              try {
+                const r = await fetch('/api/metadatos', {
+                  method: 'POST',
+                  headers: { 'Content-Type': 'application/json' },
+                  credentials: 'same-origin',
+                  body: JSON.stringify({ titulo: ficha.titulo, contenido: ficha.contenido }),
+                });
+                const d = await r.json();
+                if (r.ok && d.ok) guardadas++;
+              } catch (e) { /* continuar con las demás */ }
+            }
+            if (window.showToast) {
+              showToast(
+                guardadas
+                  ? `${guardadas} ficha(s) creada(s) en Metadatos`
+                  : 'No se pudieron crear las fichas',
+                guardadas ? 'success' : 'error'
+              );
+            }
+            if (typeof window.cargarListaMetadatos === 'function') {
+              window.cargarListaMetadatos();
+            }
+          }
         }
 
         actualizarHeaderManual(card);

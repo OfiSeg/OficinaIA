@@ -6,7 +6,23 @@
 <div class="chat-shell">
 <aside class="chat-list"><div class="chat-list-head"><div><b>Conversaciones</b><small>Historial guardado</small></div><button onclick="nuevoChat()" title="Nueva conversación">＋</button></div><div id="chatList" class="chat-list-items"></div></aside>
 <section class="chat">
-<header><strong>✦</strong><div><b>Chat</b></div><button class="clear-chat" onclick="borrarChatActual()">Eliminar chat</button></header>
+<header>
+  <strong>✦</strong>
+  <div><b>Chat</b></div>
+  <button type="button" class="chat-list-open" id="chatListOpen" title="Conversaciones" aria-label="Abrir lista de conversaciones">☰</button>
+  <button class="clear-chat" onclick="borrarChatActual()">Eliminar chat</button>
+</header>
+<div id="chatListSheet" class="chat-list-sheet" hidden>
+  <div class="chat-list-sheet-backdrop" data-close-sheet></div>
+  <div class="chat-list-sheet-panel" role="dialog" aria-label="Conversaciones">
+    <div class="chat-list-sheet-head">
+      <b>Conversaciones</b>
+      <button type="button" class="chat-list-sheet-close" data-close-sheet aria-label="Cerrar">×</button>
+    </div>
+    <div id="chatListSheetBody" class="chat-list-sheet-body"></div>
+    <button type="button" class="btn-primary chat-list-sheet-new" id="chatListSheetNew">＋ Nueva conversación</button>
+  </div>
+</div>
 <div id="chat" class="history history-empty">
   <div id="chatWelcome" class="welcome">
     <strong>✦</strong>
@@ -55,5 +71,24 @@ document.getElementById('workflowGrid')?.addEventListener('click',e=>{
   if(typeof size==='function')size();
   i.focus();
 });
+</script>
+
+<script>
+(function(){
+  try{
+    const pre=sessionStorage.getItem('oficinaia_prefiller');
+    if(!pre)return;
+    sessionStorage.removeItem('oficinaia_prefiller');
+    const run=()=>{
+      const i=document.getElementById('mensaje');
+      if(!i)return;
+      i.value=pre;
+      if(typeof size==='function')size();
+      i.focus();
+    };
+    setTimeout(run,200);
+    setTimeout(run,800);
+  }catch(_){}
+})();
 </script>
 <script>initChat();</script>{% endblock %}

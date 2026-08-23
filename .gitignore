@@ -4,3 +4,10 @@ __pycache__/
 oficina.db
 .venv/
 venv/
+.env
+__pycache__/
+*.pyc
+oficina.db
+*.db
+.venv/
+venv/

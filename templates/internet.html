@@ -1,0 +1,218 @@
+{% extends 'base.html' %}
+{% block title %}Cotizar · {{config_global.nombre_oficina}}{% endblock %}
+{% block content %}
+<div class="page cotizar-page">
+  <header class="top">
+    <div>
+      <span>MESA DE TRABAJO</span>
+      <h1>Cotizar</h1>
+      <p>Armá el riesgo acá, cotizá en los portales que uses, y traé los números de vuelta. Todo queda junto para mandarlo al chat o a Excel.</p>
+    </div>
+  </header>
+
+  <div class="cotizar-layout">
+    <section class="panel cotizar-panel">
+      <div class="section-head"><div><h2>Datos del riesgo</h2><small>Se guardan en esta sesión del navegador.</small></div>
+        <button type="button" class="btn-soft" id="cotClear">Limpiar</button>
+      </div>
+      <div class="cotizar-grid">
+        <label>Asegurado / cliente<input id="cCliente" type="text" placeholder="Nombre o razón social"></label>
+        <label>Patente<input id="cPatente" type="text" placeholder="AB123CD"></label>
+        <label>Marca / modelo<input id="cVehiculo" type="text" placeholder="VW Gol 1.6"></label>
+        <label>Año<input id="cAnio" type="text" placeholder="2019" inputmode="numeric"></label>
+        <label>Uso<input id="cUso" type="text" placeholder="Particular / comercial"></label>
+        <label>CP / localidad<input id="cCp" type="text" placeholder="2000 Rosario"></label>
+        <label>Suma / info extra<input id="cExtra" type="text" placeholder="GNC, 0km, etc."></label>
+        <label>Compañías a cotizar<input id="cCias" type="text" placeholder="ATM, Sancor, Fed. Patronal…"></label>
+      </div>
+      <div class="cotizar-actions">
+        <button type="button" class="primary" id="cotToChat">Llevar al chat (/coti)</button>
+        <button type="button" class="btn-soft" id="cotCopyRiesgo">Copiar resumen</button>
+      </div>
+    </section>
+
+    <section class="panel cotizar-panel">
+      <div class="section-head"><div><h2>Portales</h2><small>Se abren afuera a propósito: los sitios no permiten verse embebidos. Esta mesa sigue acá.</small></div></div>
+      <div class="cotizar-portals" id="cotPortals">
+        <button type="button" data-q="Sancor seguros cotizar online">Sancor</button>
+        <button type="button" data-q="Federacion Patronal cotizar">Fed. Patronal</button>
+        <button type="button" data-q="ATM seguros cotizar">ATM</button>
+        <button type="button" data-q="Mercantil Andina cotizar">Mercantil</button>
+        <button type="button" data-q="Rivadavia seguros cotizar">Rivadavia</button>
+        <button type="button" data-q="La Segunda seguros cotizar">La Segunda</button>
+        <button type="button" data-q="Zurich Argentina cotizar">Zurich</button>
+        <button type="button" data-q="Mapfre Argentina cotizar">Mapfre</button>
+      </div>
+      <form id="cotPortalCustom" class="cotizar-custom">
+        <input id="cotPortalUrl" type="url" placeholder="URL directa del cotizador (si la tenés)">
+        <button type="submit" class="btn-soft">Abrir URL</button>
+      </form>
+    </section>
+
+    <section class="panel cotizar-panel cotizar-panel-wide">
+      <div class="section-head"><div><h2>Resultados de cotización</h2><small>Pegá prima, cobertura y notas de cada compañía. Comparás acá sin perder el hilo.</small></div>
+        <button type="button" class="primary" id="cotAddRow">+ Resultado</button>
+      </div>
+      <div class="table-wrap">
+        <table class="cotizar-table" id="cotTable">
+          <thead>
+            <tr>
+              <th>Compañía</th>
+              <th>Prima / cuota</th>
+              <th>Cobertura</th>
+              <th>Notas</th>
+              <th></th>
+            </tr>
+          </thead>
+          <tbody id="cotBody"></tbody>
+        </table>
+      </div>
+      <div class="cotizar-actions">
+        <button type="button" class="primary" id="cotSendChat">Enviar comparación al chat</button>
+        <button type="button" class="btn-soft" id="cotPendiente">Dejar en Pendientes</button>
+        <button type="button" class="btn-soft" id="cotCopyAll">Copiar todo</button>
+      </div>
+    </section>
+  </div>
+</div>
+{% endblock %}
+{% block scripts %}
+<script>
+(function(){
+  const KEY='oficinaia_cotizar_v1';
+  const fields=['cCliente','cPatente','cVehiculo','cAnio','cUso','cCp','cExtra','cCias'];
+
+  function load(){
+    let data={riesgo:{},rows:[]};
+    try{data=Object.assign(data,JSON.parse(localStorage.getItem(KEY)||'{}'))}catch(_){}
+    fields.forEach(id=>{
+      const el=document.getElementById(id);
+      if(el)el.value=(data.riesgo&&data.riesgo[id])||'';
+    });
+    renderRows(Array.isArray(data.rows)?data.rows:[]);
+  }
+  function save(){
+    const riesgo={};
+    fields.forEach(id=>{riesgo[id]=(document.getElementById(id).value||'').trim()});
+    const rows=[];
+    document.querySelectorAll('#cotBody tr').forEach(tr=>{
+      const inputs=tr.querySelectorAll('input');
+      rows.push({
+        cia:(inputs[0]&&inputs[0].value||'').trim(),
+        prima:(inputs[1]&&inputs[1].value||'').trim(),
+        cob:(inputs[2]&&inputs[2].value||'').trim(),
+        notas:(inputs[3]&&inputs[3].value||'').trim()
+      });
+    });
+    try{localStorage.setItem(KEY,JSON.stringify({riesgo,rows}))}catch(_){}
+  }
+  function rowHtml(r){
+    r=r||{};
+    return `<tr>
+      <td><input value="${esc(r.cia)}" placeholder="CIA"></td>
+      <td><input value="${esc(r.prima)}" placeholder="$ / mes"></td>
+      <td><input value="${esc(r.cob)}" placeholder="Terceros / todo riesgo…"></td>
+      <td><input value="${esc(r.notas)}" placeholder="Franquicia, obs."></td>
+      <td><button type="button" class="cot-del" title="Quitar">×</button></td>
+    </tr>`;
+  }
+  function esc(s){return String(s??'').replace(/&/g,'&amp;').replace(/"/g,'&quot;').replace(/</g,'&lt;')}
+  function renderRows(rows){
+    const body=document.getElementById('cotBody');
+    if(!rows.length)rows=[{},{},{}];
+    body.innerHTML=rows.map(rowHtml).join('');
+  }
+  function resumenRiesgo(){
+    const g=id=>(document.getElementById(id).value||'').trim();
+    const parts=[];
+    if(g('cCliente'))parts.push(g('cCliente'));
+    if(g('cVehiculo'))parts.push(g('cVehiculo'));
+    if(g('cAnio'))parts.push(g('cAnio'));
+    if(g('cPatente'))parts.push('patente '+g('cPatente'));
+    if(g('cUso'))parts.push('uso '+g('cUso'));
+    if(g('cCp'))parts.push(g('cCp'));
+    if(g('cExtra'))parts.push(g('cExtra'));
+    if(g('cCias'))parts.push('CIAS: '+g('cCias'));
+    return parts.join(' · ')||'(sin datos)';
+  }
+  function textoComparacion(){
+    const lines=['Cotización — '+resumenRiesgo(),''];
+    document.querySelectorAll('#cotBody tr').forEach(tr=>{
+      const v=[...tr.querySelectorAll('input')].map(i=>i.value.trim());
+      if(!v[0]&&!v[1]&&!v[2])return;
+      lines.push([v[0]||'—', v[1]||'—', v[2]||'—', v[3]||''].filter(Boolean).join(' | '));
+    });
+    return lines.join('\n');
+  }
+  function armarCotiCmd(){
+    // Formato flexible para /coti — el parser existente tolera texto
+    const g=id=>(document.getElementById(id).value||'').trim();
+    const bits=['/coti'];
+    if(g('cCias'))bits.push(g('cCias').split(/[;,]/)[0].trim());
+    if(g('cVehiculo'))bits.push(g('cVehiculo'));
+    if(g('cAnio'))bits.push(g('cAnio'));
+    if(g('cPatente'))bits.push(g('cPatente'));
+    if(g('cUso'))bits.push(g('cUso'));
+    if(g('cCp'))bits.push(g('cCp'));
+    if(g('cExtra'))bits.push(g('cExtra'));
+    if(g('cCliente'))bits.push(g('cCliente'));
+    return bits.join(' ');
+  }
+
+  document.getElementById('cotBody').addEventListener('input',save);
+  fields.forEach(id=>document.getElementById(id).addEventListener('input',save));
+  document.getElementById('cotBody').addEventListener('click',e=>{
+    if(e.target.classList.contains('cot-del')){
+      e.target.closest('tr').remove();save();
+    }
+  });
+  document.getElementById('cotAddRow').onclick=()=>{
+    document.getElementById('cotBody').insertAdjacentHTML('beforeend',rowHtml({}));
+    save();
+  };
+  document.getElementById('cotClear').onclick=()=>{
+    if(!confirm('¿Limpiar riesgo y resultados?'))return;
+    fields.forEach(id=>document.getElementById(id).value='');
+    renderRows([{},{},{}]);save();
+  };
+  document.getElementById('cotCopyRiesgo').onclick=async()=>{
+    try{await navigator.clipboard.writeText(resumenRiesgo());if(window.showToast)showToast('Resumen copiado','success')}catch(_){}
+  };
+  document.getElementById('cotCopyAll').onclick=async()=>{
+    try{await navigator.clipboard.writeText(textoComparacion());if(window.showToast)showToast('Comparación copiada','success')}catch(_){}
+  };
+  document.getElementById('cotToChat').onclick=()=>{
+    const cmd=armarCotiCmd();
+    try{sessionStorage.setItem('oficinaia_prefiller',cmd)}catch(_){}
+    location.href='{{ url_for("documentos") }}';
+  };
+  document.getElementById('cotSendChat').onclick=()=>{
+    const msg='Comparame estas cotizaciones y recomendá la mejor opción para el cliente:\n\n'+textoComparacion();
+    try{sessionStorage.setItem('oficinaia_prefiller',msg)}catch(_){}
+    location.href='{{ url_for("documentos") }}';
+  };
+  document.getElementById('cotPendiente').onclick=async()=>{
+    if(!window.crearPendiente){if(window.showToast)showToast('Pendientes no disponible','error');return}
+    await window.crearPendiente('coti','Cotización: '+resumenRiesgo().slice(0,80),{
+      texto:textoComparacion(),preview:textoComparacion().slice(0,240)
+    });
+  };
+  document.getElementById('cotPortals').addEventListener('click',e=>{
+    const b=e.target.closest('button[data-q]');
+    if(!b)return;
+    const riesgo=resumenRiesgo();
+    const q=b.dataset.q+(riesgo&&riesgo!=='(sin datos)'?' '+riesgo:'');
+    window.open('https://www.google.com/search?q='+encodeURIComponent(q),'_blank','noopener,noreferrer');
+  });
+  document.getElementById('cotPortalCustom').addEventListener('submit',e=>{
+    e.preventDefault();
+    let u=document.getElementById('cotPortalUrl').value.trim();
+    if(!u)return;
+    if(!/^https?:\/\//i.test(u))u='https://'+u;
+    window.open(u,'_blank','noopener,noreferrer');
+  });
+
+  load();
+})();
+</script>
+{% endblock %}

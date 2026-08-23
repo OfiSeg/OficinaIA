@@ -83,6 +83,7 @@ CREATE TABLE IF NOT EXISTS conversaciones (
     id SERIAL PRIMARY KEY,
     usuario VARCHAR(120) NOT NULL,
     titulo VARCHAR(200) NOT NULL DEFAULT 'Nueva conversación',
+    tipo VARCHAR(30) NOT NULL DEFAULT '',
     creado_en TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
     actualizado_en TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
@@ -115,7 +116,27 @@ CREATE TABLE IF NOT EXISTS flotas_activas (
 );
 """
 
+# P0.2 — Bandeja de pendientes (sobrevive a redeploys en Neon).
+CREATE_TABLE_PENDIENTES_SQL = """
+CREATE TABLE IF NOT EXISTS pendientes (
+    id SERIAL PRIMARY KEY,
+    usuario VARCHAR(120) NOT NULL,
+    tipo VARCHAR(40) NOT NULL DEFAULT 'generico',
+    titulo VARCHAR(200) NOT NULL,
+    payload JSONB NOT NULL DEFAULT '{}'::jsonb,
+    estado VARCHAR(20) NOT NULL DEFAULT 'pendiente',
+    creado_en TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    actualizado_en TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+CREATE INDEX IF NOT EXISTS idx_pendientes_usuario_estado
+    ON pendientes (usuario, estado);
+"""
+
 USUARIO_ADMIN_PRINCIPAL = "admin"
+
+# Tipos/estados alineados con pendientes_ops.py
+PENDIENTES_TIPOS = {"excel", "metadato", "flota", "coti", "whatsapp", "generico", "pdf_ficha"}
+PENDIENTES_ESTADOS = {"pendiente", "hecho", "descartado"}
 
 
 def _database_url():
@@ -131,6 +152,21 @@ def conectar_pg():
     return psycopg2.connect(_database_url())
 
 
+def _json_safe_row(fila: dict) -> dict:
+    """P1.0 — Convierte datetime de Postgres a ISO string para jsonify."""
+    from datetime import datetime, date
+
+    out = {}
+    for k, v in (fila or {}).items():
+        if isinstance(v, datetime):
+            out[k] = v.isoformat()
+        elif isinstance(v, date):
+            out[k] = v.isoformat()
+        else:
+            out[k] = v
+    return out
+
+
 def inicializar_postgres():
     with closing(conectar_pg()) as db:
         with db.cursor() as cursor:
@@ -143,27 +179,45 @@ def inicializar_postgres():
             cursor.execute(CREATE_TABLE_CONVERSACIONES_SQL)
             cursor.execute(CREATE_TABLE_MENSAJES_SQL)
             cursor.execute(CREATE_TABLE_FLOTAS_ACTIVAS_SQL)
+            cursor.execute(CREATE_TABLE_PENDIENTES_SQL)
             cursor.execute(
                 """
                 ALTER TABLE metadatos
                 ADD COLUMN IF NOT EXISTS usuario VARCHAR(120) NOT NULL DEFAULT ''
                 """
             )
-            # Bootstrea el admin principal si todavía no existe (primera vez
+            # P2.6 / Tanda C — tipo de chat (flota|coti|alta|envios|…)
+            cursor.execute(
+                """
+                ALTER TABLE conversaciones
+                ADD COLUMN IF NOT EXISTS tipo VARCHAR(30) NOT NULL DEFAULT ''
+                """
+            )
+            # Bootstrap del admin principal si todavía no existe (primera vez
             # que se conecta a esta base de Neon) y asegura que conserve el
             # rol/protección aunque alguien lo haya tocado a mano.
+            # P0.4 — No seedear "1234" en prod. Usar ADMIN_INITIAL_PASSWORD
+            # o no crear el usuario (el operador debe crearlo a mano).
             cursor.execute(
                 "SELECT id FROM usuarios WHERE usuario = %s",
                 (USUARIO_ADMIN_PRINCIPAL,),
             )
             if cursor.fetchone() is None:
-                cursor.execute(
-                    """
-                    INSERT INTO usuarios (usuario, password, email, rol, protegido)
-                    VALUES (%s, %s, %s, 'admin', TRUE)
-                    """,
-                    (USUARIO_ADMIN_PRINCIPAL, generate_password_hash("1234"), ""),
-                )
+                initial = (os.getenv("ADMIN_INITIAL_PASSWORD") or "").strip()
+                if not initial or initial == "1234":
+                    print(
+                        "ADVERTENCIA P0.4: no se crea usuario 'admin' en Neon "
+                        "sin ADMIN_INITIAL_PASSWORD fuerte. Definila en el panel "
+                        "de Render o creá el usuario manualmente."
+                    )
+                else:
+                    cursor.execute(
+                        """
+                        INSERT INTO usuarios (usuario, password, email, rol, protegido)
+                        VALUES (%s, %s, %s, 'admin', TRUE)
+                        """,
+                        (USUARIO_ADMIN_PRINCIPAL, generate_password_hash(initial), ""),
+                    )
             else:
                 cursor.execute(
                     "UPDATE usuarios SET rol='admin', protegido=TRUE WHERE usuario=%s",
@@ -438,7 +492,7 @@ def listar_metadatos():
                 ORDER BY actualizado_en DESC, id DESC
                 """
             )
-            return [dict(fila) for fila in cursor.fetchall()]
+            return [_json_safe_row(dict(fila)) for fila in cursor.fetchall()]
 
 
 def obtener_metadato(metadato_id):
@@ -453,7 +507,7 @@ def obtener_metadato(metadato_id):
                 (metadato_id,),
             )
             fila = cursor.fetchone()
-            return dict(fila) if fila else None
+            return _json_safe_row(dict(fila)) if fila else None
 
 
 def crear_metadato(usuario, titulo, contenido):
@@ -467,7 +521,7 @@ def crear_metadato(usuario, titulo, contenido):
                 """,
                 (usuario, titulo, contenido),
             )
-            fila = dict(cursor.fetchone())
+            fila = _json_safe_row(dict(cursor.fetchone()))
         db.commit()
         return fila
 
@@ -489,7 +543,7 @@ def actualizar_metadato(metadato_id, titulo, contenido):
             fila = cursor.fetchone()
             if not fila:
                 return None
-            resultado = dict(fila)
+            resultado = _json_safe_row(dict(fila))
         db.commit()
         return resultado
 
@@ -605,14 +659,64 @@ def listar_chats(usuario):
         with db.cursor(cursor_factory=RealDictCursor) as cursor:
             cursor.execute(
                 """
-                SELECT id, titulo, creado_en, actualizado_en
+                SELECT id, titulo, COALESCE(tipo, '') AS tipo, creado_en, actualizado_en
                 FROM conversaciones
                 WHERE usuario = %s
                 ORDER BY actualizado_en DESC, id DESC
                 """,
                 (usuario,),
             )
-            return [dict(fila) for fila in cursor.fetchall()]
+            return [_json_safe_row(dict(fila)) for fila in cursor.fetchall()]
+
+
+def actualizar_tipo_chat(chat_id, usuario, tipo):
+    """Persiste el tipo operativo del chat (flota/coti/alta/envios). No pisa si ya hay tipo."""
+    tipo = (tipo or "").strip().lower()[:30]
+    if not tipo:
+        return False
+    with closing(conectar_pg()) as db:
+        with db.cursor() as cursor:
+            cursor.execute(
+                """
+                UPDATE conversaciones
+                SET tipo = %s
+                WHERE id = %s AND usuario = %s
+                  AND (tipo IS NULL OR tipo = '')
+                """,
+                (tipo, chat_id, usuario),
+            )
+            ok = cursor.rowcount > 0
+        db.commit()
+        return ok
+
+
+def listar_mensajes_historial(chat_id, usuario, limite=10):
+    """Últimos N mensajes del chat para Gemini (server-side, P1.3)."""
+    with closing(conectar_pg()) as db:
+        with db.cursor(cursor_factory=RealDictCursor) as cursor:
+            cursor.execute(
+                "SELECT id FROM conversaciones WHERE id = %s AND usuario = %s",
+                (chat_id, usuario),
+            )
+            if cursor.fetchone() is None:
+                return []
+            cursor.execute(
+                """
+                SELECT rol, contenido
+                FROM mensajes
+                WHERE conversacion_id = %s
+                ORDER BY id DESC
+                LIMIT %s
+                """,
+                (chat_id, limite),
+            )
+            rows = list(cursor.fetchall())
+            rows.reverse()
+            return [
+                {"rol": r["rol"], "contenido": r["contenido"]}
+                for r in rows
+                if r.get("rol") in ("user", "assistant") and str(r.get("contenido") or "").strip()
+            ]
 
 
 def validar_chat(chat_id, usuario):
@@ -645,7 +749,7 @@ def obtener_chat_con_mensajes(chat_id, usuario):
                 """,
                 (chat_id,),
             )
-            mensajes = [dict(fila) for fila in cursor.fetchall()]
+            mensajes = [_json_safe_row(dict(fila)) for fila in cursor.fetchall()]
             return dict(chat), mensajes
 
 
@@ -760,3 +864,108 @@ def borrar_flota_activa(chat_id):
         with db.cursor() as cursor:
             cursor.execute("DELETE FROM flotas_activas WHERE conversacion_id = %s", (chat_id,))
         db.commit()
+
+
+# ==========================================================
+# PENDIENTES (bandeja de trabajo a medias — P0.2)
+# ==========================================================
+
+
+def listar_pendientes(usuario, estado="pendiente", limite=100):
+    estado = (estado or "pendiente").strip().lower()
+    if estado not in PENDIENTES_ESTADOS:
+        estado = "pendiente"
+    with closing(conectar_pg()) as db:
+        with db.cursor(cursor_factory=RealDictCursor) as cursor:
+            cursor.execute(
+                """
+                SELECT id, tipo, titulo, payload, estado, creado_en, actualizado_en
+                FROM pendientes
+                WHERE usuario = %s AND estado = %s
+                ORDER BY actualizado_en DESC, id DESC
+                LIMIT %s
+                """,
+                (usuario, estado, limite),
+            )
+            out = []
+            for fila in cursor.fetchall():
+                item = _json_safe_row(dict(fila))
+                payload = item.get("payload")
+                if isinstance(payload, str):
+                    import json as _json
+                    try:
+                        item["payload"] = _json.loads(payload)
+                    except Exception:
+                        item["payload"] = {}
+                elif payload is None:
+                    item["payload"] = {}
+                out.append(item)
+            return out
+
+
+def contar_pendientes(usuario, estado="pendiente") -> int:
+    estado = (estado or "pendiente").strip().lower()
+    if estado not in PENDIENTES_ESTADOS:
+        estado = "pendiente"
+    with closing(conectar_pg()) as db:
+        with db.cursor() as cursor:
+            cursor.execute(
+                "SELECT COUNT(*) FROM pendientes WHERE usuario = %s AND estado = %s",
+                (usuario, estado),
+            )
+            row = cursor.fetchone()
+            return int(row[0] if row else 0)
+
+
+def crear_pendiente(usuario, tipo, titulo, payload=None):
+    import json as _json
+
+    tipo = (tipo or "generico").strip().lower()
+    if tipo not in PENDIENTES_TIPOS:
+        tipo = "generico"
+    titulo = (titulo or "Pendiente").strip()[:200] or "Pendiente"
+    payload_obj = payload if isinstance(payload, dict) else {}
+    with closing(conectar_pg()) as db:
+        with db.cursor() as cursor:
+            cursor.execute(
+                """
+                INSERT INTO pendientes (usuario, tipo, titulo, payload, estado)
+                VALUES (%s, %s, %s, %s::jsonb, 'pendiente')
+                RETURNING id
+                """,
+                (usuario, tipo, titulo, _json.dumps(payload_obj, ensure_ascii=False)),
+            )
+            pid = cursor.fetchone()[0]
+        db.commit()
+        return pid
+
+
+def actualizar_estado_pendiente(pendiente_id, usuario, estado):
+    estado = (estado or "").strip().lower()
+    if estado not in PENDIENTES_ESTADOS:
+        return False
+    with closing(conectar_pg()) as db:
+        with db.cursor() as cursor:
+            cursor.execute(
+                """
+                UPDATE pendientes
+                SET estado = %s, actualizado_en = CURRENT_TIMESTAMP
+                WHERE id = %s AND usuario = %s
+                """,
+                (estado, pendiente_id, usuario),
+            )
+            ok = cursor.rowcount > 0
+        db.commit()
+        return ok
+
+
+def eliminar_pendiente(pendiente_id, usuario):
+    with closing(conectar_pg()) as db:
+        with db.cursor() as cursor:
+            cursor.execute(
+                "DELETE FROM pendientes WHERE id = %s AND usuario = %s",
+                (pendiente_id, usuario),
+            )
+            ok = cursor.rowcount > 0
+        db.commit()
+        return ok

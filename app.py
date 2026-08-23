@@ -76,14 +76,34 @@ from servicios_ia import buscar_en_metadatos
 # CONFIGURACIÓN
 # ==========================================================
 
+BASE_DIR = Path(__file__).resolve().parent
+# load_dotenv ANTES de leer cualquier env (P0.7). En Render las vars del
+# panel ya están en el proceso; en local el .env debe aplicar a secret_key.
+load_dotenv(BASE_DIR / ".env")
+
 app = Flask(__name__)
 
-app.secret_key = os.getenv("FLASK_SECRET_KEY", "OFICINA_SEGUROS_CAMBIAR_CLAVE")
+# P0.1 — Secret de sesión: en producción (Neon/Render) es obligatorio.
+# El default solo se tolera en desarrollo local sin DATABASE_URL.
+_secret = os.getenv("FLASK_SECRET_KEY")
+_es_produccion = bool(os.getenv("DATABASE_URL") or os.getenv("RENDER"))
+if _es_produccion:
+    if not _secret or _secret == "OFICINA_SEGUROS_CAMBIAR_CLAVE":
+        raise RuntimeError(
+            "FLASK_SECRET_KEY debe estar definida en producción y no puede "
+            "ser el valor por defecto. Configurala en el panel de Render."
+        )
+    app.secret_key = _secret
+else:
+    app.secret_key = _secret or "OFICINA_SEGUROS_CAMBIAR_CLAVE"
 
-BASE_DIR = Path(__file__).resolve().parent
-load_dotenv(BASE_DIR / '.env')
-
-app.config['MAX_CONTENT_LENGTH'] = 20 * 1024 * 1024
+# Cookies de sesión endurecidas (P0.1 / P1.1).
+app.config.update(
+    SESSION_COOKIE_HTTPONLY=True,
+    SESSION_COOKIE_SAMESITE="Lax",
+    SESSION_COOKIE_SECURE=_es_produccion,  # solo HTTPS en prod
+    MAX_CONTENT_LENGTH=20 * 1024 * 1024,
+)
 
 DOCUMENTOS_DIR = BASE_DIR / "documentos"
 
@@ -291,6 +311,10 @@ def inicializar_base_datos():
         if "email" not in columnas: db.execute("ALTER TABLE usuarios ADD COLUMN email TEXT NOT NULL DEFAULT ''")
         if "rol" not in columnas: db.execute("ALTER TABLE usuarios ADD COLUMN rol TEXT NOT NULL DEFAULT 'usuario'")
         if "protegido" not in columnas: db.execute("ALTER TABLE usuarios ADD COLUMN protegido INTEGER NOT NULL DEFAULT 0")
+        # P2.6 / Tanda C — tipo de chat (flota|coti|alta|envios)
+        cols_conv = {fila[1] for fila in db.execute("PRAGMA table_info(conversaciones)").fetchall()}
+        if "tipo" not in cols_conv:
+            db.execute("ALTER TABLE conversaciones ADD COLUMN tipo TEXT NOT NULL DEFAULT ''")
         # El bootstrap del admin en SQLite sólo importa cuando NO hay Neon
         # (desarrollo local). Con Neon configurada, el admin se crea/mantiene
         # en Postgres desde inicializar_postgres(), para no pisar contraseñas
@@ -664,6 +688,113 @@ def extraer_paginas_pdf(ruta):
 def extraer_texto_pdf(ruta):
     """Compatibilidad con las funciones existentes que necesitan texto completo."""
     return "\n\n".join(p["texto"] for p in extraer_paginas_pdf(ruta))
+
+
+def extraer_texto_pdf_bytes(datos, max_paginas=25, max_chars=25_000):
+    """Extrae texto desde bytes de un PDF (upload en memoria). P1.7 / Tanda B."""
+    if not datos:
+        return ""
+    paginas = []
+    total = 0
+    try:
+        documento = fitz.open(stream=datos, filetype="pdf")
+        try:
+            n = min(documento.page_count, max_paginas)
+            for i in range(n):
+                if total >= max_chars:
+                    break
+                try:
+                    pagina = documento.load_page(i)
+                    contenido = pagina.get_text("text", sort=True) or ""
+                    del pagina
+                except Exception:
+                    continue
+                contenido = re.sub(r"[ \t]+", " ", contenido)
+                contenido = re.sub(r"\n{3,}", "\n\n", contenido).strip()
+                if not contenido:
+                    continue
+                restante = max_chars - total
+                if len(contenido) > restante:
+                    contenido = contenido[:restante]
+                paginas.append(contenido)
+                total += len(contenido)
+        finally:
+            documento.close()
+    except Exception as error:
+        print("ERROR extraer_texto_pdf_bytes:", error)
+        return ""
+    return "\n\n".join(paginas)
+
+
+def _proponer_ficha_desde_manual(texto, compania="", nombre_archivo=""):
+    """
+    Arma una ficha sugerida a partir del texto de un manual/póliza (P1.7).
+    Heurística léxica: prioriza remolque/asistencia/cobertura/límites.
+    No usa LLM (latencia/costo). El humano confirma antes de guardar.
+    """
+    texto = (texto or "").strip()
+    if not texto or len(texto) < 40:
+        return None
+
+    compania = (compania or "").strip()
+    nombre = (nombre_archivo or "").strip()
+    if nombre.lower().endswith(".pdf"):
+        nombre = nombre[:-4]
+
+    lineas = [ln.strip() for ln in texto.splitlines() if ln.strip()]
+    keywords = (
+        "remolque", "grúa", "grua", "asistencia", "auxilio", "cobertura",
+        "límite", "limite", "franquicia", "terceros", "all risk", "casco",
+        "km", "kilómetro", "kilometro", "servicio", "exclusión", "exclusion",
+        "suma asegurada", "deducible", "responsabilidad civil",
+    )
+    bullets = []
+    vistos = set()
+    for ln in lineas:
+        low = ln.lower()
+        if any(k in low for k in keywords):
+            if len(ln) < 12 or len(ln) > 400:
+                continue
+            clave = re.sub(r"\s+", " ", low)[:120]
+            if clave in vistos:
+                continue
+            vistos.add(clave)
+            bullets.append("• " + ln)
+            if len(bullets) >= 18:
+                break
+
+    if not bullets:
+        for ln in lineas:
+            if len(ln) < 20 or len(ln) > 300:
+                continue
+            if re.match(r"^(página|page|confidential|www\.|http)", ln, re.I):
+                continue
+            bullets.append("• " + ln)
+            if len(bullets) >= 10:
+                break
+
+    if not bullets:
+        return None
+
+    if compania:
+        titulo = f"{compania} — {nombre}" if nombre else f"Manual {compania}"
+    else:
+        titulo = nombre or "Ficha desde manual"
+    titulo = titulo[:200]
+
+    cuerpo_parts = []
+    if compania:
+        cuerpo_parts.append(f"Compañía: {compania}")
+    if nombre:
+        cuerpo_parts.append(f"Fuente: {nombre}.pdf")
+    cuerpo_parts.append("")
+    cuerpo_parts.append("Extracto operativo (revisar y completar):")
+    cuerpo_parts.extend(bullets)
+    cuerpo = "\n".join(cuerpo_parts)
+    if len(cuerpo) > 12000:
+        cuerpo = cuerpo[:12000] + "\n\n[Texto recortado por longitud]"
+
+    return {"titulo": titulo, "contenido": cuerpo}
 
 
 def _crear_chunks_paginas(paginas, chunk_chars=1400, overlap=220):
@@ -1137,46 +1268,29 @@ def documentos():
 )
 @requiere_login
 def ver_carpeta(carpeta):
+    # P0.5 — Anti path-traversal: el path resuelto debe quedar bajo DOCUMENTOS_DIR.
+    try:
+        carpeta_path = (DOCUMENTOS_DIR / carpeta).resolve()
+        if not carpeta_path.is_relative_to(DOCUMENTOS_DIR.resolve()):
+            return ("Acceso denegado", 403)
+    except (OSError, ValueError):
+        return ("Compañía no encontrada", 404)
 
-    carpeta_path = (
-        DOCUMENTOS_DIR /
-        carpeta
-    )
-
-    if not carpeta_path.exists():
-
-        return (
-            "Compañía no encontrada",
-            404
-        )
+    if not carpeta_path.exists() or not carpeta_path.is_dir():
+        return ("Compañía no encontrada", 404)
 
     archivos = []
-
     for archivo in carpeta_path.rglob("*"):
-
         if archivo.is_file():
-
+            try:
+                rel = archivo.relative_to(carpeta_path)
+            except ValueError:
+                continue
             archivos.append({
-
-                "nombre":
-                    archivo.name,
-
-                "ruta":
-                    str(
-                        archivo.relative_to(
-                            carpeta_path
-                        )
-                    ),
-
-                "extension":
-                    archivo.suffix.lower(),
-
-                "tamaño":
-                    round(
-                        archivo.stat().st_size / 1024,
-                        1
-                    )
-
+                "nombre": archivo.name,
+                "ruta": str(rel),
+                "extension": archivo.suffix.lower(),
+                "tamaño": round(archivo.stat().st_size / 1024, 1),
             })
 
     return render_template(
@@ -1198,28 +1312,22 @@ def ver_carpeta(carpeta):
 )
 @requiere_login
 def archivo(carpeta, archivo):
+    # P0.5 — Anti path-traversal.
+    try:
+        carpeta_path = (DOCUMENTOS_DIR / carpeta).resolve()
+        archivo_path = (carpeta_path / archivo).resolve()
+        base = DOCUMENTOS_DIR.resolve()
+        if not carpeta_path.is_relative_to(base) or not archivo_path.is_relative_to(base):
+            return ("Acceso denegado", 403)
+    except (OSError, ValueError):
+        return ("Archivo no encontrado", 404)
 
-    carpeta_path = (
-        DOCUMENTOS_DIR /
-        carpeta
-    )
+    if not archivo_path.exists() or not archivo_path.is_file():
+        return ("Archivo no encontrado", 404)
 
-    archivo_path = (
-        carpeta_path /
-        archivo
-    )
-
-    if not archivo_path.exists():
-
-        return (
-            "Archivo no encontrado",
-            404
-        )
-
-    return send_from_directory(
-        carpeta_path,
-        archivo
-    )
+    # send_from_directory necesita el directorio base y el nombre relativo.
+    rel = archivo_path.relative_to(carpeta_path)
+    return send_from_directory(str(carpeta_path), str(rel))
 
 
 # ==========================================================
@@ -1977,14 +2085,16 @@ def _validar_chat(chat_id, usuario):
 
 
 def _guardar_mensaje(chat_id, rol, contenido):
-    """Inserta un mensaje y actualiza el timestamp de la conversación."""
+    """Inserta un mensaje y actualiza el timestamp de la conversación.
+    P1.0b — Si Postgres falla, se propaga el error (no silenciar).
+    """
     if _chats_usar_pg():
         try:
             pg_agregar_mensaje(chat_id, rol, contenido)
             return
         except Exception as error:
             print("ERROR _guardar_mensaje PG:", error)
-            return
+            raise  # no tragar: el chat debe enterarse
     with closing(conectar_db()) as db:
         db.execute(
             "INSERT INTO mensajes (conversacion_id,rol,contenido) VALUES (?,?,?)",
@@ -1993,6 +2103,80 @@ def _guardar_mensaje(chat_id, rol, contenido):
         db.execute(
             "UPDATE conversaciones SET actualizado_en=CURRENT_TIMESTAMP WHERE id=?",
             (chat_id,)
+        )
+        db.commit()
+
+
+def _historial_desde_db(chat_id, usuario, limite=10):
+    """P1.3 — Historial para Gemini desde DB (no confiar en el cliente).
+    Devuelve los últimos `limite` mensajes previos al turno actual.
+    """
+    if not chat_id:
+        return []
+    if _chats_usar_pg():
+        try:
+            from database_pg import listar_mensajes_historial
+            return listar_mensajes_historial(chat_id, usuario, limite=limite)
+        except Exception as error:
+            print("ERROR _historial_desde_db PG:", error)
+            return []
+    with closing(conectar_db()) as db:
+        if not db.execute(
+            "SELECT id FROM conversaciones WHERE id=? AND usuario=?",
+            (chat_id, usuario),
+        ).fetchone():
+            return []
+        rows = db.execute(
+            """
+            SELECT rol, contenido FROM mensajes
+            WHERE conversacion_id=?
+            ORDER BY id DESC LIMIT ?
+            """,
+            (chat_id, limite),
+        ).fetchall()
+        out = [
+            {"rol": r["rol"], "contenido": r["contenido"]}
+            for r in reversed(list(rows))
+            if r["rol"] in ("user", "assistant") and str(r["contenido"] or "").strip()
+        ]
+        return out
+
+
+def _detectar_tipo_chat(mensaje):
+    """Tipo operativo a partir del mensaje (comandos slash y señales claras)."""
+    t = (mensaje or "").strip().lower()
+    if t.startswith("/flota") or t.startswith("flota "):
+        return "flota"
+    if t.startswith("/coti"):
+        return "coti"
+    if t.startswith("/guardar"):
+        return "alta"
+    if t.startswith("/envios") or t.startswith("/envíos"):
+        return "envios"
+    if "whatsapp" in t[:80]:
+        return "whatsapp"
+    return ""
+
+
+def _asignar_tipo_chat(chat_id, usuario, mensaje):
+    """Persiste tipo solo si el chat aún no tiene uno (P2.6)."""
+    tipo = _detectar_tipo_chat(mensaje)
+    if not tipo or not chat_id:
+        return
+    if _chats_usar_pg():
+        try:
+            from database_pg import actualizar_tipo_chat
+            actualizar_tipo_chat(chat_id, usuario, tipo)
+        except Exception as error:
+            print("ERROR _asignar_tipo_chat PG:", error)
+        return
+    with closing(conectar_db()) as db:
+        db.execute(
+            """
+            UPDATE conversaciones SET tipo=?
+            WHERE id=? AND usuario=? AND (tipo IS NULL OR tipo='')
+            """,
+            (tipo, chat_id, usuario),
         )
         db.commit()
 
@@ -2123,13 +2307,15 @@ _flota_usar_pg = _usuarios_usar_pg
 
 
 def _flota_obtener(chat_id):
-    """Devuelve el estado de la flota activa de esta conversación, o None."""
+    """Devuelve el estado de la flota activa de esta conversación, o None.
+    P1.4 — Si PG falla, se propaga (no evaporar flota en silencio).
+    """
     if _flota_usar_pg():
         try:
             return pg_obtener_flota_activa(chat_id)
         except Exception as error:
             print("ERROR _flota_obtener PG:", error)
-            return None
+            raise
     with closing(conectar_db()) as db:
         fila = db.execute(
             "SELECT conversacion_id, estado, libro_id, datos_generales, vehiculos "
@@ -2148,14 +2334,16 @@ def _flota_obtener(chat_id):
 
 
 def _flota_guardar(chat_id, estado, libro_id, datos_generales, vehiculos):
-    """Persiste (crea o actualiza) el estado de trabajo de una flota."""
+    """Persiste (crea o actualiza) el estado de trabajo de una flota.
+    P1.4 — Si PG falla, se propaga el error al chat.
+    """
     if _flota_usar_pg():
         try:
             pg_guardar_flota_activa(chat_id, estado, libro_id, datos_generales, vehiculos)
             return
         except Exception as error:
             print("ERROR _flota_guardar PG:", error)
-            return
+            raise
     with closing(conectar_db()) as db:
         db.execute(
             """
@@ -2187,7 +2375,7 @@ def _flota_borrar(chat_id):
             return
         except Exception as error:
             print("ERROR _flota_borrar PG:", error)
-            return
+            raise
     with closing(conectar_db()) as db:
         db.execute("DELETE FROM flotas_activas WHERE conversacion_id=?", (chat_id,))
         db.commit()
@@ -2205,7 +2393,7 @@ def listar_chats():
             return jsonify({"ok": False, "error": "No se pudieron cargar las conversaciones."}), 500
     with closing(conectar_db()) as db:
         rows = db.execute(
-            "SELECT id,titulo,creado_en,actualizado_en FROM conversaciones WHERE usuario=? ORDER BY actualizado_en DESC, id DESC",
+            "SELECT id,titulo,COALESCE(tipo,'') AS tipo,creado_en,actualizado_en FROM conversaciones WHERE usuario=? ORDER BY actualizado_en DESC, id DESC",
             (session["usuario"],)
         ).fetchall()
         return jsonify({"ok": True, "chats":[dict(r) for r in rows]})
@@ -3951,16 +4139,23 @@ def chat():
         # Chat precargado como "Nueva conversación": titular con la primera consulta real.
         _auto_titulo_si_corresponde(chat_id, session["usuario"], mensaje)
 
-    if not isinstance(historial, list):
-        historial = []
+    # P1.3 — Historial desde DB (fuente de verdad). El JSON del cliente es
+    # legacy/opcional y solo se usa si la DB no tiene mensajes aún.
+    historial_db = _historial_desde_db(chat_id, session["usuario"], limite=10)
+    if historial_db:
+        historial = historial_db
+    else:
+        if not isinstance(historial, list):
+            historial = []
+        historial = [
+            x for x in historial
+            if isinstance(x, dict)
+            and x.get("rol") in {"user", "assistant"}
+            and str(x.get("contenido", "")).strip()
+        ][-10:]
 
-    # Limitamos el historial para no consumir contexto innecesariamente.
-    historial = [
-        x for x in historial
-        if isinstance(x, dict)
-        and x.get("rol") in {"user", "assistant"}
-        and str(x.get("contenido", "")).strip()
-    ][-10:]
+    # P2.6 — tipo de chat persistido (flota/coti/alta/envios)
+    _asignar_tipo_chat(chat_id, session["usuario"], mensaje)
 
     contexto_pdf_adjunto = ""
     nombre_pdf_adjunto = ""
@@ -4653,6 +4848,7 @@ def subir_manual(slug):
                     f'El archivo "{archivo.filename}" no parece ser un PDF válido.'
                 )
             archivo.stream.seek(0)
+            ficha_sugerida = None
             try:
                 datos_validacion = archivo.stream.read()
                 archivo.stream.seek(0)
@@ -4663,6 +4859,15 @@ def subir_manual(slug):
                     )
                 documento = fitz.open(stream=datos_validacion, filetype="pdf")
                 documento.close()
+                # P1.7 — proponer ficha desde el mismo bytes (sin segunda lectura).
+                try:
+                    texto_pdf = extraer_texto_pdf_bytes(datos_validacion)
+                    ficha_sugerida = _proponer_ficha_desde_manual(
+                        texto_pdf, compania=compania, nombre_archivo=nombre_seguro
+                    )
+                except Exception as ficha_err:
+                    print("ADVERTENCIA ficha sugerida manual:", ficha_err)
+                    ficha_sugerida = None
                 del datos_validacion
             except Exception as exc:
                 raise ValueError(
@@ -4733,11 +4938,14 @@ def subir_manual(slug):
                 cargados=resultados,
             ), 502
 
-        resultados.append({
+        item_resultado = {
             "archivo": r2_key_nuevo,
             "nombre": nombre_seguro,
             "tamaño": tamaño,
-        })
+        }
+        if ficha_sugerida:
+            item_resultado["ficha_sugerida"] = ficha_sugerida
+        resultados.append(item_resultado)
 
         # Sólo un reemplazo explícito elimina el objeto anterior. Una carga
         # normal jamás toca los manuales existentes.
@@ -4998,6 +5206,11 @@ PLANTILLAS_METADATO = [
 ]
 
 
+def _pendientes_usar_pg():
+    """P0.2 — Con Neon los pendientes viven en Postgres (sobreviven redeploy)."""
+    return bool(os.getenv("DATABASE_URL"))
+
+
 def _conectar_db_pendientes():
     return conectar_db()
 
@@ -5008,6 +5221,15 @@ def api_listar_pendientes():
     estado = (request.args.get("estado") or "pendiente").strip().lower()
     if estado not in pendientes_ops.ESTADOS_VALIDOS:
         estado = "pendiente"
+    if _pendientes_usar_pg():
+        try:
+            from database_pg import listar_pendientes as pg_listar, contar_pendientes as pg_contar
+            items = pg_listar(session["usuario"], estado=estado)
+            total = pg_contar(session["usuario"], estado="pendiente")
+            return jsonify({"ok": True, "pendientes": items, "total_pendientes": total})
+        except Exception as error:
+            print("ERROR api_listar_pendientes PG:", error)
+            return jsonify({"ok": False, "error": "No se pudieron cargar los pendientes."}), 500
     with closing(_conectar_db_pendientes()) as db:
         pendientes_ops.asegurar_tabla(db)
         items = pendientes_ops.listar(db, session["usuario"], estado=estado)
@@ -5022,6 +5244,15 @@ def api_crear_pendiente():
     tipo = str(data.get("tipo") or "generico")
     titulo = str(data.get("titulo") or "Pendiente").strip()
     payload = data.get("payload") if isinstance(data.get("payload"), dict) else {}
+    if _pendientes_usar_pg():
+        try:
+            from database_pg import crear_pendiente as pg_crear, contar_pendientes as pg_contar
+            pid = pg_crear(session["usuario"], tipo, titulo, payload)
+            total = pg_contar(session["usuario"], estado="pendiente")
+            return jsonify({"ok": True, "id": pid, "total_pendientes": total})
+        except Exception as error:
+            print("ERROR api_crear_pendiente PG:", error)
+            return jsonify({"ok": False, "error": "No se pudo crear el pendiente."}), 500
     with closing(_conectar_db_pendientes()) as db:
         pendientes_ops.asegurar_tabla(db)
         pid = pendientes_ops.crear(db, session["usuario"], tipo, titulo, payload)
@@ -5036,6 +5267,17 @@ def api_actualizar_pendiente(pendiente_id):
     estado = str(data.get("estado") or "").strip().lower()
     if estado not in pendientes_ops.ESTADOS_VALIDOS:
         return jsonify({"ok": False, "error": "Estado no válido."}), 400
+    if _pendientes_usar_pg():
+        try:
+            from database_pg import actualizar_estado_pendiente as pg_upd, contar_pendientes as pg_contar
+            ok = pg_upd(pendiente_id, session["usuario"], estado)
+            if not ok:
+                return jsonify({"ok": False, "error": "Pendiente no encontrado."}), 404
+            total = pg_contar(session["usuario"], estado="pendiente")
+            return jsonify({"ok": True, "total_pendientes": total})
+        except Exception as error:
+            print("ERROR api_actualizar_pendiente PG:", error)
+            return jsonify({"ok": False, "error": "No se pudo actualizar el pendiente."}), 500
     with closing(_conectar_db_pendientes()) as db:
         pendientes_ops.asegurar_tabla(db)
         ok = pendientes_ops.actualizar_estado(db, pendiente_id, session["usuario"], estado)
@@ -5048,6 +5290,17 @@ def api_actualizar_pendiente(pendiente_id):
 @app.route("/api/pendientes/<int:pendiente_id>", methods=["DELETE"])
 @requiere_login
 def api_eliminar_pendiente(pendiente_id):
+    if _pendientes_usar_pg():
+        try:
+            from database_pg import eliminar_pendiente as pg_del, contar_pendientes as pg_contar
+            ok = pg_del(pendiente_id, session["usuario"])
+            if not ok:
+                return jsonify({"ok": False, "error": "Pendiente no encontrado."}), 404
+            total = pg_contar(session["usuario"], estado="pendiente")
+            return jsonify({"ok": True, "total_pendientes": total})
+        except Exception as error:
+            print("ERROR api_eliminar_pendiente PG:", error)
+            return jsonify({"ok": False, "error": "No se pudo eliminar el pendiente."}), 500
     with closing(_conectar_db_pendientes()) as db:
         pendientes_ops.asegurar_tabla(db)
         ok = pendientes_ops.eliminar(db, pendiente_id, session["usuario"])
@@ -5092,7 +5345,9 @@ def api_ficha_desde_texto():
 @app.route("/api/validar-excel-fila", methods=["POST"])
 @requiere_login
 def api_validar_excel_fila():
-    """Validación liviana de una fila de asegurados/flota antes de persistir."""
+    """Validación liviana de una fila de asegurados/flota antes de persistir.
+    P1.6 — cableada desde el front; incluye aviso de patente duplicada.
+    """
     data = request.get_json(silent=True) or {}
     libro_id = str(data.get("libro_id") or "1")
     campos = data.get("campos") if isinstance(data.get("campos"), dict) else {}
@@ -5102,6 +5357,7 @@ def api_validar_excel_fila():
     def norm(v):
         return str(v or "").strip()
 
+    patente_limpia = ""
     if libro_id == "1":
         aseg = norm(campos.get("ASEGURADO") or campos.get("asegurado"))
         num = norm(campos.get("NUMERO") or campos.get("numero"))
@@ -5116,6 +5372,7 @@ def api_validar_excel_fila():
             if len(limpio) < 6 or len(limpio) > 8:
                 avisos.append(f"La patente '{pat}' tiene un formato poco habitual.")
             campos["PATENTE"] = limpio or pat
+            patente_limpia = limpio
         if not cia:
             avisos.append("CIA vacío: conviene completarlo para búsquedas futuras.")
     else:
@@ -5127,6 +5384,33 @@ def api_validar_excel_fila():
             if len(limpio) < 6 or len(limpio) > 8:
                 avisos.append(f"La patente '{pat}' tiene un formato poco habitual.")
             campos["patente"] = limpio or pat
+            patente_limpia = limpio
+
+    # Anti-duplicado por patente (aviso, no bloqueo duro).
+    if patente_limpia and len(errores) == 0:
+        try:
+            datos = leer_excel_interno(libro_id)
+            filas = datos.get("filas") or []
+            if filas:
+                headers = [str(h or "").strip().upper() for h in filas[0]]
+                idx_pat = None
+                for i, h in enumerate(headers):
+                    if h in ("PATENTE", "DOMINIO", "CHAPA"):
+                        idx_pat = i
+                        break
+                if idx_pat is not None:
+                    for row in filas[1:]:
+                        if idx_pat >= len(row):
+                            continue
+                        existente = re.sub(r"[^A-Za-z0-9]", "", str(row[idx_pat] or "")).upper()
+                        if existente and existente == patente_limpia:
+                            avisos.append(
+                                f"La patente {patente_limpia} ya figura en el Excel. "
+                                "Revisá si es un duplicado antes de guardar."
+                            )
+                            break
+        except Exception as error:
+            print("ADVERTENCIA validar patente duplicada:", error)
 
     return jsonify({
         "ok": len(errores) == 0,
@@ -5140,6 +5424,12 @@ def api_validar_excel_fila():
 @requiere_login
 def pagina_pendientes():
     return render_template("pendientes.html", usuario=session["usuario"])
+
+@app.route("/internet")
+@requiere_login
+def pagina_internet():
+    return render_template("internet.html", usuario=session["usuario"])
+
 
 
 if __name__ == "__main__":

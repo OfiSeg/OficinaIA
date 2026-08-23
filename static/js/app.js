@@ -252,8 +252,11 @@ function renderListaChats(chats){
     const b=document.createElement('button');
     b.type='button';
     b.className='chat-item'+(x.id===currentChatId?' active':'');
-    b.innerHTML='<span class="chat-item-title">'+esc(x.titulo||'Sin título')+'</span><small class="chat-item-meta">'+esc(formatearFechaChat(x.actualizado_en))+'</small>';
-    b.onclick=()=>abrirChat(x.id);
+    const tagMap={flota:'Flota',coti:'Coti',alta:'Alta',envios:'Envío',whatsapp:'WA'};
+    const tagLabel=tagMap[String(x.tipo||'').toLowerCase()]||'';
+    const tagHtml=tagLabel?'<em class="chat-tag">'+esc(tagLabel)+'</em>':'';
+    b.innerHTML='<span class="chat-item-title">'+esc(x.titulo||'Sin título')+tagHtml+'</span><small class="chat-item-meta">'+esc(formatearFechaChat(x.actualizado_en))+'</small>';
+    b.onclick=()=>{abrirChat(x.id);if(typeof window.cerrarSheetChats==='function')window.cerrarSheetChats();};
     b.title=x.titulo||'';
 
     const actions=document.createElement('div');
@@ -666,15 +669,45 @@ function mostrarPropuestaExcel(propuesta){
 
       guardar.disabled=true;
       editar.disabled=true;
-      estado.textContent='Guardando…';
+      estado.textContent='Validando…';
       try{
+        const libroDest=String(selector.value);
+        const avisosAcum=[];
+        for(let i=0;i<filas.length;i++){
+          const valResp=await fetch('/api/validar-excel-fila',{
+            method:'POST',
+            headers:{'Content-Type':'application/json'},
+            credentials:'same-origin',
+            body:JSON.stringify({campos:filas[i],libro_id:libroDest})
+          });
+          const val=await leerJsonSeguro(valResp);
+          if(val.errores&&val.errores.length){
+            throw Error(`Fila ${i+1}: ${val.errores.join(' ')}`);
+          }
+          if(val.campos&&typeof val.campos==='object'){
+            Object.assign(filas[i],val.campos);
+          }
+          if(val.avisos&&val.avisos.length){
+            avisosAcum.push(`Fila ${i+1}: ${val.avisos.join(' ')}`);
+          }
+        }
+        if(avisosAcum.length){
+          const seguir=confirm(avisosAcum.join('\n')+'\n\n¿Guardar de todas formas?');
+          if(!seguir){
+            estado.textContent=avisosAcum[0];
+            guardar.disabled=false;
+            editar.disabled=false;
+            return;
+          }
+        }
+        estado.textContent='Guardando…';
         const resp=await fetch('/api/excel/agregar-fila',{
           method:'POST',
           headers:{'Content-Type':'application/json'},
           credentials:'same-origin',
           body:JSON.stringify({
             filas,
-            libro_id:String(selector.value),
+            libro_id:libroDest,
             tipo_propuesta:'flota'
           })
         });
@@ -775,8 +808,38 @@ function mostrarPropuestaExcel(propuesta){
       return;
     }
     guardar.disabled=true;
-    estado.textContent='Guardando…';
+    estado.textContent='Validando…';
     try{
+      // P1.6 — cablear /api/validar-excel-fila antes de persistir
+      const valResp=await fetch('/api/validar-excel-fila',{
+        method:'POST',
+        headers:{'Content-Type':'application/json'},
+        credentials:'same-origin',
+        body:JSON.stringify({campos:valores,libro_id:libroId})
+      });
+      const val=await leerJsonSeguro(valResp);
+      if(val.errores&&val.errores.length){
+        estado.textContent=val.errores.join(' ');
+        guardar.disabled=false;
+        return;
+      }
+      if(val.campos&&typeof val.campos==='object'){
+        Object.assign(valores,val.campos);
+        form.querySelectorAll('input[data-campo]').forEach(input=>{
+          if(Object.prototype.hasOwnProperty.call(valores,input.dataset.campo)){
+            input.value=valores[input.dataset.campo];
+          }
+        });
+      }
+      if(val.avisos&&val.avisos.length){
+        const seguir=confirm(val.avisos.join('\n')+'\n\n¿Guardar de todas formas?');
+        if(!seguir){
+          estado.textContent=val.avisos.join(' ');
+          guardar.disabled=false;
+          return;
+        }
+      }
+      estado.textContent='Guardando…';
       const resp=await fetch('/api/excel/agregar-fila',{
         method:'POST',
         headers:{'Content-Type':'application/json'},
@@ -1244,57 +1307,16 @@ document.addEventListener('DOMContentLoaded',inicializarFechaGlobal);
     return 'light';
   }
 
-  function captureOrigColors(){
-    const body = document.body;
-    if(!body || body.dataset.colorsCaptured) return;
-    const props = ['--navy','--teal','--bg','--sidebar-bg','--button-bg'];
-    props.forEach(p => {
-      const v = body.style.getPropertyValue(p);
-      if(v) body.dataset['orig' + p.replace(/--([a-z])/g, (_,c)=>c.toUpperCase()).replace(/-([a-z])/g, (_,c)=>c.toUpperCase())] = v.trim();
-    });
-    // map explicit
-    if(body.style.getPropertyValue('--navy')) body.dataset.origNavy = body.style.getPropertyValue('--navy').trim();
-    if(body.style.getPropertyValue('--teal')) body.dataset.origTeal = body.style.getPropertyValue('--teal').trim();
-    if(body.style.getPropertyValue('--bg')) body.dataset.origBg = body.style.getPropertyValue('--bg').trim();
-    if(body.style.getPropertyValue('--sidebar-bg')) body.dataset.origSidebarBg = body.style.getPropertyValue('--sidebar-bg').trim();
-    if(body.style.getPropertyValue('--button-bg')) body.dataset.origButtonBg = body.style.getPropertyValue('--button-bg').trim();
-    body.dataset.colorsCaptured = '1';
-  }
+  /* Tanda D — tema SOLO por data-theme (tokens en CSS). Sin body.style. */
+  const THEME_PROPS = ['--navy','--teal','--bg','--sidebar-bg','--button-bg','--ink','--muted','--soft','--line','--tealbg','--surface','--surface-2','--surface-3','--hover','--card','--panel'];
 
   function applyTheme(theme){
     document.documentElement.setAttribute('data-theme', theme);
+    document.documentElement.style.colorScheme = theme === 'dark' ? 'dark' : 'light';
+    // Limpiar residuos legacy de body.style (tandas anteriores)
     const body = document.body;
     if(body){
-      captureOrigColors();
-      if(theme === 'dark'){
-        body.style.setProperty('--navy', '#e8eef5');
-        body.style.setProperty('--teal', '#2dd4bf');
-        body.style.setProperty('--bg', '#0f1419');
-        body.style.setProperty('--sidebar-bg', '#151b23');
-        body.style.setProperty('--button-bg', '#0d8b7c');
-        body.style.setProperty('--ink', '#e2e8f0');
-        body.style.setProperty('--muted', '#94a3b8');
-        body.style.setProperty('--soft', '#7a8a9c');
-        body.style.setProperty('--line', '#2a3544');
-        body.style.setProperty('--tealbg', '#134e4a');
-      } else {
-        const map = {
-          '--navy': body.dataset.origNavy,
-          '--teal': body.dataset.origTeal,
-          '--bg': body.dataset.origBg,
-          '--sidebar-bg': body.dataset.origSidebarBg,
-          '--button-bg': body.dataset.origButtonBg
-        };
-        Object.keys(map).forEach(k => {
-          if(map[k]) body.style.setProperty(k, map[k]);
-          else body.style.removeProperty(k);
-        });
-        body.style.removeProperty('--ink');
-        body.style.removeProperty('--muted');
-        body.style.removeProperty('--soft');
-        body.style.removeProperty('--line');
-        body.style.removeProperty('--tealbg');
-      }
+      THEME_PROPS.forEach(p => body.style.removeProperty(p));
     }
     const btn = document.getElementById('themeToggle');
     if(btn){
@@ -1321,8 +1343,11 @@ document.addEventListener('DOMContentLoaded',inicializarFechaGlobal);
 
   function applyFont(size){
     document.documentElement.setAttribute('data-font-size', size);
-    const label = document.getElementById('fontLabel');
-    if(label) label.textContent = FONT_LABELS[size] || 'Normal';
+    // Controles solo − / + (sin etiqueta de tamaño)
+    const dec = document.getElementById('fontDec');
+    const inc = document.getElementById('fontInc');
+    if(dec) dec.disabled = size === FONT_STEPS[0];
+    if(inc) inc.disabled = size === FONT_STEPS[FONT_STEPS.length - 1];
   }
 
   function setFont(size){
@@ -1382,4 +1407,81 @@ document.addEventListener('DOMContentLoaded',inicializarFechaGlobal);
   } else {
     initAppearance();
   }
+})();
+
+
+/* Sidebar collapse / rail */
+(function(){
+  const KEY='oficinaia_sidebar';
+  function apply(collapsed){
+    document.documentElement.setAttribute('data-sidebar', collapsed ? 'collapsed' : 'expanded');
+    const btn=document.getElementById('sidebarToggle');
+    if(btn){
+      btn.setAttribute('aria-expanded', collapsed ? 'false' : 'true');
+      btn.title = collapsed ? 'Expandir menú' : 'Contraer menú';
+    }
+    try{localStorage.setItem(KEY, collapsed ? 'collapsed' : 'expanded')}catch(_){}
+  }
+  function init(){
+    const btn=document.getElementById('sidebarToggle');
+    if(!btn)return;
+    let collapsed=false;
+    try{collapsed=localStorage.getItem(KEY)==='collapsed'}catch(_){}
+    apply(collapsed);
+    btn.addEventListener('click',()=>{
+      const now=document.documentElement.getAttribute('data-sidebar')==='collapsed';
+      apply(!now);
+    });
+  }
+  if(document.readyState==='loading')document.addEventListener('DOMContentLoaded',init);
+  else init();
+})();
+
+
+/* P2.12 / Tanda C — Sheet de chats en mobile */
+(function(){
+  function abrirSheetChats(){
+    const sheet=document.getElementById('chatListSheet');
+    const body=document.getElementById('chatListSheetBody');
+    if(!sheet||!body)return;
+    body.innerHTML='';
+    const source=document.getElementById('chatList');
+    if(source){
+      // Clonar filas visibles del listado desktop
+      source.querySelectorAll('.chat-item-row').forEach(row=>{
+        const clone=row.cloneNode(true);
+        const btn=clone.querySelector('.chat-item');
+        if(btn){
+          const id=Number(clone.dataset.chatId);
+          btn.onclick=()=>{abrirChat(id);cerrarSheetChats();};
+        }
+        clone.querySelectorAll('.chat-rename,.chat-delete').forEach(a=>a.remove());
+        body.appendChild(clone);
+      });
+      if(!body.children.length){
+        body.innerHTML='<div class="chat-empty">Sin conversaciones.</div>';
+      }
+    }
+    sheet.hidden=false;
+    document.body.classList.add('sheet-open');
+  }
+  function cerrarSheetChats(){
+    const sheet=document.getElementById('chatListSheet');
+    if(sheet)sheet.hidden=true;
+    document.body.classList.remove('sheet-open');
+  }
+  window.cerrarSheetChats=cerrarSheetChats;
+  function init(){
+    const openBtn=document.getElementById('chatListOpen');
+    if(openBtn)openBtn.addEventListener('click',abrirSheetChats);
+    document.getElementById('chatListSheet')?.querySelectorAll('[data-close-sheet]').forEach(el=>{
+      el.addEventListener('click',cerrarSheetChats);
+    });
+    document.getElementById('chatListSheetNew')?.addEventListener('click',()=>{
+      nuevoChat();
+      cerrarSheetChats();
+    });
+  }
+  if(document.readyState==='loading')document.addEventListener('DOMContentLoaded',init);
+  else init();
 })();

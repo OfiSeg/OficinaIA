@@ -58,19 +58,22 @@ def _coincidencia_identificador(pregunta, fila):
     return False
 
 def _asegurar_excel_local_para_ia():
-    """Recupera el Excel interno desde R2 si la copia local no existe.
-    No modifica app.py y evita que el chat trabaje con un archivo inexistente
-    en una instancia nueva de Render.
+    """Asegura el Excel interno para la IA usando la misma fuente que la UI (P0.6).
+
+    Si R2 está configurado, SIEMPRE descarga de R2 (aunque exista copia local
+    del repo). Así Gemini no trabaja con el xlsx versionado en git mientras
+    la grilla de /notas ya tiene la versión de nube.
     """
-    if EXCEL_INTERNO.exists():
-        return True
     if descargar_excel_interno is None:
-        return False
+        return EXCEL_INTERNO.exists()
     try:
-        return bool(descargar_excel_interno(EXCEL_INTERNO, EXCEL_INTERNO_R2_KEY))
+        ok = bool(descargar_excel_interno(EXCEL_INTERNO, EXCEL_INTERNO_R2_KEY))
+        if ok:
+            return True
+        return EXCEL_INTERNO.exists()
     except Exception as error:
         print("ERROR RECUPERANDO EXCEL INTERNO PARA IA:", error)
-        return False
+        return EXCEL_INTERNO.exists()
 
 
 def _cargar_excel_interno():
