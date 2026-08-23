@@ -1,0 +1,147 @@
+{% extends 'base.html' %}
+{% block title %}Pendientes · {{config_global.nombre_oficina}}{% endblock %}
+{% block content %}
+<div class="page">
+  <header class="top">
+    <div>
+      <span>BANDEJA DE TRABAJO</span>
+      <h1>Pendientes</h1>
+      <p>Cola de trabajo real: cargas a Excel, flotas o cotis que quedaron a medias. No es el historial del chat.</p>
+    </div>
+    <strong class="count" id="pendientesCount">—</strong>
+  </header>
+
+  <div class="pend-filters">
+    <button type="button" class="pend-filter active" data-estado="pendiente">Pendientes</button>
+    <button type="button" class="pend-filter" data-estado="hecho">Hechos</button>
+    <button type="button" class="pend-filter" data-estado="descartado">Descartados</button>
+  </div>
+
+  <div id="pendientesLista" class="pend-list">
+    <div class="empty"><b>Cargando…</b></div>
+  </div>
+</div>
+{% endblock %}
+{% block scripts %}
+<script>
+(function(){
+  let estadoActual='pendiente';
+  const lista=document.getElementById('pendientesLista');
+  const countEl=document.getElementById('pendientesCount');
+
+  const TIPO_LABEL={
+    excel:'Excel',
+    flota:'Flota',
+    metadato:'Metadato',
+    coti:'Cotización',
+    whatsapp:'WhatsApp',
+    pdf_ficha:'Ficha PDF',
+    generico:'Tarea'
+  };
+
+  function esc(s){return String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]))}
+
+  function fecha(v){
+    if(!v)return '';
+    try{
+      const d=new Date(String(v).replace(' ','T')+'Z');
+      if(Number.isNaN(d.getTime()))return v;
+      return d.toLocaleString('es-AR',{day:'2-digit',month:'2-digit',year:'numeric',hour:'2-digit',minute:'2-digit'});
+    }catch(_){return v}
+  }
+
+  async function cargar(){
+    lista.innerHTML='<div class="empty"><b>Cargando…</b></div>';
+    try{
+      const r=await fetch('/api/pendientes?estado='+encodeURIComponent(estadoActual),{credentials:'same-origin'});
+      const d=await r.json();
+      if(!r.ok||!d.ok)throw Error(d.error||'Error');
+      const items=d.pendientes||[];
+      if(countEl)countEl.textContent=(d.total_pendientes??items.length)+' en cola';
+      if(window.actualizarBadgePendientes)window.actualizarBadgePendientes(d.total_pendientes||0);
+      if(!items.length){
+        lista.innerHTML='<div class="empty"><b>Nada por aquí</b><small>Usá “Dejar pendiente” en una propuesta de Excel/flota, o confirmá cargas más tarde desde acá.</small></div>';
+        return;
+      }
+      lista.innerHTML=items.map(item=>{
+        const tipo=TIPO_LABEL[item.tipo]||item.tipo;
+        const payload=item.payload||{};
+        const preview=payload.preview||payload.texto||payload.contenido||'';
+        const corto=String(preview).slice(0,180);
+        return `<article class="pend-card" data-id="${item.id}">
+          <header>
+            <span class="pend-tag">${esc(tipo)}</span>
+            <strong>${esc(item.titulo)}</strong>
+            <small>${esc(fecha(item.actualizado_en||item.creado_en))}</small>
+          </header>
+          ${corto?`<p class="pend-preview">${esc(corto)}${String(preview).length>180?'…':''}</p>`:''}
+          <div class="pend-actions">
+            ${estadoActual==='pendiente'?`
+              <button type="button" class="primary" data-act="hecho">Marcar hecho</button>
+              <button type="button" class="secondary" data-act="descartado">Descartar</button>
+            `:''}
+            ${payload.contenido||payload.texto?`<button type="button" class="secondary" data-act="copiar">Copiar texto</button>`:''}
+            <button type="button" class="secondary danger-text" data-act="borrar">Eliminar</button>
+          </div>
+        </article>`;
+      }).join('');
+    }catch(e){
+      lista.innerHTML=`<div class="empty"><b>No se pudo cargar</b><small>${esc(e.message||'')}</small></div>`;
+    }
+  }
+
+  document.querySelectorAll('.pend-filter').forEach(btn=>{
+    btn.addEventListener('click',()=>{
+      document.querySelectorAll('.pend-filter').forEach(b=>b.classList.remove('active'));
+      btn.classList.add('active');
+      estadoActual=btn.dataset.estado;
+      cargar();
+    });
+  });
+
+  lista.addEventListener('click',async e=>{
+    const btn=e.target.closest('button[data-act]');
+    if(!btn)return;
+    const card=btn.closest('.pend-card');
+    if(!card)return;
+    const id=card.dataset.id;
+    const act=btn.dataset.act;
+    if(act==='borrar'){
+      if(!confirm('¿Eliminar este pendiente?'))return;
+      const r=await fetch('/api/pendientes/'+id,{method:'DELETE',credentials:'same-origin'});
+      const d=await r.json().catch(()=>({}));
+      if(!r.ok){if(window.showToast)showToast(d.error||'Error','error');return}
+      if(window.showToast)showToast('Eliminado','success');
+      cargar();
+      return;
+    }
+    if(act==='copiar'){
+      try{
+        const r=await fetch('/api/pendientes?estado='+encodeURIComponent(estadoActual),{credentials:'same-origin'});
+        const d=await r.json();
+        const item=(d.pendientes||[]).find(x=>String(x.id)===String(id));
+        const texto=(item&&item.payload&&(item.payload.contenido||item.payload.texto||item.payload.preview))||'';
+        await navigator.clipboard.writeText(String(texto));
+        if(window.showToast)showToast('Texto copiado','success');
+      }catch(_){if(window.showToast)showToast('No se pudo copiar','error')}
+      return;
+    }
+    if(act==='hecho'||act==='descartado'){
+      btn.disabled=true;
+      const r=await fetch('/api/pendientes/'+id,{
+        method:'PATCH',
+        headers:{'Content-Type':'application/json'},
+        credentials:'same-origin',
+        body:JSON.stringify({estado:act})
+      });
+      const d=await r.json().catch(()=>({}));
+      if(!r.ok){if(window.showToast)showToast(d.error||'Error','error');btn.disabled=false;return}
+      if(window.showToast)showToast(act==='hecho'?'Marcado como hecho':'Descartado','success');
+      cargar();
+    }
+  });
+
+  cargar();
+})();
+</script>
+{% endblock %}

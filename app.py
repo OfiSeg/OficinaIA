@@ -24,6 +24,7 @@ from werkzeug.security import generate_password_hash, check_password_hash
 from werkzeug.utils import secure_filename
 from dotenv import load_dotenv
 
+import pendientes_ops
 from database_pg import (
     inicializar_postgres,
     listar_manuales,
@@ -301,6 +302,8 @@ def inicializar_base_datos():
             else:
                 db.execute("UPDATE usuarios SET rol='admin', protegido=1 WHERE usuario=?", (USUARIO_ADMIN_PRINCIPAL,))
         db.commit()
+        pendientes_ops.asegurar_tabla(db)
+
 
 def obtener_usuario(usuario):
     if _usuarios_usar_pg():
@@ -1994,6 +1997,128 @@ def _guardar_mensaje(chat_id, rol, contenido):
         db.commit()
 
 
+def _generar_titulo_chat(mensaje):
+    """Título corto y útil a partir de la primera consulta. Determinístico, sin IA."""
+    texto = " ".join(str(mensaje or "").split())
+    if not texto:
+        return "Nueva conversación"
+
+    if texto.startswith("/"):
+        partes = texto.split(None, 1)
+        cmd = partes[0]
+        resto = partes[1].strip() if len(partes) > 1 else ""
+        if resto:
+            corto = resto[:42] + ("…" if len(resto) > 42 else "")
+            return f"{cmd} — {corto}"[:90]
+        return cmd[:90]
+
+    t = texto
+    t = re.sub(r"^[¿?¡!\s]+", "", t)
+    t = re.sub(r"[¿?¡!]+$", "", t).strip()
+    # Quitar muletillas de pregunta frecuentes
+    t = re.sub(
+        r"^(?:cu[aá]ntos?|cu[aá]ntas?|qu[eé]|c[oó]mo|cu[aá]ndo|d[oó]nde|por\s+qu[eé]|para\s+qu[eé]|"
+        r"me\s+pod[eé]s|pod[eé]s|necesit[oa]|quiero|haceme|armame|decime|mostrame|"
+        r"busc[aá]|listame|ten[eé]s|dame|pasame|informame)\b[\s,:]*",
+        "",
+        t,
+        flags=re.IGNORECASE,
+    ).strip()
+    t = re.sub(r"^(?:de\s+la|de\s+los|de\s+las|del|de|el|la|los|las|un|una)\s+", "", t, flags=re.IGNORECASE).strip()
+
+    if not t:
+        t = texto
+
+    # Si aparece una compañía conocida, priorizarla al frente
+    companias = (
+        "ATM", "Sancor", "San Cor", "Mercantil Andina", "Mercantil", "Rivadavia",
+        "Federación Patronal", "Federacion Patronal", "La Segunda", "Sura", "Allianz",
+        "Mapfre", "Zurich", "Experta", "Provincia", "Triunfo", "Nación", "Nacion",
+        "HDI", "Chubb", "SMG", "Galeno", "Prevención", "Prevencion",
+    )
+    encontrada = None
+    lower = t.lower()
+    for cia in sorted(companias, key=len, reverse=True):
+        if cia.lower() in lower:
+            encontrada = cia
+            break
+    if encontrada:
+        resto = re.sub(re.escape(encontrada), " ", t, count=1, flags=re.IGNORECASE)
+        # Limpiar verbos/conectores sobrantes del enunciado interrogativo
+        resto = re.sub(
+            r"\b(tiene|tienen|hay|son|es|para|sobre|con|del|de\s+la|de\s+los|de\s+las|de)\b",
+            " ",
+            resto,
+            flags=re.IGNORECASE,
+        )
+        resto = re.sub(r"\s+", " ", resto).strip(" -—,.:;")
+        if resto:
+            if resto and resto[0].islower():
+                resto = resto[0].upper() + resto[1:]
+            if len(resto) > 40:
+                corte = resto[:40].rsplit(" ", 1)[0] or resto[:40]
+                resto = corte + "…"
+            t = f"{encontrada} — {resto}"
+        else:
+            t = encontrada
+    else:
+        if t and t[0].islower():
+            t = t[0].upper() + t[1:]
+        if len(t) > 56:
+            corte = t[:53].rsplit(" ", 1)[0] or t[:53]
+            t = corte + "…"
+
+    return (t or "Nueva conversación")[:90]
+
+
+def _obtener_titulo_chat(chat_id, usuario):
+    if _chats_usar_pg():
+        try:
+            from database_pg import obtener_titulo_chat as pg_obtener_titulo
+            return pg_obtener_titulo(chat_id, usuario)
+        except Exception as error:
+            print("ERROR _obtener_titulo_chat PG:", error)
+            return None
+    with closing(conectar_db()) as db:
+        row = db.execute(
+            "SELECT titulo FROM conversaciones WHERE id=? AND usuario=?",
+            (chat_id, usuario),
+        ).fetchone()
+        return row["titulo"] if row else None
+
+
+def _actualizar_titulo_chat(chat_id, usuario, titulo):
+    titulo = (titulo or "").strip()[:100] or "Nueva conversación"
+    if _chats_usar_pg():
+        try:
+            from database_pg import actualizar_titulo_chat as pg_actualizar_titulo
+            return pg_actualizar_titulo(chat_id, usuario, titulo)
+        except Exception as error:
+            print("ERROR _actualizar_titulo_chat PG:", error)
+            return False
+    with closing(conectar_db()) as db:
+        cur = db.execute(
+            "UPDATE conversaciones SET titulo=?, actualizado_en=CURRENT_TIMESTAMP WHERE id=? AND usuario=?",
+            (titulo, chat_id, usuario),
+        )
+        db.commit()
+        return cur.rowcount > 0
+
+
+def _auto_titulo_si_corresponde(chat_id, usuario, mensaje):
+    """Si el chat sigue con el título por defecto, lo reemplaza con uno derivado del mensaje."""
+    actual = _obtener_titulo_chat(chat_id, usuario)
+    if actual is None:
+        return None
+    if str(actual).strip().lower() not in {"nueva conversación", "nueva conversacion", ""}:
+        return actual
+    nuevo = _generar_titulo_chat(mensaje)
+    if nuevo and nuevo != actual:
+        _actualizar_titulo_chat(chat_id, usuario, nuevo)
+        return nuevo
+    return actual
+
+
 _flota_usar_pg = _usuarios_usar_pg
 
 
@@ -2133,6 +2258,20 @@ def eliminar_chat(chat_id):
         db.execute("DELETE FROM conversaciones WHERE id=?",(chat_id,))
         db.commit()
     return jsonify({"ok":True})
+
+
+@app.route("/api/chats/<int:chat_id>", methods=["PATCH", "PUT"])
+@requiere_login
+def renombrar_chat(chat_id):
+    data = request.get_json(silent=True) or {}
+    titulo = str(data.get("titulo", "")).strip()[:100]
+    if not titulo:
+        return jsonify({"ok": False, "error": "El título no puede estar vacío."}), 400
+    ok = _actualizar_titulo_chat(chat_id, session["usuario"], titulo)
+    if not ok:
+        return jsonify({"ok": False, "error": "Conversación no encontrada."}), 404
+    return jsonify({"ok": True, "id": chat_id, "titulo": titulo})
+
 
 # CHAT
 # ==========================================================
@@ -3806,8 +3945,11 @@ def chat():
     if chat_id and not _validar_chat(chat_id, session["usuario"]):
         chat_id = None
     if not chat_id:
-        titulo = " ".join(mensaje.split())[:58] or "Nueva conversación"
+        titulo = _generar_titulo_chat(mensaje)
         chat_id = _crear_conversacion(session["usuario"], titulo)
+    else:
+        # Chat precargado como "Nueva conversación": titular con la primera consulta real.
+        _auto_titulo_si_corresponde(chat_id, session["usuario"], mensaje)
 
     if not isinstance(historial, list):
         historial = []
@@ -4202,7 +4344,7 @@ def subir_poliza():
             print("ERROR ROLLBACK R2 POLIZA:", rollback_error)
         return jsonify(ok=False,error="La póliza se subió a R2 pero no pudo registrarse en PostgreSQL. La operación no se completó."),502
 
-    return jsonify(ok=True,archivo=r2_key,nombre=nombre)
+    return jsonify(ok=True, archivo=r2_key, nombre=nombre, tamaño=tamaño)
 
 @app.route("/api/polizas/<path:nombre>", methods=["DELETE"])
 @requiere_admin
@@ -4351,15 +4493,17 @@ def crear_usuario():
         try:
             if pg_usuario_existe(usuario):
                 return jsonify(ok=False,error="Ese usuario ya existe."),409
-            pg_crear_usuario(usuario, generate_password_hash(password), email, rol)
+            fila_nueva = pg_crear_usuario(usuario, generate_password_hash(password), email, rol)
+            nuevo_id = fila_nueva["id"] if isinstance(fila_nueva, dict) else fila_nueva
         except Exception as error:
             print("ERROR crear_usuario PG:", error)
             return jsonify(ok=False,error="No se pudo crear el usuario."),500
-        return jsonify(ok=True,mensaje="Usuario creado correctamente.")
+        return jsonify(ok=True, mensaje="Usuario creado correctamente.", id=nuevo_id)
     with closing(conectar_db()) as db:
         if db.execute("SELECT 1 FROM usuarios WHERE lower(usuario)=lower(?)",(usuario,)).fetchone(): return jsonify(ok=False,error="Ese usuario ya existe."),409
-        db.execute("INSERT INTO usuarios (usuario,password,email,rol,protegido) VALUES (?,?,?,?,0)",(usuario,generate_password_hash(password),email,rol)); db.commit()
-    return jsonify(ok=True,mensaje="Usuario creado correctamente.")
+        cur = db.execute("INSERT INTO usuarios (usuario,password,email,rol,protegido) VALUES (?,?,?,?,0)",(usuario,generate_password_hash(password),email,rol)); db.commit()
+        nuevo_id = cur.lastrowid
+    return jsonify(ok=True, mensaje="Usuario creado correctamente.", id=nuevo_id)
 
 @app.route("/api/usuarios/<int:usuario_id>", methods=["PUT"])
 @requiere_admin
@@ -4789,6 +4933,213 @@ try:
     print('NEON POSTGRESQL: tabla manuales verificada.')
 except Exception as error:
     print('NEON POSTGRESQL: no se pudo verificar la tabla manuales al iniciar:', error)
+
+
+
+
+# ==========================================================
+# OFICINAIA PLUS — Bandeja de pendientes + ficha desde texto
+# ==========================================================
+
+PLANTILLAS_METADATO = [
+    {
+        "id": "remolque",
+        "titulo": "Remolque / asistencia — {COMPANIA} {PRODUCTO}",
+        "contenido": (
+            "COMPAÑÍA: {COMPANIA}\n"
+            "PRODUCTO / PLAN: {PRODUCTO}\n\n"
+            "Servicios de remolque al año:\n"
+            "Kilómetros por servicio (ida + vuelta):\n"
+            "Servicio especial (si aplica):\n"
+            "Límites o exclusiones:\n"
+            "Observaciones operativas:\n"
+        ),
+    },
+    {
+        "id": "cobertura",
+        "titulo": "Cobertura — {COMPANIA} {PRODUCTO}",
+        "contenido": (
+            "COMPAÑÍA: {COMPANIA}\n"
+            "PRODUCTO / PLAN: {PRODUCTO}\n\n"
+            "Responsabilidad civil:\n"
+            "Robo / hurto total:\n"
+            "Incendio total:\n"
+            "Daños parciales / total:\n"
+            "Granizo / cristales:\n"
+            "Franquicias:\n"
+            "Exclusiones relevantes:\n"
+        ),
+    },
+    {
+        "id": "procedimiento",
+        "titulo": "Procedimiento — {TEMA}",
+        "contenido": (
+            "TEMA: {TEMA}\n\n"
+            "Cuándo aplica:\n"
+            "Pasos a seguir:\n"
+            "1.\n2.\n3.\n"
+            "Documentación requerida:\n"
+            "Contactos / teléfonos:\n"
+            "Notas internas:\n"
+        ),
+    },
+    {
+        "id": "contacto",
+        "titulo": "Contacto operativo — {COMPANIA}",
+        "contenido": (
+            "COMPAÑÍA: {COMPANIA}\n"
+            "Área:\n"
+            "Teléfono:\n"
+            "Mail:\n"
+            "Horario:\n"
+            "Observaciones:\n"
+        ),
+    },
+]
+
+
+def _conectar_db_pendientes():
+    return conectar_db()
+
+
+@app.route("/api/pendientes", methods=["GET"])
+@requiere_login
+def api_listar_pendientes():
+    estado = (request.args.get("estado") or "pendiente").strip().lower()
+    if estado not in pendientes_ops.ESTADOS_VALIDOS:
+        estado = "pendiente"
+    with closing(_conectar_db_pendientes()) as db:
+        pendientes_ops.asegurar_tabla(db)
+        items = pendientes_ops.listar(db, session["usuario"], estado=estado)
+        total = pendientes_ops.contar(db, session["usuario"], estado="pendiente")
+    return jsonify({"ok": True, "pendientes": items, "total_pendientes": total})
+
+
+@app.route("/api/pendientes", methods=["POST"])
+@requiere_login
+def api_crear_pendiente():
+    data = request.get_json(silent=True) or {}
+    tipo = str(data.get("tipo") or "generico")
+    titulo = str(data.get("titulo") or "Pendiente").strip()
+    payload = data.get("payload") if isinstance(data.get("payload"), dict) else {}
+    with closing(_conectar_db_pendientes()) as db:
+        pendientes_ops.asegurar_tabla(db)
+        pid = pendientes_ops.crear(db, session["usuario"], tipo, titulo, payload)
+        total = pendientes_ops.contar(db, session["usuario"], estado="pendiente")
+    return jsonify({"ok": True, "id": pid, "total_pendientes": total})
+
+
+@app.route("/api/pendientes/<int:pendiente_id>", methods=["PATCH"])
+@requiere_login
+def api_actualizar_pendiente(pendiente_id):
+    data = request.get_json(silent=True) or {}
+    estado = str(data.get("estado") or "").strip().lower()
+    if estado not in pendientes_ops.ESTADOS_VALIDOS:
+        return jsonify({"ok": False, "error": "Estado no válido."}), 400
+    with closing(_conectar_db_pendientes()) as db:
+        pendientes_ops.asegurar_tabla(db)
+        ok = pendientes_ops.actualizar_estado(db, pendiente_id, session["usuario"], estado)
+        if not ok:
+            return jsonify({"ok": False, "error": "Pendiente no encontrado."}), 404
+        total = pendientes_ops.contar(db, session["usuario"], estado="pendiente")
+    return jsonify({"ok": True, "total_pendientes": total})
+
+
+@app.route("/api/pendientes/<int:pendiente_id>", methods=["DELETE"])
+@requiere_login
+def api_eliminar_pendiente(pendiente_id):
+    with closing(_conectar_db_pendientes()) as db:
+        pendientes_ops.asegurar_tabla(db)
+        ok = pendientes_ops.eliminar(db, pendiente_id, session["usuario"])
+        if not ok:
+            return jsonify({"ok": False, "error": "Pendiente no encontrado."}), 404
+        total = pendientes_ops.contar(db, session["usuario"], estado="pendiente")
+    return jsonify({"ok": True, "total_pendientes": total})
+
+
+@app.route("/api/plantillas-metadato", methods=["GET"])
+@requiere_login
+def api_plantillas_metadato():
+    return jsonify({"ok": True, "plantillas": PLANTILLAS_METADATO})
+
+
+@app.route("/api/ficha-desde-texto", methods=["POST"])
+@requiere_login
+def api_ficha_desde_texto():
+    """Arma una ficha de metadato a partir de texto (respuesta de Sofia o extracto de PDF)."""
+    data = request.get_json(silent=True) or {}
+    texto = str(data.get("texto") or "").strip()
+    titulo = str(data.get("titulo") or "").strip()
+    if not texto:
+        return jsonify({"ok": False, "error": "No hay texto para armar la ficha."}), 400
+    if not titulo:
+        # primeras palabras útiles
+        linea = texto.split("\n", 1)[0].strip()
+        titulo = (" ".join(linea.split())[:80] or "Ficha desde chat")
+    # Normalizar un poco el contenido conservando información
+    cuerpo = texto.strip()
+    if len(cuerpo) > 12000:
+        cuerpo = cuerpo[:12000] + "\n\n[Texto recortado por longitud]"
+    return jsonify({
+        "ok": True,
+        "ficha": {
+            "titulo": titulo[:200],
+            "contenido": cuerpo,
+        },
+    })
+
+
+@app.route("/api/validar-excel-fila", methods=["POST"])
+@requiere_login
+def api_validar_excel_fila():
+    """Validación liviana de una fila de asegurados/flota antes de persistir."""
+    data = request.get_json(silent=True) or {}
+    libro_id = str(data.get("libro_id") or "1")
+    campos = data.get("campos") if isinstance(data.get("campos"), dict) else {}
+    avisos = []
+    errores = []
+
+    def norm(v):
+        return str(v or "").strip()
+
+    if libro_id == "1":
+        aseg = norm(campos.get("ASEGURADO") or campos.get("asegurado"))
+        num = norm(campos.get("NUMERO") or campos.get("numero"))
+        pat = norm(campos.get("PATENTE") or campos.get("patente"))
+        cia = norm(campos.get("CIA") or campos.get("cia"))
+        if not aseg:
+            errores.append("Falta ASEGURADO.")
+        if not num and not pat:
+            errores.append("Completá NUMERO (DNI/póliza) o PATENTE.")
+        if pat:
+            limpio = re.sub(r"[^A-Za-z0-9]", "", pat).upper()
+            if len(limpio) < 6 or len(limpio) > 8:
+                avisos.append(f"La patente '{pat}' tiene un formato poco habitual.")
+            campos["PATENTE"] = limpio or pat
+        if not cia:
+            avisos.append("CIA vacío: conviene completarlo para búsquedas futuras.")
+    else:
+        pat = norm(campos.get("patente") or campos.get("PATENTE"))
+        if not pat:
+            errores.append("Falta patente del vehículo.")
+        else:
+            limpio = re.sub(r"[^A-Za-z0-9]", "", pat).upper()
+            if len(limpio) < 6 or len(limpio) > 8:
+                avisos.append(f"La patente '{pat}' tiene un formato poco habitual.")
+            campos["patente"] = limpio or pat
+
+    return jsonify({
+        "ok": len(errores) == 0,
+        "errores": errores,
+        "avisos": avisos,
+        "campos": campos,
+    })
+
+
+@app.route("/pendientes")
+@requiere_login
+def pagina_pendientes():
+    return render_template("pendientes.html", usuario=session["usuario"])
 
 
 if __name__ == "__main__":

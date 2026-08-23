@@ -332,3 +332,1064 @@ body{font-size:14px}
 @media(max-width:560px){
   .slash-btn{width:34px;height:34px;font-size:16px}
 }
+
+
+/* ==========================================================
+   TANDA 1 — Apariencia: tema, tipografía, toasts
+   ========================================================== */
+
+:root{
+  --surface:#ffffff;
+  --surface-2:#fbfcfd;
+  --surface-3:#f7f9fb;
+  --card:#ffffff;
+  --text:var(--ink);
+  --text-secondary:var(--muted);
+  --border:var(--line);
+  --hover:#f6f8fa;
+  --shadow:0 10px 35px rgba(18,32,51,.06);
+  --shadow-sm:0 2px 8px rgba(18,32,51,.06);
+  --danger:#c84d4d;
+  --danger-bg:#f8eeee;
+  --success:#087a6d;
+  --success-bg:var(--tealbg);
+  --font-scale:1;
+}
+
+html[data-font-size="sm"]{--font-scale:.9}
+html[data-font-size="md"]{--font-scale:1}
+html[data-font-size="lg"]{--font-scale:1.12}
+html[data-font-size="xl"]{--font-scale:1.25}
+
+body{
+  font-size:calc(14px * var(--font-scale));
+  transition:background-color .18s ease,color .18s ease;
+}
+
+/* Escala tipográfica en áreas de lectura intensiva */
+.bubble,
+.composer textarea,
+.chat-item span,
+.nav-item,
+.tool-link span,
+.settings label,
+.panel,
+.excel-table,
+.notes textarea,
+.welcome p,
+.welcome h2,
+.top p,
+.section-head h2,
+.history{
+  font-size:inherit;
+}
+.bubble{font-size:calc(14px * var(--font-scale));line-height:1.65}
+.composer textarea{font-size:calc(14px * var(--font-scale))}
+.chat-item span{font-size:calc(12px * var(--font-scale))}
+.chat-item small{font-size:calc(10px * var(--font-scale))}
+.nav-item{font-size:calc(14px * var(--font-scale))}
+.tool-link span{font-size:calc(12px * var(--font-scale))}
+.tool-link small{font-size:calc(10px * var(--font-scale))}
+.settings label{font-size:calc(11px * var(--font-scale))}
+.excel-table,.excel-cell{font-size:calc(12px * var(--font-scale))}
+.notes textarea{font-size:calc(15px * var(--font-scale))}
+.top h1{font-size:clamp(calc(26px * var(--font-scale)),2.5vw,calc(36px * var(--font-scale)))}
+.welcome h2{font-size:calc(22px * var(--font-scale))}
+.welcome p{font-size:calc(13px * var(--font-scale))}
+
+/* Controles de apariencia en global-actions */
+.appearance-controls{
+  display:flex;
+  align-items:center;
+  gap:6px;
+  margin-right:4px;
+}
+.font-controls{
+  display:inline-flex;
+  align-items:center;
+  border:1px solid var(--line);
+  border-radius:11px;
+  background:var(--surface);
+  overflow:hidden;
+  box-shadow:var(--shadow-sm);
+}
+.font-controls button{
+  width:34px;
+  height:34px;
+  border:0;
+  background:transparent;
+  color:var(--muted);
+  font-size:13px;
+  font-weight:700;
+  cursor:pointer;
+  display:grid;
+  place-items:center;
+  padding:0;
+  line-height:1;
+}
+.font-controls button:hover{
+  background:var(--hover);
+  color:var(--navy);
+}
+.font-controls .font-label{
+  min-width:42px;
+  text-align:center;
+  font-size:10px;
+  font-weight:700;
+  color:var(--muted);
+  letter-spacing:.02em;
+  user-select:none;
+  padding:0 2px;
+}
+.theme-toggle{
+  width:38px;
+  height:38px;
+  border:1px solid var(--line);
+  border-radius:11px;
+  background:var(--surface);
+  color:var(--muted);
+  display:grid;
+  place-items:center;
+  font-size:16px;
+  cursor:pointer;
+  box-shadow:var(--shadow-sm);
+  transition:background .15s ease,color .15s ease,border-color .15s ease;
+  padding:0;
+}
+.theme-toggle:hover{
+  background:var(--hover);
+  color:var(--navy);
+  border-color:#d8e0e5;
+}
+
+/* Toast feedback */
+.toast-host{
+  position:fixed;
+  bottom:24px;
+  right:24px;
+  z-index:100;
+  display:flex;
+  flex-direction:column;
+  gap:8px;
+  pointer-events:none;
+  max-width:min(360px,calc(100vw - 32px));
+}
+.toast{
+  pointer-events:auto;
+  padding:12px 16px;
+  border-radius:12px;
+  background:var(--navy);
+  color:#fff;
+  font-size:13px;
+  font-weight:600;
+  box-shadow:0 12px 32px rgba(18,32,51,.22);
+  display:flex;
+  align-items:center;
+  gap:10px;
+  animation:toast-in .22s ease;
+  border:1px solid transparent;
+}
+.toast.success{background:#0b6b5f}
+.toast.error{background:#a33a3a}
+.toast.info{background:#243244}
+.toast.warning{background:#8a6a1a}
+@keyframes toast-in{
+  from{opacity:0;transform:translateY(8px)}
+  to{opacity:1;transform:translateY(0)}
+}
+@keyframes toast-out{
+  from{opacity:1;transform:translateY(0)}
+  to{opacity:0;transform:translateY(6px)}
+}
+.toast.leaving{animation:toast-out .18s ease forwards}
+
+/* ---------- Modo oscuro ---------- */
+html[data-theme="dark"]{
+  --navy:#e8eef5;
+  --ink:#e2e8f0;
+  --muted:#94a3b8;
+  --soft:#7a8a9c;
+  --line:#2a3544;
+  --bg:#0f1419;
+  --teal:#2dd4bf;
+  --tealbg:#134e4a;
+  --sidebar-bg:#151b23;
+  --button-bg:#0d8b7c;
+  --surface:#1a222d;
+  --surface-2:#151b23;
+  --surface-3:#121820;
+  --card:#1a222d;
+  --text:#e2e8f0;
+  --text-secondary:#94a3b8;
+  --border:#2a3544;
+  --hover:#243044;
+  --shadow:0 10px 35px rgba(0,0,0,.35);
+  --shadow-sm:0 2px 8px rgba(0,0,0,.25);
+  --danger:#f87171;
+  --danger-bg:#3f1f1f;
+  --success:#2dd4bf;
+  --success-bg:#134e4a;
+  color-scheme:dark;
+}
+
+html[data-theme="dark"] body{background:var(--bg);color:var(--ink)}
+html[data-theme="dark"] .sidebar{
+  background:var(--sidebar-bg);
+  border-right-color:var(--line);
+}
+html[data-theme="dark"] .brand b{color:var(--navy)}
+html[data-theme="dark"] .logo{background:#0d8b7c;color:#fff}
+html[data-theme="dark"] .nav-item{color:var(--muted)}
+html[data-theme="dark"] .nav-item:hover{background:var(--hover)}
+html[data-theme="dark"] .nav-item.active{background:var(--tealbg);color:var(--teal)}
+html[data-theme="dark"] .tool-link{color:var(--muted)}
+html[data-theme="dark"] .tool-link:hover{background:var(--hover)}
+html[data-theme="dark"] .tool-link>b{background:#243044;color:#94a3b8}
+html[data-theme="dark"] .nav-label{color:#64748b}
+html[data-theme="dark"] .nav-subitem{color:var(--soft)}
+html[data-theme="dark"] .nav-subitem:hover{background:var(--hover);color:var(--ink)}
+html[data-theme="dark"] #ciasToggle{color:var(--muted)}
+html[data-theme="dark"] #ciasToggle:hover,
+html[data-theme="dark"] #ciasToggle[aria-expanded="true"]{
+  background:var(--hover);
+  box-shadow:none;
+}
+
+html[data-theme="dark"] .global-action,
+html[data-theme="dark"] .theme-toggle,
+html[data-theme="dark"] .font-controls{
+  background:var(--surface);
+  border-color:var(--line);
+  color:var(--muted);
+}
+html[data-theme="dark"] .global-action:hover,
+html[data-theme="dark"] .theme-toggle:hover,
+html[data-theme="dark"] .font-controls button:hover{
+  background:var(--hover);
+  color:var(--navy);
+  border-color:#3d4f63;
+}
+html[data-theme="dark"] .global-avatar{
+  background:#0d8b7c;
+  border-color:#0d8b7c;
+  color:#fff;
+}
+html[data-theme="dark"] .global-date{color:var(--muted)}
+
+html[data-theme="dark"] .chat,
+html[data-theme="dark"] .chat-shell,
+html[data-theme="dark"] .panel,
+html[data-theme="dark"] .modal>div{
+  background:var(--surface);
+  border-color:var(--line);
+  box-shadow:var(--shadow);
+}
+html[data-theme="dark"] .chat-list{
+  background:var(--surface-2);
+  border-right-color:var(--line);
+}
+html[data-theme="dark"] .chat-list-head{border-bottom-color:var(--line)}
+html[data-theme="dark"] .chat-list-head b{color:var(--navy)}
+html[data-theme="dark"] .chat-item:hover{background:var(--hover)}
+html[data-theme="dark"] .chat-item.active{background:var(--tealbg)}
+html[data-theme="dark"] .chat-item span{color:var(--ink)}
+html[data-theme="dark"] .chat-delete:hover{background:var(--danger-bg);color:var(--danger)}
+html[data-theme="dark"] .chat>header{border-bottom-color:var(--line)}
+html[data-theme="dark"] .chat>header>strong{background:#0d8b7c}
+html[data-theme="dark"] .chat>header b{color:var(--navy)}
+html[data-theme="dark"] .chat>header .clear-chat{
+  background:var(--surface);
+  border-color:var(--line);
+  color:var(--muted);
+}
+html[data-theme="dark"] .chat>header .clear-chat:hover{
+  color:var(--danger);
+  border-color:#5c3030;
+}
+html[data-theme="dark"] .assistant .bubble{
+  background:var(--surface-3);
+  border-color:var(--line);
+  color:var(--ink);
+}
+html[data-theme="dark"] .user .bubble{
+  background:#0d8b7c;
+  color:#fff;
+}
+html[data-theme="dark"] .composer{
+  border-color:var(--line);
+  background:var(--surface-3);
+}
+html[data-theme="dark"] .composer:focus-within{
+  border-color:#2dd4bf66;
+  box-shadow:0 0 0 3px rgba(45,212,191,.12);
+}
+html[data-theme="dark"] .composer textarea{
+  background:transparent;
+  color:var(--ink);
+}
+html[data-theme="dark"] .send{background:var(--button-bg)}
+html[data-theme="dark"] .slash-btn{
+  background:var(--surface);
+  border-color:var(--line);
+  color:var(--muted);
+}
+html[data-theme="dark"] .slash-btn:hover{
+  background:var(--hover);
+  color:var(--teal);
+  border-color:#2a5a54;
+}
+html[data-theme="dark"] .composer-wrap{border-top-color:var(--line)}
+html[data-theme="dark"] .composer-wrap>small{color:var(--soft)}
+html[data-theme="dark"] .pdf-attached{
+  background:var(--tealbg);
+  border-color:#1a5c56;
+  color:var(--teal);
+}
+html[data-theme="dark"] .pdf-attached button{background:var(--surface);color:var(--muted)}
+html[data-theme="dark"] .welcome h2{color:var(--navy)}
+html[data-theme="dark"] .welcome>strong{background:var(--tealbg);color:var(--teal)}
+html[data-theme="dark"] .chat-command-menu{
+  background:var(--surface);
+  border-color:var(--line);
+  box-shadow:0 12px 32px rgba(0,0,0,.4);
+}
+html[data-theme="dark"] .chat-command-item:hover,
+html[data-theme="dark"] .chat-command-item.active{
+  background:rgba(45,212,191,.12);
+}
+
+html[data-theme="dark"] .top h1,
+html[data-theme="dark"] .section-head h2{color:var(--navy)}
+html[data-theme="dark"] .top p{color:var(--muted)}
+html[data-theme="dark"] .primary{background:var(--button-bg);color:#fff}
+html[data-theme="dark"] .secondary{
+  background:var(--surface);
+  border-color:var(--line);
+  color:var(--muted);
+}
+html[data-theme="dark"] .settings label{color:var(--muted)}
+html[data-theme="dark"] .settings label input:not([type=checkbox]),
+html[data-theme="dark"] .settings label select,
+html[data-theme="dark"] .modal input,
+html[data-theme="dark"] .modal select{
+  background:var(--surface-3);
+  border-color:var(--line);
+  color:var(--ink);
+}
+html[data-theme="dark"] .setting{border-top-color:var(--line)}
+html[data-theme="dark"] .settings th{color:var(--soft);border-bottom-color:var(--line)}
+html[data-theme="dark"] .settings td{border-bottom-color:var(--line);color:var(--ink)}
+html[data-theme="dark"] .settings td em{background:#243044;color:var(--muted)}
+html[data-theme="dark"] .modal{background:rgba(0,0,0,.55)}
+html[data-theme="dark"] .modal>div>button{background:#243044;color:var(--muted)}
+html[data-theme="dark"] .search{
+  border-color:var(--line);
+  background:var(--surface-3);
+}
+html[data-theme="dark"] .search input{background:transparent;color:var(--ink)}
+html[data-theme="dark"] .companies>a,
+html[data-theme="dark"] .tool-grid>a,
+html[data-theme="dark"] .manual-grid article,
+html[data-theme="dark"] .cia-card{
+  background:var(--card);
+  border-color:var(--line);
+  color:var(--ink);
+}
+html[data-theme="dark"] .companies>a:hover,
+html[data-theme="dark"] .files>a:hover{background:var(--hover)}
+html[data-theme="dark"] .companies>a>b,
+html[data-theme="dark"] .tool-grid>a>b{background:#243044;color:var(--muted)}
+html[data-theme="dark"] .manual-grid article>header>b{background:#0d8b7c}
+html[data-theme="dark"] .manual-files label,
+html[data-theme="dark"] .manual-files button,
+html[data-theme="dark"] .delete-policy{
+  background:var(--surface);
+  border-color:var(--line);
+  color:var(--muted);
+}
+html[data-theme="dark"] .upload{
+  border-color:#3d4f63;
+  color:var(--muted);
+}
+html[data-theme="dark"] .library-tabs{background:#1e2834}
+html[data-theme="dark"] .library-tab{color:var(--muted)}
+html[data-theme="dark"] .library-tab.active{
+  background:var(--surface);
+  color:var(--teal);
+  box-shadow:0 2px 8px rgba(0,0,0,.25);
+}
+html[data-theme="dark"] .policy-row{border-top-color:var(--line)}
+html[data-theme="dark"] .notes>div{border-bottom-color:var(--line)}
+html[data-theme="dark"] .notes textarea{color:var(--ink);background:transparent}
+html[data-theme="dark"] .tabulado-flota-pre,
+html[data-theme="dark"] .excel-proposal-field input,
+html[data-theme="dark"] .metadata-proposal-field input,
+html[data-theme="dark"] .metadata-proposal-field textarea{
+  background:rgba(0,0,0,.25);
+  border-color:var(--line);
+  color:var(--ink);
+}
+html[data-theme="dark"] .tabulado-flota-copy,
+html[data-theme="dark"] .excel-proposal-save,
+html[data-theme="dark"] .metadata-proposal-save{
+  background:var(--button-bg);
+  color:#fff;
+}
+html[data-theme="dark"] .empty b{color:var(--muted)}
+html[data-theme="dark"] .color-grid input[type=color]{
+  background:var(--surface);
+  border-color:var(--line);
+}
+
+@media(max-width:560px){
+  .appearance-controls{gap:4px}
+  .font-controls button{width:30px;height:30px;font-size:12px}
+  .font-controls .font-label{min-width:34px;font-size:9px}
+  .theme-toggle{width:34px;height:34px;font-size:14px}
+  .toast-host{bottom:16px;right:12px;left:12px;max-width:none}
+}
+
+
+/* ==========================================================
+   TANDA 2 — Chat: lectura natural, listas, copiar
+   ========================================================== */
+
+.msg.assistant .bubble{
+  position:relative;
+  padding-bottom:28px;
+}
+.msg-copy{
+  position:absolute;
+  right:8px;
+  bottom:6px;
+  border:0;
+  background:transparent;
+  color:var(--soft);
+  font-size:10px;
+  font-weight:650;
+  cursor:pointer;
+  padding:3px 7px;
+  border-radius:6px;
+  opacity:.55;
+  transition:opacity .15s ease,background .15s ease,color .15s ease;
+}
+.msg.assistant:hover .msg-copy,
+.msg-copy:focus-visible{
+  opacity:1;
+  outline:none;
+}
+.msg-copy:hover{
+  background:rgba(127,127,127,.12);
+  color:var(--teal);
+}
+
+.sofia-list{
+  margin:6px 0 10px;
+  padding:0 0 0 2px;
+  list-style:none;
+}
+.sofia-list li{
+  position:relative;
+  padding:3px 0 3px 16px;
+  line-height:1.55;
+}
+.sofia-list li::before{
+  content:'•';
+  position:absolute;
+  left:2px;
+  color:var(--teal);
+  font-weight:700;
+}
+.sofia-step{
+  margin:4px 0 8px;
+  padding-left:2px;
+  line-height:1.55;
+}
+.sofia-step-n{
+  font-weight:700;
+  color:var(--teal);
+  margin-right:4px;
+}
+.bubble .inline-code{
+  font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;
+  font-size:.92em;
+  padding:1px 6px;
+  border-radius:5px;
+  background:rgba(127,127,127,.12);
+  border:1px solid rgba(127,127,127,.18);
+  word-break:break-all;
+}
+.bubble p{
+  margin:0 0 8px;
+}
+.bubble p:last-child{
+  margin-bottom:0;
+}
+.bubble strong{
+  font-weight:650;
+}
+.bubble em{
+  font-style:italic;
+}
+.history .msg + .msg{
+  margin-top:2px;
+}
+.assistant .bubble{
+  max-width:100%;
+}
+
+html[data-theme="dark"] .msg-copy:hover{
+  background:rgba(255,255,255,.08);
+  color:var(--teal);
+}
+html[data-theme="dark"] .bubble .inline-code{
+  background:rgba(0,0,0,.28);
+  border-color:var(--line);
+}
+
+
+/* ==========================================================
+   TANDA 3 — Historial de conversaciones
+   ========================================================== */
+
+.chat-search-wrap{
+  padding:8px 10px 6px;
+  border-bottom:1px solid var(--line);
+}
+.chat-search-wrap input{
+  width:100%;
+  height:34px;
+  border:1px solid var(--line);
+  border-radius:9px;
+  padding:0 10px;
+  background:var(--surface,#fff);
+  color:var(--ink);
+  font-size:12px;
+  outline:0;
+}
+.chat-search-wrap input:focus{
+  border-color:#9dcfc8;
+  box-shadow:0 0 0 3px rgba(13,139,124,.12);
+}
+.chat-item-row{
+  align-items:stretch;
+}
+.chat-item-actions{
+  display:flex;
+  flex-direction:column;
+  gap:2px;
+  flex:0 0 auto;
+  opacity:0;
+  transition:opacity .15s ease;
+}
+.chat-item-row:hover .chat-item-actions,
+.chat-item-row:focus-within .chat-item-actions{
+  opacity:1;
+}
+.chat-rename,
+.chat-delete{
+  width:28px;
+  height:28px;
+  border:0;
+  border-radius:7px;
+  background:transparent;
+  color:#9aa4ae;
+  font-size:12px;
+  cursor:pointer;
+  display:grid;
+  place-items:center;
+  padding:0;
+}
+.chat-rename:hover,
+.chat-rename:focus-visible{
+  background:#eef6f4;
+  color:var(--teal);
+  outline:none;
+}
+.chat-item-title{
+  display:block;
+  overflow:hidden;
+  text-overflow:ellipsis;
+  white-space:nowrap;
+  font-size:12px;
+  font-weight:650;
+  color:#435163;
+  line-height:1.3;
+}
+.chat-item-meta{
+  display:block;
+  margin-top:4px;
+  font-size:10px;
+  color:var(--soft);
+  white-space:nowrap;
+  overflow:hidden;
+  text-overflow:ellipsis;
+}
+.chat-item.active .chat-item-title{color:#087a6d}
+.chat-rename-input{
+  flex:1;
+  min-width:0;
+  height:auto;
+  margin:0 2px;
+  padding:8px 9px;
+  border:1px solid var(--teal);
+  border-radius:9px;
+  font-size:12px;
+  font-weight:650;
+  color:var(--ink);
+  background:var(--surface,#fff);
+  outline:0;
+  box-shadow:0 0 0 3px rgba(13,139,124,.12);
+}
+
+html[data-theme="dark"] .chat-search-wrap input{
+  background:var(--surface-3);
+  border-color:var(--line);
+  color:var(--ink);
+}
+html[data-theme="dark"] .chat-search-wrap input:focus{
+  border-color:#2dd4bf66;
+  box-shadow:0 0 0 3px rgba(45,212,191,.12);
+}
+html[data-theme="dark"] .chat-item-title{color:var(--ink)}
+html[data-theme="dark"] .chat-item.active .chat-item-title{color:var(--teal)}
+html[data-theme="dark"] .chat-rename:hover{
+  background:rgba(45,212,191,.12);
+  color:var(--teal);
+}
+html[data-theme="dark"] .chat-rename-input{
+  background:var(--surface-3);
+  border-color:var(--teal);
+  color:var(--ink);
+}
+
+
+/* ==========================================================
+   TANDA 5 — Auditoría: dark mode residual + accesibilidad
+   ========================================================== */
+
+/* Excel / workspace (notas.html usa estilos propios; reforzamos en dark) */
+html[data-theme="dark"] .workspace-tabs{
+  background:#1e2834;
+}
+html[data-theme="dark"] .workspace-tab{color:var(--muted)}
+html[data-theme="dark"] .workspace-tab.active{
+  background:var(--surface);
+  color:var(--navy);
+  box-shadow:0 2px 8px rgba(0,0,0,.3);
+}
+html[data-theme="dark"] .btn-soft{
+  background:var(--surface);
+  border-color:var(--line);
+  color:var(--muted);
+}
+html[data-theme="dark"] .btn-soft:hover{background:var(--hover);color:var(--ink)}
+html[data-theme="dark"] .excel-wrap{
+  background:var(--surface);
+  border-color:var(--line);
+}
+html[data-theme="dark"] .excel-table th{
+  background:#1e2834;
+  color:var(--muted);
+}
+html[data-theme="dark"] .excel-table td:first-child{
+  background:#151b23;
+  color:var(--soft);
+}
+html[data-theme="dark"] .excel-cell{color:var(--ink)}
+html[data-theme="dark"] .excel-table th.excel-selected,
+html[data-theme="dark"] .excel-table td.excel-selected{
+  background:var(--tealbg);
+  color:var(--teal);
+}
+html[data-theme="dark"] .excel-cell:focus{
+  background:rgba(45,212,191,.08);
+  box-shadow:inset 0 0 0 1px rgba(45,212,191,.45);
+}
+html[data-theme="dark"] .word-editor{
+  background:var(--surface-3);
+  border-color:var(--line);
+  color:var(--ink);
+}
+html[data-theme="dark"] .word-editor:focus{
+  box-shadow:inset 0 0 0 1px rgba(45,212,191,.45);
+}
+
+/* Metadatos / biblioteca */
+html[data-theme="dark"] .meta-list-panel,
+html[data-theme="dark"] .meta-editor-panel{
+  background:var(--surface);
+  border-color:var(--line);
+}
+html[data-theme="dark"] .meta-item:hover{background:var(--hover)}
+html[data-theme="dark"] .meta-item.active{background:var(--tealbg)}
+html[data-theme="dark"] .meta-title,
+html[data-theme="dark"] .meta-content,
+html[data-theme="dark"] textarea.word-editor.meta-content{
+  background:var(--surface-3);
+  border-color:var(--line);
+  color:var(--ink);
+}
+html[data-theme="dark"] .library-tabs{background:#1e2834}
+
+/* Focus visible general (teclado) */
+:focus-visible{
+  outline:2px solid var(--teal);
+  outline-offset:2px;
+}
+button:focus:not(:focus-visible),
+a:focus:not(:focus-visible){outline:none}
+
+button:disabled,
+.primary:disabled,
+.secondary:disabled,
+.send:disabled{
+  opacity:.55;
+  cursor:not-allowed;
+}
+
+/* Tablas: sticky header refuerzo */
+.table-wrap{overflow:auto}
+.table-wrap table thead th{
+  position:sticky;
+  top:0;
+  z-index:1;
+  background:var(--surface,#fff);
+}
+html[data-theme="dark"] .table-wrap table thead th{
+  background:var(--surface);
+}
+
+/* Chat: un poco más de aire entre mensajes largos */
+.history .msg.assistant{margin-bottom:18px}
+.bubble ul.sofia-list li+li{margin-top:2px}
+
+/* Evitar que A+/A- rompan botones fijos */
+.font-controls button,
+.theme-toggle,
+.global-action,
+.send,
+.slash-btn{
+  flex-shrink:0;
+}
+
+
+/* ==========================================================
+   OFICINAIA PLUS — pendientes, workflows, acciones Sofia
+   ========================================================== */
+
+.nav-badge{
+  margin-left:auto;
+  min-width:18px;
+  height:18px;
+  padding:0 6px;
+  border-radius:999px;
+  background:var(--teal);
+  color:#fff;
+  font-size:10px;
+  font-weight:800;
+  display:inline-grid;
+  place-items:center;
+  line-height:1;
+}
+html[data-theme="dark"] .nav-badge{background:#0d8b7c;color:#fff}
+
+.workflow-grid{
+  display:grid;
+  grid-template-columns:repeat(2,minmax(0,1fr));
+  gap:8px;
+  margin:22px auto 0;
+  max-width:560px;
+  text-align:left;
+}
+.workflow-card{
+  border:1px solid var(--line);
+  background:var(--surface,#fff);
+  border-radius:12px;
+  padding:12px 13px;
+  cursor:pointer;
+  text-align:left;
+  transition:border-color .15s ease,transform .15s ease,box-shadow .15s ease;
+}
+.workflow-card:hover{
+  border-color:#b4d9d3;
+  transform:translateY(-1px);
+  box-shadow:0 8px 22px rgba(18,32,51,.08);
+}
+.workflow-card b{
+  display:block;
+  font-size:12px;
+  color:var(--navy);
+  font-weight:700;
+}
+.workflow-card small{
+  display:block;
+  margin-top:4px;
+  font-size:10px;
+  color:var(--soft);
+  line-height:1.4;
+}
+@media(max-width:560px){
+  .workflow-grid{grid-template-columns:1fr}
+}
+
+.sofia-actions{
+  display:flex;
+  flex-wrap:wrap;
+  gap:6px;
+  margin-top:12px;
+  padding-top:10px;
+  border-top:1px solid rgba(127,127,127,.18);
+}
+.sofia-actions button{
+  border:1px solid var(--line);
+  background:var(--surface,#fff);
+  color:var(--muted);
+  border-radius:8px;
+  padding:6px 10px;
+  font-size:11px;
+  font-weight:650;
+  cursor:pointer;
+}
+.sofia-actions button:hover{
+  border-color:#b4d9d3;
+  color:var(--teal);
+  background:var(--tealbg);
+}
+html[data-theme="dark"] .sofia-actions button{
+  background:var(--surface);
+  border-color:var(--line);
+  color:var(--muted);
+}
+html[data-theme="dark"] .sofia-actions button:hover{
+  background:var(--tealbg);
+  color:var(--teal);
+}
+
+.chat-tag{
+  display:inline-block;
+  margin-left:6px;
+  padding:1px 6px;
+  border-radius:6px;
+  background:var(--tealbg);
+  color:#087a6d;
+  font-size:9px;
+  font-style:normal;
+  font-weight:800;
+  vertical-align:middle;
+}
+html[data-theme="dark"] .chat-tag{color:var(--teal)}
+
+/* Pendientes page */
+.pend-filters{display:flex;gap:6px;margin-bottom:14px;flex-wrap:wrap}
+.pend-filter{
+  border:1px solid var(--line);
+  background:var(--surface,#fff);
+  border-radius:9px;
+  padding:8px 12px;
+  font-size:12px;
+  font-weight:650;
+  color:var(--muted);
+  cursor:pointer;
+}
+.pend-filter.active{
+  background:var(--tealbg);
+  color:#087a6d;
+  border-color:transparent;
+}
+.pend-list{display:grid;gap:10px}
+.pend-card{
+  border:1px solid var(--line);
+  background:var(--surface,#fff);
+  border-radius:14px;
+  padding:14px 16px;
+  box-shadow:0 6px 20px rgba(18,32,51,.04);
+}
+.pend-card header{display:flex;flex-wrap:wrap;align-items:center;gap:8px;margin-bottom:6px}
+.pend-card header strong{font-size:14px;color:var(--navy);flex:1;min-width:140px}
+.pend-card header small{font-size:11px;color:var(--soft)}
+.pend-tag{
+  font-size:10px;font-weight:800;letter-spacing:.04em;text-transform:uppercase;
+  padding:3px 7px;border-radius:6px;background:var(--tealbg);color:#087a6d;
+}
+.pend-preview{margin:0 0 10px;font-size:13px;color:var(--muted);line-height:1.5}
+.pend-actions{display:flex;flex-wrap:wrap;gap:8px}
+.pend-actions .danger-text{color:#c84d4d}
+html[data-theme="dark"] .pend-card{background:var(--surface);border-color:var(--line)}
+html[data-theme="dark"] .pend-filter{background:var(--surface);border-color:var(--line)}
+html[data-theme="dark"] .pend-filter.active{background:var(--tealbg);color:var(--teal)}
+html[data-theme="dark"] .pend-tag{color:var(--teal)}
+html[data-theme="dark"] .workflow-card{background:var(--surface);border-color:var(--line)}
+html[data-theme="dark"] .workflow-card b{color:var(--navy)}
+
+.meta-plantillas{display:flex;flex-wrap:wrap;gap:6px;align-items:center;margin-top:6px}
+.meta-plantillas-label{font-size:10px;color:var(--soft);font-weight:700;margin-right:4px}
+
+/* Ajuste bubble padding por acciones */
+.msg.assistant .bubble{padding-bottom:14px}
+.msg.assistant .bubble .sofia-actions + .msg-copy,
+.msg.assistant .bubble .msg-copy{bottom:auto;top:8px}
+
+
+/* ==========================================================
+   Ajustes layout: contadores, fuente, sugerencias composer
+   ========================================================== */
+
+/* Header de página: no chocar con global-actions (fecha + tema + config) */
+.page > .top{
+  display:flex;
+  align-items:flex-start;
+  justify-content:space-between;
+  gap:16px;
+  padding-right:min(340px, 42vw);
+  flex-wrap:wrap;
+}
+.page > .top > div{min-width:0;flex:1}
+.page > .top .count,
+.page > .top .saved,
+.page > .top > strong.count{
+  flex:0 0 auto;
+  align-self:center;
+  margin:0;
+  max-width:100%;
+  white-space:normal;
+  text-align:center;
+  line-height:1.35;
+}
+.page.chat-page > .top{
+  padding-right:min(340px, 42vw);
+}
+@media(max-width:900px){
+  .page > .top{padding-right:12px}
+  .page > .top .count{width:100%;order:3}
+}
+@media(max-width:560px){
+  .page > .top .count{display:block !important}
+  .global-date{display:none}
+}
+
+/* Ancho fijo del label de fuente = "Muy grande" para no mover la fecha */
+.font-controls .font-label{
+  min-width:7.2em;
+  width:7.2em;
+  text-align:center;
+  overflow:hidden;
+  text-overflow:clip;
+  white-space:nowrap;
+}
+@media(max-width:560px){
+  .font-controls .font-label{min-width:7.2em;width:7.2em;font-size:9px}
+}
+
+/* Sugerencias contextuales arriba del composer */
+.composer-suggestions{
+  width:min(900px,100%);
+  margin:0 auto 8px;
+  display:flex;
+  flex-wrap:wrap;
+  gap:6px;
+  min-height:0;
+}
+.composer-suggestions:empty{display:none}
+.composer-chip{
+  border:1px solid var(--line);
+  background:var(--surface,#fff);
+  color:var(--muted);
+  border-radius:999px;
+  padding:6px 12px;
+  font-size:11px;
+  font-weight:650;
+  cursor:pointer;
+  line-height:1.2;
+}
+.composer-chip:hover{
+  border-color:#b4d9d3;
+  color:var(--teal);
+  background:var(--tealbg);
+}
+.composer-chip.chip-muted{opacity:.85}
+html[data-theme="dark"] .composer-chip{
+  background:var(--surface);
+  border-color:var(--line);
+  color:var(--muted);
+}
+html[data-theme="dark"] .composer-chip:hover{
+  background:var(--tealbg);
+  color:var(--teal);
+}
+
+/* Quitar acciones dentro de burbuja (reemplazadas por chips) */
+.sofia-actions{display:none !important}
+
+
+/* ==========================================================
+   Welcome sin scroll innecesario
+   ========================================================== */
+.history:has(#chatWelcome){
+  display:flex;
+  flex-direction:column;
+  justify-content:center;
+  align-items:stretch;
+  overflow:auto;
+}
+.history:has(#chatWelcome) .welcome{
+  margin:0 auto;
+  padding:8px 12px 16px;
+  max-width:640px;
+  width:100%;
+  box-sizing:border-box;
+}
+.welcome{
+  margin:0 auto;
+  max-width:640px;
+  text-align:center;
+}
+.welcome>strong{
+  width:40px;
+  height:40px;
+  border-radius:12px;
+  font-size:18px;
+  display:grid;
+  place-items:center;
+  margin:0 auto 10px;
+  background:var(--tealbg);
+  color:var(--teal);
+}
+.welcome h2{
+  margin:0 0 6px;
+  font-size:calc(20px * var(--font-scale,1));
+  line-height:1.25;
+}
+.welcome p{
+  margin:0 auto;
+  max-width:34em;
+  font-size:calc(13px * var(--font-scale,1));
+  line-height:1.45;
+  color:var(--muted);
+}
+.workflow-grid{
+  margin:14px auto 0 !important;
+  gap:7px !important;
+  max-width:560px;
+}
+.workflow-card{
+  padding:10px 11px !important;
+}
+.workflow-card b{font-size:11px !important}
+.workflow-card small{font-size:9px !important;margin-top:3px !important}
+
+/* Fallback sin :has (por si acaso) */
+.history.history-empty{
+  display:flex;
+  flex-direction:column;
+  justify-content:center;
+}
+@media(max-height:700px){
+  .welcome>strong{width:34px;height:34px;font-size:15px;margin-bottom:6px}
+  .welcome h2{font-size:calc(17px * var(--font-scale,1))}
+  .workflow-grid{margin-top:10px !important}
+  .workflow-card{padding:8px 10px !important}
+}
+@media(max-width:560px){
+  .workflow-grid{grid-template-columns:1fr !important}
+}

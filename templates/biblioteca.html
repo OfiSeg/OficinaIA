@@ -107,6 +107,12 @@
 .meta-content{min-height:455px;margin-top:0;box-sizing:border-box}
 .hidden{display:none!important}
 @media(max-width:800px){.meta-layout{grid-template-columns:1fr}.meta-list{max-height:220px}}
+
+html[data-theme="dark"] .meta-list-panel,html[data-theme="dark"] .meta-editor-panel{background:var(--surface,#1a222d);border-color:var(--line)}
+html[data-theme="dark"] .meta-item:hover{background:var(--hover,#243044)}
+html[data-theme="dark"] .meta-item.active{background:var(--tealbg,#134e4a)}
+html[data-theme="dark"] .meta-title,html[data-theme="dark"] .meta-content{background:var(--surface-3,#121820);color:var(--ink);border-color:var(--line)}
+html[data-theme="dark"] .btn-soft{background:var(--surface,#1a222d);color:var(--muted)}
 </style>{% endblock %}
 
 {% block scripts %}
@@ -131,6 +137,127 @@
     });
   });
 
+  function actualizarContadorBiblioteca() {
+    const countEl = document.querySelector('.top .count');
+    if (!countEl) return;
+    const polizas = document.querySelectorAll('.policy-row').length;
+    let manuales = 0;
+    document.querySelectorAll('.manual-files').forEach(box => {
+      manuales += box.querySelectorAll(':scope > div').length;
+    });
+    countEl.textContent = `${polizas} pólizas · ${manuales} manuales`;
+  }
+
+  function actualizarHeaderManual(card) {
+    if (!card) return;
+    const n = card.querySelectorAll('.manual-files > div').length;
+    const small = card.querySelector('header span small');
+    const badge = card.querySelector('header i');
+    if (small) small.textContent = n + ' archivo' + (n === 1 ? '' : 's');
+    if (badge) {
+      badge.textContent = n ? 'Disponible' : 'Vacío';
+      badge.className = n ? 'ok' : '';
+    }
+    const empty = card.querySelector('.manual-files .no-manual');
+    if (n && empty) empty.remove();
+    if (!n && !empty) {
+      const sm = document.createElement('small');
+      sm.className = 'no-manual';
+      sm.textContent = 'Todavía no hay manuales.';
+      card.querySelector('.manual-files').appendChild(sm);
+    }
+  }
+
+  function crearFilaManual(slug, archivo, nombre, fecha) {
+    const div = document.createElement('div');
+    const a = document.createElement('a');
+    a.href = '/manuales/' + encodeURIComponent(slug) + '/' + encodeURIComponent(archivo);
+    a.target = '_blank';
+    a.rel = 'noopener';
+    a.innerHTML = '<b>PDF</b><span><strong></strong><small></small></span>';
+    a.querySelector('strong').textContent = nombre || archivo.split('__').pop() || 'manual.pdf';
+    a.querySelector('small').textContent = fecha || 'Ahora';
+    div.appendChild(a);
+    const label = document.createElement('label');
+    label.title = 'Reemplazar manual';
+    label.textContent = '↻';
+    const inp = document.createElement('input');
+    inp.type = 'file';
+    inp.accept = 'application/pdf,.pdf';
+    inp.dataset.slug = slug;
+    inp.dataset.replace = archivo;
+    label.appendChild(inp);
+    const btn = document.createElement('button');
+    btn.type = 'button';
+    btn.title = 'Eliminar manual';
+    btn.dataset.slug = slug;
+    btn.dataset.file = archivo;
+    btn.textContent = '×';
+    div.appendChild(label);
+    div.appendChild(btn);
+    wireManualReplace(inp);
+    wireManualDelete(btn);
+    return div;
+  }
+
+  function wireManualReplace(input) {
+    if (!input || input.dataset.wired) return;
+    input.dataset.wired = '1';
+    input.addEventListener('change', async () => {
+      if (!input.files.length) return;
+      const status = input.closest('article')?.querySelector('.upload-status');
+      if (status) status.textContent = 'Reemplazando manual…';
+      input.disabled = true;
+      try {
+        const fd = new FormData();
+        fd.append('manual', input.files[0], input.files[0].name);
+        fd.append('replace', input.dataset.replace);
+        const response = await fetch(`/api/manuales/${encodeURIComponent(input.dataset.slug)}`, { method: 'POST', body: fd, credentials: 'same-origin' });
+        const data = await jsonResponse(response);
+        if (!response.ok || !data.ok) throw new Error(data.error || 'No se pudo reemplazar el manual.');
+        const info = (data.archivos && data.archivos[0]) || {};
+        const row = input.closest('div');
+        if (row && info.archivo) {
+          const slug = input.dataset.slug;
+          const nueva = crearFilaManual(slug, info.archivo, info.nombre, 'Ahora');
+          row.replaceWith(nueva);
+        }
+        if (status) status.textContent = '✓ Manual reemplazado.';
+        if (window.showToast) showToast('Manual reemplazado', 'success');
+        actualizarContadorBiblioteca();
+      } catch (error) {
+        if (status) status.textContent = `Error: ${error.message}`;
+        if (window.showToast) showToast(error.message || 'Error al reemplazar', 'error');
+        input.disabled = false;
+        input.value = '';
+      }
+    });
+  }
+
+  function wireManualDelete(button) {
+    if (!button || button.dataset.wired) return;
+    button.dataset.wired = '1';
+    button.addEventListener('click', async () => {
+      if (!confirm('¿Eliminar este manual?')) return;
+      button.disabled = true;
+      const card = button.closest('article');
+      const row = button.closest('div');
+      try {
+        const response = await fetch(`/api/manuales/${encodeURIComponent(button.dataset.slug)}/${encodeURIComponent(button.dataset.file)}`, { method: 'DELETE', credentials: 'same-origin' });
+        const data = await jsonResponse(response);
+        if (!response.ok || !data.ok) throw new Error(data.error || 'No se pudo eliminar el manual.');
+        if (row) row.remove();
+        actualizarHeaderManual(card);
+        actualizarContadorBiblioteca();
+        if (window.showToast) showToast('Manual eliminado', 'success');
+      } catch (error) {
+        if (window.showToast) showToast(error.message || 'No se pudo eliminar', 'error');
+        else alert(error.message);
+        button.disabled = false;
+      }
+    });
+  }
+
   document.querySelectorAll('.upload input[data-slug]').forEach(input => {
     input.addEventListener('change', async () => {
       if (!input.files.length) return;
@@ -138,6 +265,7 @@
       const slug = input.dataset.slug;
       const card = input.closest('article');
       const status = card?.querySelector('.upload-status');
+      const filesBox = card?.querySelector('.manual-files');
       const files = Array.from(input.files);
 
       input.disabled = true;
@@ -192,6 +320,12 @@
               throw new Error(data.error || 'No se pudo guardar el manual.');
             }
 
+            (data.archivos || []).forEach(info => {
+              if (!filesBox || !info.archivo) return;
+              const empty = filesBox.querySelector('.no-manual');
+              if (empty) empty.remove();
+              filesBox.appendChild(crearFilaManual(slug, info.archivo, info.nombre, 'Ahora'));
+            });
             exitosos++;
           } catch (error) {
             errores.push(`${file.name}: ${error.message}`);
@@ -201,20 +335,20 @@
         if (errores.length === 0) {
           status.textContent =
             `✓ ${exitosos} manual${exitosos === 1 ? '' : 'es'} guardado${exitosos === 1 ? '' : 's'} correctamente.`;
+          if (window.showToast) showToast(status.textContent.replace('✓ ', ''), 'success');
         } else if (exitosos > 0) {
           status.textContent =
             `✓ ${exitosos} guardado${exitosos === 1 ? '' : 's'}. ` +
             `Fallaron ${errores.length}: ${errores.join(' | ')}`;
         } else {
           status.textContent = `Error: ${errores.join(' | ')}`;
+          if (window.showToast) showToast('No se pudieron guardar los manuales', 'error');
         }
 
-        if (exitosos > 0) {
-          setTimeout(() => location.reload(), 700);
-        } else {
-          input.disabled = false;
-          input.value = '';
-        }
+        actualizarHeaderManual(card);
+        actualizarContadorBiblioteca();
+        input.disabled = false;
+        input.value = '';
       } catch (error) {
         status.textContent = `Error inesperado: ${error.message}`;
         input.disabled = false;
@@ -223,43 +357,58 @@
     });
   });
 
-  document.querySelectorAll('input[data-replace]').forEach(input => {
-    input.addEventListener('change', async () => {
-      if (!input.files.length) return;
-      const status = input.closest('article')?.querySelector('.upload-status');
-      if (status) status.textContent = 'Reemplazando manual…';
-      input.disabled = true;
-      try {
-        const fd = new FormData();
-        fd.append('manual', input.files[0], input.files[0].name);
-        fd.append('replace', input.dataset.replace);
-        const response = await fetch(`/api/manuales/${encodeURIComponent(input.dataset.slug)}`, { method: 'POST', body: fd, credentials: 'same-origin' });
-        const data = await jsonResponse(response);
-        if (!response.ok || !data.ok) throw new Error(data.error || 'No se pudo reemplazar el manual.');
-        if (status) status.textContent = '✓ Manual reemplazado.';
-        setTimeout(() => location.reload(), 450);
-      } catch (error) {
-        if (status) status.textContent = `Error: ${error.message}`;
-        input.disabled = false;
-        input.value = '';
-      }
-    });
-  });
-
-  document.querySelectorAll('.manual-files button[data-file]').forEach(button => {
-    button.addEventListener('click', async () => {
-      if (!confirm('¿Eliminar este manual?')) return;
-      button.disabled = true;
-      try {
-        const response = await fetch(`/api/manuales/${encodeURIComponent(button.dataset.slug)}/${encodeURIComponent(button.dataset.file)}`, { method: 'DELETE', credentials: 'same-origin' });
-        const data = await jsonResponse(response);
-        if (!response.ok || !data.ok) throw new Error(data.error || 'No se pudo eliminar el manual.');
-        location.reload();
-      } catch (error) { alert(error.message); button.disabled = false; }
-    });
-  });
+  document.querySelectorAll('input[data-replace]').forEach(wireManualReplace);
+  document.querySelectorAll('.manual-files button[data-file]').forEach(wireManualDelete);
 
   const policyInput = document.getElementById('polizaUpload');
+  const policyList = document.querySelector('.policy-list');
+
+  function crearFilaPoliza(archivo, nombre, meta) {
+    const row = document.createElement('div');
+    row.className = 'policy-row';
+    const a = document.createElement('a');
+    a.href = '/polizas/' + encodeURIComponent(archivo);
+    a.target = '_blank';
+    a.rel = 'noopener';
+    a.innerHTML = '<b>PDF</b><span><strong></strong><small></small></span>';
+    a.querySelector('strong').textContent = nombre || 'póliza.pdf';
+    a.querySelector('small').textContent = meta || 'Ahora';
+    row.appendChild(a);
+    const btn = document.createElement('button');
+    btn.type = 'button';
+    btn.className = 'delete-policy';
+    btn.dataset.file = archivo;
+    btn.textContent = '×';
+    wirePolicyDelete(btn);
+    row.appendChild(btn);
+    return row;
+  }
+
+  function wirePolicyDelete(button) {
+    if (!button || button.dataset.wired) return;
+    button.dataset.wired = '1';
+    button.addEventListener('click', async () => {
+      if (!confirm('¿Eliminar esta póliza?')) return;
+      button.disabled = true;
+      try {
+        const response = await fetch(`/api/polizas/${encodeURIComponent(button.dataset.file)}`, { method: 'DELETE', credentials: 'same-origin' });
+        const data = await jsonResponse(response);
+        if (!response.ok || !data.ok) throw new Error(data.error || 'No se pudo eliminar la póliza.');
+        const row = button.closest('.policy-row');
+        if (row) row.remove();
+        if (policyList && !policyList.querySelector('.policy-row')) {
+          policyList.innerHTML = '<div class="empty"><b>Aún no hay pólizas cargadas</b><small>Subí el primer PDF para incorporarlo al conocimiento de la IA.</small></div>';
+        }
+        actualizarContadorBiblioteca();
+        if (window.showToast) showToast('Póliza eliminada', 'success');
+      } catch (error) {
+        if (window.showToast) showToast(error.message || 'No se pudo eliminar', 'error');
+        else alert(error.message);
+        button.disabled = false;
+      }
+    });
+  }
+
   if (policyInput) policyInput.addEventListener('change', async () => {
     if (!policyInput.files.length) return;
     const status = document.getElementById('polizaStatus');
@@ -272,19 +421,26 @@
       const data = await jsonResponse(response);
       if (!response.ok || !data.ok) throw new Error(data.error || 'No se pudo guardar la póliza.');
       status.textContent = '✓ Póliza guardada correctamente.';
-      setTimeout(() => location.reload(), 450);
-    } catch (error) { status.textContent = `Error: ${error.message}`; policyInput.disabled = false; policyInput.value = ''; }
+      if (policyList) {
+        const empty = policyList.querySelector('.empty');
+        if (empty) empty.remove();
+        const kb = data.tamaño ? Math.round(data.tamaño / 1024) + ' KB' : '';
+        const meta = ['Ahora', kb].filter(Boolean).join(' · ');
+        policyList.prepend(crearFilaPoliza(data.archivo, data.nombre, meta));
+      }
+      actualizarContadorBiblioteca();
+      if (window.showToast) showToast('Póliza guardada', 'success');
+      policyInput.disabled = false;
+      policyInput.value = '';
+    } catch (error) {
+      status.textContent = `Error: ${error.message}`;
+      if (window.showToast) showToast(error.message || 'Error al guardar', 'error');
+      policyInput.disabled = false;
+      policyInput.value = '';
+    }
   });
 
-  document.querySelectorAll('.delete-policy').forEach(button => button.addEventListener('click', async () => {
-    if (!confirm('¿Eliminar esta póliza?')) return;
-    try {
-      const response = await fetch(`/api/polizas/${encodeURIComponent(button.dataset.file)}`, { method: 'DELETE', credentials: 'same-origin' });
-      const data = await jsonResponse(response);
-      if (!response.ok || !data.ok) throw new Error(data.error || 'No se pudo eliminar la póliza.');
-      location.reload();
-    } catch (error) { alert(error.message); }
-  }));
+  document.querySelectorAll('.delete-policy').forEach(wirePolicyDelete);
 
   /* ---- Metadatos CRUD ---- */
   let metaSaveTimer = null;
@@ -326,7 +482,7 @@
           document.getElementById('metaEmpty').classList.remove('hidden');
         }
         await cargarListaMetadatos();
-      } catch (err) { alert(err.message || 'No se pudo borrar la ficha'); }
+      } catch (err) { if(window.showToast) showToast(err.message || 'No se pudo borrar la ficha','error'); else alert(err.message || 'No se pudo borrar la ficha'); }
     });
   }
   async function cargarListaMetadatos() {
@@ -337,6 +493,16 @@
       renderMetadatos();
     } catch (e) { metaList.innerHTML = '<div class="meta-empty">No se pudieron cargar las fichas.</div>'; }
   }
+  window.cargarListaMetadatos = cargarListaMetadatos;
+  window.abrirPanelMetadatos = function(){
+    document.querySelectorAll('.library-tab').forEach(t=>t.classList.remove('active'));
+    document.querySelectorAll('.library-panel').forEach(p=>p.classList.add('hidden'));
+    const tab=document.querySelector('.library-tab[data-target="metaPanel"]');
+    const panel=document.getElementById('metaPanel');
+    if(tab)tab.classList.add('active');
+    if(panel)panel.classList.remove('hidden');
+  };
+
   async function cargarMetadato(id) {
     try {
       const r = await fetch('/api/metadatos/' + id), d = await r.json();
@@ -388,6 +554,7 @@
     metaStatus.className = 'word-status';
     metaSaveTimer = setTimeout(guardarMetadato, 700);
   }
+  window.cargarMetadato = cargarMetadato;
   if (metaTitulo) metaTitulo.addEventListener('input', programarGuardadoMetadato);
   if (metaContenido) metaContenido.addEventListener('input', programarGuardadoMetadato);
   const btnNuevo = document.getElementById('nuevoMetadato');
@@ -402,7 +569,7 @@
       if (!d.ok) throw Error(d.error || 'Error');
       metaItems.unshift({ id: d.metadato.id, titulo: d.metadato.titulo, actualizado_en: d.metadato.actualizado_en });
       await cargarMetadato(d.metadato.id);
-    } catch (e) { alert(e.message || 'No se pudo crear la ficha'); }
+    } catch (e) { if(window.showToast) showToast(e.message || 'No se pudo crear la ficha','error'); else alert(e.message || 'No se pudo crear la ficha'); }
   };
 })();
 </script>

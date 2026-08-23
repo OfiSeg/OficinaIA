@@ -7,9 +7,53 @@
 <aside class="chat-list"><div class="chat-list-head"><div><b>Conversaciones</b><small>Historial guardado</small></div><button onclick="nuevoChat()" title="Nueva conversación">＋</button></div><div id="chatList" class="chat-list-items"></div></aside>
 <section class="chat">
 <header><strong>✦</strong><div><b>Chat</b></div><button class="clear-chat" onclick="borrarChatActual()">Eliminar chat</button></header>
-<div id="chat" class="history"><div id="chatWelcome" class="welcome"><strong>✦</strong><h2>¿Qué necesitás resolver?</h2><p>Preguntame por una póliza, un procedimiento, una compañía o cualquier dato disponible.</p></div></div>
-<div class="composer-wrap"><div id="chatCommandMenu" class="chat-command-menu" hidden role="listbox" aria-label="Comandos del chat"></div><div id="pdfAdjunto" class="pdf-attached" hidden><span>📎</span><strong id="pdfNombre"></strong><button type="button" onclick="quitarPdf()" title="Quitar PDF">×</button></div><div class="composer"><label class="attach-pdf" title="Adjuntar PDF">📎<input id="pdfInput" type="file" accept="application/pdf,.pdf"></label><textarea id="mensaje" rows="1" maxlength="6000" placeholder="Escribí tu consulta…"></textarea><button type="button" class="slash-btn" id="slashBtn" title="Comandos" aria-label="Abrir menú de comandos">/</button><button class="send" onclick="enviarMensaje()">↑</button></div><small>PDF hasta 20 MB · Se analiza en este chat y no se guarda en la biblioteca · Enter para enviar · Shift + Enter para una nueva línea</small></div>
+<div id="chat" class="history history-empty">
+  <div id="chatWelcome" class="welcome">
+    <strong>✦</strong>
+    <h2>¿Qué necesitás resolver?</h2>
+    <p>Preguntá por coberturas, flotas, pólizas o datos de la planilla. Usá los atajos para los flujos que más tiempo consumen.</p>
+    <div class="workflow-grid" id="workflowGrid">
+      <button type="button" class="workflow-card" data-fill="/guardar asegurado ">
+        <b>Alta asegurado</b>
+        <small>Cargar a Excel con campos en orden</small>
+      </button>
+      <button type="button" class="workflow-card" data-fill="/flota ">
+        <b>Armar flota</b>
+        <small>Propuesta de vehículos para la planilla</small>
+      </button>
+      <button type="button" class="workflow-card" data-fill="/coti ">
+        <b>Cotización</b>
+        <small>Comando /coti con datos del riesgo</small>
+      </button>
+      <button type="button" class="workflow-card" data-fill="¿Cuántos servicios de remolque tiene ">
+        <b>Remolque / asistencia</b>
+        <small>Consulta rápida por compañía y plan</small>
+      </button>
+      <button type="button" class="workflow-card" data-fill="Armame un mensaje de WhatsApp para el asegurado: ">
+        <b>WhatsApp al cliente</b>
+        <small>Texto listo para copiar y enviar</small>
+      </button>
+      <button type="button" class="workflow-card" data-fill="/envios ya ">
+        <b>Envíos Ya</b>
+        <small>Datos limpios para cargar el envío</small>
+      </button>
+    </div>
+  </div>
+</div>
+<div class="composer-wrap"><div id="chatCommandMenu" class="chat-command-menu" hidden role="listbox" aria-label="Comandos del chat"></div><div id="pdfAdjunto" class="pdf-attached" hidden><span>📎</span><strong id="pdfNombre"></strong><button type="button" onclick="quitarPdf()" title="Quitar PDF">×</button></div><div class="composer"><label class="attach-pdf" title="Adjuntar PDF">📎<input id="pdfInput" type="file" accept="application/pdf,.pdf"></label><textarea id="mensaje" rows="1" maxlength="6000" placeholder="Escribí tu consulta o usá / para comandos…"></textarea><button type="button" class="slash-btn" id="slashBtn" title="Comandos" aria-label="Abrir menú de comandos">/</button><button class="send" onclick="enviarMensaje()">↑</button></div><small>PDF hasta 20 MB · Enter envía · Shift+Enter nueva línea · /comandos · Pendientes en el menú lateral</small></div>
 </section></div></div>
 {% endblock %}
 {% block scripts %}<script>window.FORZAR_CHAT_NUEVO = {{ 'true' if forzar_chat_nuevo else 'false' }};</script>
+<script>
+document.getElementById('workflowGrid')?.addEventListener('click',e=>{
+  const card=e.target.closest('.workflow-card');
+  if(!card)return;
+  const fill=card.dataset.fill||'';
+  const i=document.getElementById('mensaje');
+  if(!i)return;
+  i.value=fill;
+  if(typeof size==='function')size();
+  i.focus();
+});
+</script>
 <script>initChat();</script>{% endblock %}

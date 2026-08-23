@@ -666,6 +666,35 @@ def eliminar_chat(chat_id, usuario):
         return True
 
 
+
+def obtener_titulo_chat(chat_id, usuario):
+    with closing(conectar_pg()) as db:
+        with db.cursor(cursor_factory=RealDictCursor) as cursor:
+            cursor.execute(
+                "SELECT titulo FROM conversaciones WHERE id = %s AND usuario = %s",
+                (chat_id, usuario),
+            )
+            fila = cursor.fetchone()
+            return fila["titulo"] if fila else None
+
+
+def actualizar_titulo_chat(chat_id, usuario, titulo):
+    titulo = (titulo or "Nueva conversación")[:200]
+    with closing(conectar_pg()) as db:
+        with db.cursor() as cursor:
+            cursor.execute(
+                """
+                UPDATE conversaciones
+                SET titulo = %s, actualizado_en = CURRENT_TIMESTAMP
+                WHERE id = %s AND usuario = %s
+                """,
+                (titulo, chat_id, usuario),
+            )
+            ok = cursor.rowcount > 0
+        db.commit()
+        return ok
+
+
 def agregar_mensaje(chat_id, rol, contenido):
     with closing(conectar_pg()) as db:
         with db.cursor() as cursor:

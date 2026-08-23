@@ -1,4 +1,4 @@
-{% extends 'base.html' %}{% block title %}Configuración · {{config_global.nombre_oficina}}{% endblock %}{% block content %}<div class="page"><header class="top"><div><span>ADMINISTRACIÓN</span><h1>Configuración</h1><p>Preferencias generales y administración de accesos.</p></div></header><div class="settings">{% if usuario_es_admin %}<section class="panel"><div class="section-head"><div><h2>Preferencias</h2><small>Configuración general de la aplicación.</small></div></div><label>Nombre de la aplicación<input id="nombreOficina" value="{{config.nombre_oficina}}"></label><div class="setting"><span><b>Notificaciones</b><small>Avisos dentro del panel</small></span><input id="notificaciones" type="checkbox" {%if config.notificaciones%}checked{%endif%}></div><div class="setting color-setting"><span><b>Colores de interfaz</b><small>Personalizá la apariencia sin cambiar la estructura.</small></span><div class="color-grid"><label>Principal<input id="colorPrincipal" type="color" value="{{config.color_principal}}"></label><label>Acento<input id="colorAcento" type="color" value="{{config.color_acento}}"></label><label>Fondo<input id="colorFondo" type="color" value="{{config.color_fondo}}"></label><label>Sidebar<input id="colorSidebar" type="color" value="{{config.color_sidebar}}"></label><label>Botones<input id="colorBotones" type="color" value="{{config.color_botones}}"></label></div></div><div class="setting visibility-setting">
+{% extends 'base.html' %}{% block title %}Configuración · {{config_global.nombre_oficina}}{% endblock %}{% block content %}<div class="page"><header class="top"><div><span>ADMINISTRACIÓN</span><h1>Configuración</h1><p>Preferencias generales y administración de accesos.</p></div></header><div class="settings">{% if usuario_es_admin %}<section class="panel"><div class="section-head"><div><h2>Preferencias</h2><small>Configuración general de la aplicación.</small></div></div><label>Nombre de la aplicación<input id="nombreOficina" value="{{config.nombre_oficina}}"></label><div class="setting"><span><b>Notificaciones</b><small>Avisos dentro del panel</small></span><input id="notificaciones" type="checkbox" {%if config.notificaciones%}checked{%endif%}></div><div class="setting visibility-setting">
 <span><b>Herramientas visibles</b><small>Elegí qué accesos aparecen en el menú para toda la oficina.</small></span>
 <div class="visibility-grid">
 <label><input id="visGmail" type="checkbox" {%if config.herramientas_visibles.gmail%}checked{%endif%}> Gmail</label>
@@ -13,10 +13,10 @@
 <span><b>Excel</b><small>Mostrar Excel en el menú lateral para toda la oficina.</small></span>
 <input id="excelVisible" type="checkbox" {%if config.excel_visible%}checked{%endif%}>
 </div>
-<button class="primary" onclick="guardarConfiguracion()">Guardar cambios</button><small id="estadoConfig"></small></section>{% else %}<section class="panel"><div class="section-head"><div><h2>Configuración</h2><small>Esta sección está disponible únicamente para administradores.</small></div></div></section>{% endif %}{% if usuario_es_admin %}<section class="panel"><div class="section-head"><div><h2>Usuarios</h2><small>Administrá cuentas, correos y permisos. Las contraseñas nunca se muestran.</small></div><button class="primary" onclick="abrirUsuarioModal()">+ Nuevo usuario</button></div><div class="table-wrap"><table><thead><tr><th>Usuario</th><th>Rol</th><th>Correo</th><th>Acciones</th></tr></thead><tbody>{%for u in usuarios%}<tr><td><b>{{u.usuario}}</b>{%if u.protegido%}<em>Principal</em>{%endif%}</td><td>{{'Administrador' if u.rol=='admin' else 'Usuario'}}</td><td>{{u.email or '—'}}</td><td><button onclick='editarUsuario({{u.id}},{{u.usuario|tojson}},{{u.email|tojson}},{{u.rol|tojson}},{{"true" if u.protegido else "false"}})'>Editar</button>{%if not u.protegido%}<button class="danger" onclick='eliminarUsuario({{u.id}},{{u.usuario|tojson}})'>Eliminar</button>{%endif%}</td></tr>{%endfor%}</tbody></table></div></section>{%endif%}</div></div>{% endblock %}{% block scripts %}<script>function aplicarColores(){const r=document.documentElement.style;const cp=document.getElementById('colorPrincipal'),ca=document.getElementById('colorAcento'),cf=document.getElementById('colorFondo'),cs=document.getElementById('colorSidebar'),cb=document.getElementById('colorBotones');if(!cp||!ca||!cf||!cs||!cb)return;r.setProperty('--navy',cp.value);r.setProperty('--teal',ca.value);r.setProperty('--bg',cf.value);r.setProperty('--sidebar-bg',cs.value);r.setProperty('--button-bg',cb.value)}
-['colorPrincipal','colorAcento','colorFondo','colorSidebar','colorBotones'].map(id=>document.getElementById(id)).filter(Boolean).forEach(i=>i.addEventListener('input',aplicarColores));
-aplicarColores();
-async function guardarConfiguracion(){const e=document.getElementById('estadoConfig');if(!e)return;e.textContent='Guardando...';try{const r=await fetch('/api/configuracion',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({nombre_oficina:document.getElementById('nombreOficina').value,notificaciones:document.getElementById('notificaciones').checked,color_principal:colorPrincipal.value,color_acento:colorAcento.value,color_fondo:colorFondo.value,color_sidebar:colorSidebar.value,color_botones:colorBotones.value,
+<button class="primary" onclick="guardarConfiguracion()">Guardar cambios</button><small id="estadoConfig"></small></section>{% else %}<section class="panel"><div class="section-head"><div><h2>Configuración</h2><small>Esta sección está disponible únicamente para administradores.</small></div></div></section>{% endif %}{% if usuario_es_admin %}<section class="panel"><div class="section-head"><div><h2>Usuarios</h2><small>Administrá cuentas, correos y permisos. Las contraseñas nunca se muestran.</small></div><button class="primary" onclick="abrirUsuarioModal()">+ Nuevo usuario</button></div><div class="table-wrap"><table><thead><tr><th>Usuario</th><th>Rol</th><th>Correo</th><th>Acciones</th></tr></thead><tbody>{%for u in usuarios%}<tr data-user-id="{{u.id}}"><td><b>{{u.usuario}}</b>{%if u.protegido%}<em>Principal</em>{%endif%}</td><td>{{'Administrador' if u.rol=='admin' else 'Usuario'}}</td><td>{{u.email or '—'}}</td><td><button onclick='editarUsuario({{u.id}},{{u.usuario|tojson}},{{u.email|tojson}},{{u.rol|tojson}},{{"true" if u.protegido else "false"}})'>Editar</button>{%if not u.protegido%}<button class="danger" onclick='eliminarUsuario({{u.id}},{{u.usuario|tojson}})'>Eliminar</button>{%endif%}</td></tr>{%endfor%}</tbody></table></div></section>{%endif%}</div></div>{% endblock %}{% block scripts %}<script>async function guardarConfiguracion(){const e=document.getElementById('estadoConfig');if(!e)return;e.textContent='Guardando...';
+const cs=getComputedStyle(document.body);
+const pick=(prop,fallback)=>{const v=document.body.style.getPropertyValue(prop).trim();return v||fallback};
+try{const r=await fetch('/api/configuracion',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({nombre_oficina:document.getElementById('nombreOficina').value,notificaciones:document.getElementById('notificaciones').checked,color_principal:pick('--navy','#122033'),color_acento:pick('--teal','#0d8b7c'),color_fondo:pick('--bg','#f7f9fb'),color_sidebar:pick('--sidebar-bg','#ffffff'),color_botones:pick('--button-bg','#122033'),
 herramientas_visibles:{
 gmail:document.getElementById('visGmail').checked,
 whatsapp:document.getElementById('visWhatsapp').checked,
@@ -26,4 +26,74 @@ chatgpt:document.getElementById('visChatgpt').checked,
 drive:document.getElementById('visDrive').checked,
 envios_ya:document.getElementById('visEnviosYa').checked
 },
-excel_visible:document.getElementById('excelVisible').checked})});if(!r.ok){e.textContent=r.status===403?'No tenés permiso para guardar estos cambios.':'No se pudo guardar. Probá de nuevo.';return}const d=await r.json();if(d.ok){document.querySelectorAll('[data-app-name]').forEach(el=>el.textContent=d.config.nombre_oficina);document.title=d.config.nombre_oficina;e.textContent='✓ Cambios guardados'}else e.textContent=d.error||'No se pudo guardar.'}catch(err){e.textContent='No se pudo guardar. Probá de nuevo.'}} {%if usuario_es_admin%}const modal=document.createElement('div');modal.className='modal';modal.hidden=true;modal.innerHTML=`<div><button onclick="cerrarUsuarioModal()">×</button><h2 id="mt">Nuevo usuario</h2><form id="uf"><input type="hidden" id="uid"><label>Usuario<input id="nu" required></label><label>Contraseña<input id="np" type="password"></label><label>Confirmar contraseña<input id="cp" type="password"></label><label>Correo<input id="ne" type="email"></label><label>Rol<select id="nr"><option value="usuario">Usuario</option><option value="admin">Administrador</option></select></label><p id="ue"></p><button>Guardar usuario</button></form></div>`;document.body.appendChild(modal);function abrirUsuarioModal(){uf.reset();uid.value='';mt.textContent='Nuevo usuario';nu.disabled=false;nr.disabled=false;modal.hidden=false}function cerrarUsuarioModal(){modal.hidden=true}function editarUsuario(id,u,e,r,p){uf.reset();uid.value=id;mt.textContent='Editar usuario';nu.value=u;nu.disabled=true;ne.value=e;nr.value=r;nr.disabled=p;modal.hidden=false}uf.onsubmit=async ev=>{ev.preventDefault();if(!uid.value&&!np.value)return ue.textContent='La contraseña es obligatoria.';if(np.value!==cp.value)return ue.textContent='Las contraseñas no coinciden.';const id=uid.value,r=await fetch(id?'/api/usuarios/'+id:'/api/usuarios',{method:id?'PUT':'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({usuario:nu.value.trim(),password:np.value,email:ne.value.trim(),rol:nr.value})}),d=await r.json();if(!r.ok)return ue.textContent=d.error;location.href='/configuracion'};async function eliminarUsuario(id,u){if(!confirm('¿Eliminar al usuario '+u+'?'))return;const r=await fetch('/api/usuarios/'+id,{method:'DELETE'});if(!r.ok){const d=await r.json();return alert(d.error)}location.reload()}{%endif%}</script>{%endblock%}
+excel_visible:document.getElementById('excelVisible').checked})});if(!r.ok){e.textContent=r.status===403?'No tenés permiso para guardar estos cambios.':'No se pudo guardar. Probá de nuevo.';return}const d=await r.json();if(d.ok){document.querySelectorAll('[data-app-name]').forEach(el=>el.textContent=d.config.nombre_oficina);document.title=d.config.nombre_oficina;e.textContent='✓ Cambios guardados'}else e.textContent=d.error||'No se pudo guardar.'}catch(err){e.textContent='No se pudo guardar. Probá de nuevo.'}} {%if usuario_es_admin%}const modal=document.createElement('div');modal.className='modal';modal.hidden=true;modal.innerHTML=`<div><button onclick="cerrarUsuarioModal()">×</button><h2 id="mt">Nuevo usuario</h2><form id="uf"><input type="hidden" id="uid"><label>Usuario<input id="nu" required></label><label>Contraseña<input id="np" type="password"></label><label>Confirmar contraseña<input id="cp" type="password"></label><label>Correo<input id="ne" type="email"></label><label>Rol<select id="nr"><option value="usuario">Usuario</option><option value="admin">Administrador</option></select></label><p id="ue"></p><button>Guardar usuario</button></form></div>`;document.body.appendChild(modal);function abrirUsuarioModal(){uf.reset();uid.value='';mt.textContent='Nuevo usuario';nu.disabled=false;nr.disabled=false;modal.hidden=false}function cerrarUsuarioModal(){modal.hidden=true}function editarUsuario(id,u,e,r,p){uf.reset();uid.value=id;mt.textContent='Editar usuario';nu.value=u;nu.disabled=true;ne.value=e;nr.value=r;nr.disabled=p;modal.hidden=false}uf.onsubmit=async ev=>{
+ev.preventDefault();
+ue.textContent='';
+if(!uid.value&&!np.value)return ue.textContent='La contraseña es obligatoria.';
+if(np.value&&np.value!==cp.value)return ue.textContent='Las contraseñas no coinciden.';
+const id=uid.value;
+const payload={usuario:nu.value.trim(),password:np.value,email:ne.value.trim(),rol:nr.value};
+try{
+  const r=await fetch(id?'/api/usuarios/'+id:'/api/usuarios',{method:id?'PUT':'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload),credentials:'same-origin'});
+  const d=await r.json();
+  if(!r.ok)return ue.textContent=d.error||'No se pudo guardar.';
+  cerrarUsuarioModal();
+  const tbody=document.querySelector('.settings table tbody');
+  if(id){
+    const tr=[...tbody.querySelectorAll('tr')].find(row=>row.querySelector('button.danger')?.getAttribute('onclick')?.includes('('+id+',')||row.querySelector('button')?.getAttribute('onclick')?.includes('editarUsuario('+id+','));
+    // actualizar fila existente de forma robusta por data-user-id
+    const row=tbody.querySelector('tr[data-user-id="'+id+'"]');
+    if(row){
+      const rolTxt=nr.value==='admin'?'Administrador':'Usuario';
+      row.querySelector('td:nth-child(2)').textContent=rolTxt;
+      row.querySelector('td:nth-child(3)').textContent=ne.value.trim()||'—';
+      const editBtn=row.querySelector('button:not(.danger)');
+      if(editBtn){
+        const prot=editBtn.getAttribute('onclick')?.includes(',true)')||nr.disabled;
+        editBtn.setAttribute('onclick',`editarUsuario(${id},${JSON.stringify(nu.value.trim())},${JSON.stringify(ne.value.trim())},${JSON.stringify(nr.value)},${prot?'true':'false'})`);
+      }
+    } else {
+      // fallback: recargar sólo si no encontramos la fila
+      location.href='/configuracion';
+      return;
+    }
+  } else if(d.id||d.usuario_id||d.ok){
+    const newId=d.id||d.usuario_id;
+    if(newId&&tbody){
+      const tr=document.createElement('tr');
+      tr.dataset.userId=String(newId);
+      const rolTxt=nr.value==='admin'?'Administrador':'Usuario';
+      tr.innerHTML=`<td><b></b></td><td></td><td></td><td></td>`;
+      tr.querySelector('td:nth-child(1) b').textContent=nu.value.trim();
+      tr.querySelector('td:nth-child(2)').textContent=rolTxt;
+      tr.querySelector('td:nth-child(3)').textContent=ne.value.trim()||'—';
+      const tdAct=tr.querySelector('td:nth-child(4)');
+      const bEdit=document.createElement('button');
+      bEdit.textContent='Editar';
+      bEdit.onclick=()=>editarUsuario(newId,nu.value.trim(),ne.value.trim(),nr.value,false);
+      const bDel=document.createElement('button');
+      bDel.className='danger';
+      bDel.textContent='Eliminar';
+      bDel.onclick=()=>eliminarUsuario(newId,nu.value.trim());
+      tdAct.appendChild(bEdit);
+      tdAct.appendChild(bDel);
+      tbody.appendChild(tr);
+    } else {
+      location.href='/configuracion';
+      return;
+    }
+  }
+  if(window.showToast)showToast(id?'Usuario actualizado':'Usuario creado','success');
+}catch(err){ue.textContent='No se pudo guardar. Probá de nuevo.'}
+};
+async function eliminarUsuario(id,u){
+  if(!confirm('¿Eliminar al usuario '+u+'?'))return;
+  try{
+    const r=await fetch('/api/usuarios/'+id,{method:'DELETE',credentials:'same-origin'});
+    if(!r.ok){const d=await r.json().catch(()=>({}));if(window.showToast)showToast(d.error||'No se pudo eliminar','error');else alert(d.error||'No se pudo eliminar');return}
+    const row=document.querySelector('tr[data-user-id="'+id+'"]');
+    if(row)row.remove();
+    else location.reload();
+    if(window.showToast)showToast('Usuario eliminado','success');
+  }catch(_){if(window.showToast)showToast('No se pudo eliminar','error')}
+}{%endif%}</script>{%endblock%}
