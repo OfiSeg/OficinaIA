@@ -43,185 +43,6 @@
     }
   };
 
-  /* ---------- Chips contextuales arriba del composer ---------- */
-  let ultimoTextoSofia = '';
-
-  function asegurarBarraChips() {
-    const wrap = document.querySelector('.composer-wrap');
-    if (!wrap) return null;
-    let bar = document.getElementById('composerSuggestions');
-    if (!bar) {
-      bar = document.createElement('div');
-      bar.id = 'composerSuggestions';
-      bar.className = 'composer-suggestions';
-      bar.setAttribute('aria-label', 'Sugerencias');
-      const composer = wrap.querySelector('.composer');
-      if (composer) wrap.insertBefore(bar, composer);
-      else wrap.appendChild(bar);
-    }
-    return bar;
-  }
-
-  function limpiarChips() {
-    const bar = document.getElementById('composerSuggestions');
-    if (bar) bar.innerHTML = '';
-  }
-
-  function pareceConocimientoUtil(texto) {
-    if (!texto || texto.length < 80) return false;
-    const t = texto.toLowerCase();
-    // Evitar saludos / errores cortos
-    if (/^(hola|ok|listo|gracias|no pude|error)/i.test(texto.trim())) return false;
-    // Señales de contenido operativo
-    const señales = [
-      'cobertura', 'remolque', 'grúa', 'grua', 'asistencia', 'km', 'servicio',
-      'póliza', 'poliza', 'franquicia', 'compañía', 'compania', 'plan',
-      'límite', 'limite', 'exclusión', 'exclusion', 'terceros', 'all risk',
-      '•', 'patente', 'suma asegurada',
-    ];
-    return señales.some((s) => t.includes(s)) || texto.length > 220;
-  }
-
-  function pareceMensajeCliente(texto) {
-    const t = (texto || '').toLowerCase();
-    return t.includes('whatsapp') || t.includes('te dejamos') || t.includes('san josé') || t.includes('san jose');
-  }
-
-  async function guardarComoFicha(texto) {
-    if (!texto) return;
-    try {
-      const r = await fetch('/api/ficha-desde-texto', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        credentials: 'same-origin',
-        body: JSON.stringify({ texto }),
-      });
-      const d = await r.json();
-      if (!r.ok || !d.ok) throw new Error(d.error || 'No se pudo armar la ficha');
-      const ficha = d.ficha;
-      const save = await fetch('/api/metadatos', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        credentials: 'same-origin',
-        body: JSON.stringify({ titulo: ficha.titulo, contenido: ficha.contenido }),
-      });
-      const sd = await save.json();
-      if (!save.ok || !sd.ok) throw new Error(sd.error || 'No se pudo guardar el metadato');
-      if (window.showToast) showToast('Ficha guardada en Metadatos', 'success');
-      limpiarChips();
-    } catch (e) {
-      if (window.showToast) showToast(e.message || 'Error al guardar ficha', 'error');
-    }
-  }
-
-  function mostrarChipsParaTexto(texto) {
-    const bar = asegurarBarraChips();
-    if (!bar) return;
-    bar.innerHTML = '';
-    ultimoTextoSofia = texto || '';
-    if (!pareceConocimientoUtil(ultimoTextoSofia) && !pareceMensajeCliente(ultimoTextoSofia)) return;
-
-    const chips = [];
-
-    if (pareceConocimientoUtil(ultimoTextoSofia)) {
-      chips.push({
-        id: 'ficha',
-        label: 'Guardar como ficha',
-        title: 'Guarda este contenido en Metadatos para no volver a buscarlo',
-      });
-    }
-
-    if (pareceMensajeCliente(ultimoTextoSofia) || ultimoTextoSofia.length > 120) {
-      chips.push({
-        id: 'copiar',
-        label: 'Copiar respuesta',
-        title: 'Copiar texto para pegar donde haga falta',
-      });
-    }
-
-    // WhatsApp solo si no parece ya un mensaje listo, o como atajo suave
-    if (!pareceMensajeCliente(ultimoTextoSofia) && pareceConocimientoUtil(ultimoTextoSofia)) {
-      chips.push({
-        id: 'wa',
-        label: 'Armar WhatsApp',
-        title: 'Pide a Sofia un mensaje listo para el cliente',
-      });
-    }
-
-    chips.forEach((c) => {
-      const btn = document.createElement('button');
-      btn.type = 'button';
-      btn.className = 'composer-chip';
-      btn.textContent = c.label;
-      btn.title = c.title;
-      btn.dataset.chip = c.id;
-      bar.appendChild(btn);
-    });
-
-    bar.onclick = async (e) => {
-      const btn = e.target.closest('button[data-chip]');
-      if (!btn) return;
-      const id = btn.dataset.chip;
-      if (id === 'ficha') {
-        btn.disabled = true;
-        await guardarComoFicha(ultimoTextoSofia);
-        btn.disabled = false;
-      } else if (id === 'copiar') {
-        try {
-          await navigator.clipboard.writeText(ultimoTextoSofia);
-          if (window.showToast) showToast('Copiado', 'success');
-        } catch (_) {
-          if (window.showToast) showToast('No se pudo copiar', 'error');
-        }
-      } else if (id === 'wa') {
-        const i = document.getElementById('mensaje');
-        if (i) {
-          i.value =
-            'Armame un mensaje de WhatsApp claro y cordial (San José Seguros), listo para copiar, con esta información:\n\n' +
-            ultimoTextoSofia.slice(0, 2500);
-          if (typeof size === 'function') size();
-          i.focus();
-        }
-      }
-    };
-  }
-
-  function textoDeMsg(msgEl) {
-    const bubble = msgEl && msgEl.querySelector('.bubble');
-    if (!bubble) return '';
-    const clone = bubble.cloneNode(true);
-    clone.querySelectorAll('.msg-copy, .sofia-actions, .excel-proposal, .tabulado-flota, .metadata-proposal').forEach((n) => n.remove());
-    // Si es propuesta estructurada, no sugerir ficha genérica
-    if (bubble.classList.contains('excel-proposal') || bubble.classList.contains('tabulado-flota')) return '';
-    return (clone.innerText || clone.textContent || '').trim();
-  }
-
-  function observarChat() {
-    const chat = document.getElementById('chat');
-    if (!chat || chat.dataset.plusObserved) return;
-    chat.dataset.plusObserved = '1';
-    asegurarBarraChips();
-
-    const mo = new MutationObserver((mutations) => {
-      mutations.forEach((m) => {
-        m.addedNodes.forEach((node) => {
-          if (node.nodeType !== 1) return;
-          if (node.classList && node.classList.contains('msg') && node.classList.contains('assistant')) {
-            const tryShow = () => {
-              if (node.querySelector('.typing')) return;
-              const texto = textoDeMsg(node);
-              if (texto) mostrarChipsParaTexto(texto);
-            };
-            setTimeout(tryShow, 100);
-            setTimeout(tryShow, 500);
-            setTimeout(tryShow, 1200);
-          }
-        });
-      });
-    });
-    mo.observe(chat, { childList: true, subtree: false });
-  }
-
   /* ---------- Tags historial ---------- */
   function tagDesdeTitulo(titulo) {
     const t = String(titulo || '').toLowerCase();
@@ -307,4 +128,99 @@
     observarChat();
     inyectarPlantillasMetadato();
   });
+
+  /* ---------- Tips de descubrimiento (arriba del chat) ---------- */
+  const TIPS_OFICINAIA = [
+    'Tirame una póliza en PDF al chat y puedo analizarla.',
+    'Si tirás una póliza individual, puedo reconocerla y prepararte el alta automáticamente.',
+    'También podés usar /alta para procesar una póliza individual a mano.',
+    'De una póliza puedo sacar datos como asegurado, número, vehículo, patente y compañía.',
+    'Cuando aparecen en la póliza, también detecto el medio de pago y el código postal.',
+    'Antes de guardar un alta, siempre podés revisar los datos que encontré.',
+    'Puedo prepararte los datos de una póliza tabulados, listos para pegar en Excel.',
+    'Si una póliza trae varios vehículos, la distingo de una póliza individual.',
+    'Podés adjuntar el PDF con el 📎 o arrastrarlo directo sobre el chat.',
+    'Si mandás un PDF sin escribir nada, igual lo proceso.',
+    'Los PDFs que adjuntás pueden pesar hasta 20 MB.',
+    'Usá /flota para empezar a armar una flota.',
+    'No hace falta mandar toda la flota junta: podés cargarla en tandas.',
+    'También podés sumar vehículos de a uno.',
+    'Mientras armamos la flota, podés corregirme un dato de un vehículo puntual.',
+    'Si a un vehículo le falta un dato, me lo podés pasar más adelante.',
+    'Los vehículos que ya cargaste quedan guardados mientras seguimos con la flota.',
+    'Antes de que la flota llegue al Excel, la revisás vos.',
+    'El resultado de /flota queda tabulado, listo para copiar y pegar en Excel.',
+    'Podés armar una flota grande sin cargar cada vehículo a mano en el Excel.',
+    'Reconozco datos como patente, año, motor, chasis, uso, suma asegurada y cobertura, según el formato de la póliza.',
+    'Tengo un procesamiento pensado especialmente para el formato de flotas de La Segunda.',
+    'Si un dato de una fila no me cierra, lo marco para que lo revises en vez de inventarlo.',
+    'Los vehículos con datos dudosos pueden quedar pendientes de revisión mientras seguís cargando el resto.',
+    'OficinaIA trabaja con un Excel de Asegurados y otro de Flotas.',
+    'Podés elegir con qué libro de Excel querés trabajar.',
+    'Podés editar celdas del Excel directamente desde OficinaIA.',
+    'Podés agregar filas nuevas a la planilla.',
+    'Podés eliminar las filas vacías de un saque.',
+    'Podés eliminar columnas vacías.',
+    'Podés agregar columnas nuevas.',
+    'Podés eliminar columnas.',
+    'Podés importar un Excel existente a OficinaIA.',
+    'También podés exportar la planilla cuando la necesites.',
+    'Los datos de Asegurados y de Flotas se guardan en libros separados.',
+    'Para guardar un dato, busco la columna por su nombre, no por una posición fija.',
+    'Antes de sumar un asegurado, valido que tenga los datos mínimos para identificarlo.',
+    'Si una patente ya está cargada, te aviso antes de que la guardes de nuevo.',
+    'Usá /guardar asegurado para preparar un registro nuevo.',
+    '/guardar asegurado acepta los datos entre paréntesis.',
+    'También podés pasarle los datos de /guardar asegurado separados por comas.',
+    'Al final de /guardar asegurado podés indicar en qué Excel guardarlo.',
+    'El Excel 1 es Asegurados y el Excel 2 es Flotas.',
+    'Antes de guardar un alta que salió de una póliza, podés revisar lo que encontré.',
+    'Los datos de la póliza se acomodan según las columnas reales de tu Excel.',
+    'Usá /coti para cargar una cotización rápida.',
+    'El formato de /coti es: CIA COBERTURA SUMA PREMIO.',
+    'En /coti podés indicar compañía, cobertura, suma asegurada y premio.',
+    '/coti es un comando fijo: no depende de que Gemini lo interprete.',
+    'Usá /envios ya seguido de la patente.',
+    '/envios ya también acepta la patente entre paréntesis.',
+    'Los datos de Envíos Ya se guardan aparte del resto del asegurado.',
+    'Cuando preparo un alta desde una póliza, Envíos Ya queda vacío para que lo completes vos.',
+    'Podés preguntarme por coberturas, asistencia, remolques, grúas, límites o condiciones usando la documentación cargada.',
+    'Si mencionás una compañía, busco directo en su documentación.',
+    'Puedo buscar dentro de los PDFs cargados por término o frase.',
+    'Los metadatos pueden completar la información que traen los PDFs.',
+    'Podés guardar un dato útil de una compañía como metadato, para tenerlo a mano en futuras consultas.',
+    'Distingo entre una consulta sobre tu cartera y una consulta sobre documentación de compañías.',
+    'Para preguntas de coberturas, asistencia o remolque, uso la documentación cargada como fuente.',
+  ];
+
+  function mostrarTipOficinaIA() {
+    const tarjeta = document.getElementById('chatTip');
+    const texto = document.getElementById('chatTipTexto');
+    const cerrar = document.getElementById('chatTipCerrar');
+    if (!tarjeta || !texto || !cerrar || !TIPS_OFICINAIA.length) return;
+
+    // El tip se muestra SIEMPRE al cargar/entrar al Chat IA.
+    // No usamos sessionStorage para recordar que ya fue mostrado:
+    // F5, nueva entrada al chat o nuevo inicio de sesión vuelven a mostrarlo.
+    let elegido = Math.floor(Math.random() * TIPS_OFICINAIA.length);
+
+    // Evita repetir el mismo tip de forma consecutiva cuando sea posible.
+    try {
+      const ultimo = Number(localStorage.getItem('oficinaia_ultimo_tip'));
+      if (TIPS_OFICINAIA.length > 1 && Number.isInteger(ultimo) && elegido === ultimo) {
+        elegido = (elegido + 1 + Math.floor(Math.random() * (TIPS_OFICINAIA.length - 1))) % TIPS_OFICINAIA.length;
+      }
+      localStorage.setItem('oficinaia_ultimo_tip', String(elegido));
+    } catch (_) {}
+
+    texto.textContent = TIPS_OFICINAIA[elegido];
+    tarjeta.hidden = false;
+
+    // La X solo cierra el cartel actual. Al volver a cargar/entrar,
+    // el tip vuelve a aparecer.
+    cerrar.onclick = function () {
+      tarjeta.hidden = true;
+    };
+  }
+  document.addEventListener('DOMContentLoaded', mostrarTipOficinaIA);
 })();

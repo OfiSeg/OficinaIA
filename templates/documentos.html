@@ -15,6 +15,14 @@
   <button type="button" class="chat-list-open" id="chatListOpen" title="Conversaciones" aria-label="Abrir lista de conversaciones">☰</button>
   <button class="clear-chat" onclick="borrarChatActual()">Eliminar chat</button>
 </header>
+<div id="chatTip" class="chat-tip" hidden>
+  <span class="chat-tip-icon" aria-hidden="true">💡</span>
+  <div class="chat-tip-body">
+    <b class="chat-tip-title">¿Sabías que...?</b>
+    <p id="chatTipTexto"></p>
+  </div>
+  <button type="button" class="chat-tip-close" id="chatTipCerrar" aria-label="Cerrar tip" title="Cerrar">×</button>
+</div>
 <div id="chatListSheet" class="chat-list-sheet" hidden>
   <div class="chat-list-sheet-backdrop" data-close-sheet></div>
   <div class="chat-list-sheet-panel" role="dialog" aria-label="Conversaciones">

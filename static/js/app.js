@@ -112,29 +112,6 @@ function scroll(){scrollToBottom(false)}
 
 function size(){const i=document.getElementById('mensaje');if(i){i.style.height='auto';i.style.height=Math.min(i.scrollHeight,110)+'px'}}
 
-function addCopyButton(bubble,rawText){
-  if(!bubble||!rawText)return;
-  const btn=document.createElement('button');
-  btn.type='button';
-  btn.className='msg-copy';
-  btn.title='Copiar respuesta';
-  btn.setAttribute('aria-label','Copiar respuesta');
-  btn.textContent='Copiar';
-  btn.addEventListener('click',async e=>{
-    e.stopPropagation();
-    try{
-      await navigator.clipboard.writeText(rawText);
-      btn.textContent='Copiado';
-      if(window.showToast)showToast('Respuesta copiada','success');
-      setTimeout(()=>{btn.textContent='Copiar'},1600);
-    }catch(_){
-      btn.textContent='Error';
-      setTimeout(()=>{btn.textContent='Copiar'},1600);
-    }
-  });
-  bubble.appendChild(btn);
-}
-
 function add(role,content,raw=false){
   const c=chatContainer();
   if(!c)return;
@@ -146,7 +123,6 @@ function add(role,content,raw=false){
     x.innerHTML=content;
   }else if(role==='assistant'){
     x.innerHTML=fmt(content);
-    addCopyButton(x,String(content??''));
   }else{
     x.textContent=String(content??'');
   }
@@ -1249,7 +1225,6 @@ async function enviarMensaje(){
       const texto=d.respuesta||'No recibí una respuesta.';
       const bubble=thinking.querySelector('.bubble');
       bubble.innerHTML=fmt(texto);
-      addCopyButton(bubble,texto);
       if(d.propuesta_excel)mostrarPropuestaExcel(d.propuesta_excel);
       if(d.propuesta_metadato)mostrarPropuestaMetadato(d.propuesta_metadato);
       if(d.tabulado_flota)mostrarTabuladoFlota(d.tabulado_flota);

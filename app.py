@@ -19,6 +19,8 @@ import unicodedata
 import os
 import json
 import sqlite3
+import logging
+import traceback
 from contextlib import closing
 from werkzeug.security import generate_password_hash, check_password_hash
 from werkzeug.utils import secure_filename
@@ -104,6 +106,60 @@ app.config.update(
     SESSION_COOKIE_SECURE=_es_produccion,  # solo HTTPS en prod
     MAX_CONTENT_LENGTH=20 * 1024 * 1024,
 )
+
+# P-FIX500 — Logger técnico para excepciones no controladas. Va a stdout,
+# que es lo que Render captura como logs del servicio.
+logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
+logger = logging.getLogger("oficinaia")
+
+
+# P-FIX500 — Red de seguridad global: ninguna excepción no controlada debe
+# terminar en el HTML genérico de Flask/Werkzeug ("Internal Server Error").
+# Esto NO reemplaza el manejo específico que ya tienen /api/chat y otras
+# rutas (que arman mensajes más precisos): es la última línea de defensa
+# para cualquier endpoint que no tenga su propio try/except, para que el
+# frontend (leerJsonSeguro) siempre reciba JSON parseable.
+@app.errorhandler(Exception)
+def _manejar_excepcion_no_controlada(error):
+    from werkzeug.exceptions import HTTPException
+
+    if isinstance(error, HTTPException):
+        # Errores HTTP legítimos (404, 405, etc.) mantienen su status,
+        # pero devolvemos JSON en vez del HTML por defecto de Werkzeug.
+        logger.warning(
+            "HTTPException en %s %s: %s", request.method, request.path, error
+        )
+        return jsonify({
+            "ok": False,
+            "error": error.description or "No se pudo completar la operación.",
+        }), error.code
+
+    # Excepción real no controlada: log técnico completo (sin credenciales)
+    # y respuesta JSON genérica y amigable para el usuario.
+    logger.error(
+        "EXCEPCIÓN NO CONTROLADA en %s %s: %s\n%s",
+        request.method,
+        request.path,
+        error,
+        traceback.format_exc(),
+    )
+    return jsonify({
+        "ok": False,
+        "error": "Ocurrió un problema al procesar la solicitud. Intentá nuevamente. "
+                 "Si el problema continúa, avisá al administrador.",
+    }), 500
+
+
+# Request demasiado grande (ej. PDF > MAX_CONTENT_LENGTH): Werkzeug corta la
+# petición en el parsing, antes de que el código de /api/chat pueda dar su
+# propio mensaje. Sin este handler, esto también devuelve HTML.
+@app.errorhandler(413)
+def _manejar_request_demasiado_grande(error):
+    return jsonify({
+        "ok": False,
+        "error": "El archivo adjunto es demasiado grande. El máximo permitido es 20 MB.",
+    }), 413
+
 
 DOCUMENTOS_DIR = BASE_DIR / "documentos"
 
@@ -2485,7 +2541,11 @@ def renombrar_chat(chat_id):
     titulo = str(data.get("titulo", "")).strip()[:100]
     if not titulo:
         return jsonify({"ok": False, "error": "El título no puede estar vacío."}), 400
-    ok = _actualizar_titulo_chat(chat_id, session["usuario"], titulo)
+    try:
+        ok = _actualizar_titulo_chat(chat_id, session["usuario"], titulo)
+    except Exception as error:
+        print("ERROR renombrar_chat:", error)
+        return jsonify({"ok": False, "error": "No se pudo renombrar la conversación."}), 500
     if not ok:
         return jsonify({"ok": False, "error": "Conversación no encontrada."}), 404
     return jsonify({"ok": True, "id": chat_id, "titulo": titulo})

@@ -320,7 +320,7 @@ body{font-size:14px}
 }
 
 /* Bloc de notas rápidas (junto al compositor del Chat IA) */
-.notas-toolbar{width:min(820px,100%);margin:0 auto 6px;display:flex;position:relative}
+.notas-toolbar{position:absolute;left:max(0px,calc((100% - 900px)/2));bottom:calc(100% - 2px);z-index:31;display:flex;margin:0}
 .notas-btn{
   width:24px;height:24px;
   border:1px solid var(--line);
@@ -670,9 +670,10 @@ html[data-theme="dark"] .tool-link>b{background:#243044;color:#94a3b8}
 html[data-theme="dark"] .nav-label{color:#64748b}
 html[data-theme="dark"] .nav-subitem{color:var(--soft)}
 html[data-theme="dark"] .nav-subitem:hover{background:var(--hover);color:var(--ink)}
-.quickaccess{margin-top:8px;padding:0 2px}.quickaccess-label{padding:9px 8px 6px}.quickaccess-grid{display:flex;flex-wrap:wrap;gap:6px;padding:0 8px}.quickaccess-item{width:26px;height:26px;border-radius:7px;background:#f0f4f7;color:#526a80;display:grid;place-items:center;font-size:8.5px;font-weight:700;letter-spacing:.01em}.quickaccess-item:hover{background:var(--tealbg,#e7f5f2);color:#087a6d}
+.quickaccess{margin-top:8px;padding:0 2px}.quickaccess-label{padding:9px 8px 6px}.quickaccess-grid{display:flex;flex-wrap:wrap;gap:6px;padding:0 8px}.quickaccess-item{width:30px;height:30px;border-radius:8px;background:#f0f4f7;display:grid;place-items:center;overflow:hidden;border:1px solid transparent;transition:background .15s ease,border-color .15s ease,transform .15s ease}.quickaccess-item img{display:block;width:23px;height:23px;object-fit:contain}.quickaccess-item:hover{background:var(--tealbg,#e7f5f2);border-color:transparent;transform:translateY(-1px)}
 html[data-theme="dark"] .quickaccess-item{background:var(--hover);color:var(--muted)}
 html[data-theme="dark"] .quickaccess-item:hover{background:var(--tealbg);color:var(--teal)}
+html[data-theme="dark"] .quickaccess-item{border-color:transparent}
 @media(max-width:800px){.quickaccess{display:none !important}}
 html[data-theme="dark"] #ciasToggle{color:var(--muted)}
 html[data-theme="dark"] #ciasToggle:hover,
@@ -903,31 +904,6 @@ html[data-theme="dark"] .color-grid input[type=color]{
   position:relative;
   padding-bottom:28px;
 }
-.msg-copy{
-  position:absolute;
-  right:8px;
-  bottom:6px;
-  border:0;
-  background:transparent;
-  color:var(--soft);
-  font-size:10px;
-  font-weight:650;
-  cursor:pointer;
-  padding:3px 7px;
-  border-radius:6px;
-  opacity:.55;
-  transition:opacity .15s ease,background .15s ease,color .15s ease;
-}
-.msg.assistant:hover .msg-copy,
-.msg-copy:focus-visible{
-  opacity:1;
-  outline:none;
-}
-.msg-copy:hover{
-  background:rgba(127,127,127,.12);
-  color:var(--teal);
-}
-
 .sofia-list{
   margin:6px 0 10px;
   padding:0 0 0 2px;
@@ -983,10 +959,6 @@ html[data-theme="dark"] .color-grid input[type=color]{
   max-width:100%;
 }
 
-html[data-theme="dark"] .msg-copy:hover{
-  background:rgba(255,255,255,.08);
-  color:var(--teal);
-}
 html[data-theme="dark"] .bubble .inline-code{
   background:rgba(0,0,0,.28);
   border-color:var(--line);
@@ -1370,10 +1342,8 @@ html[data-theme="dark"] .workflow-card b{color:var(--navy)}
 .meta-plantillas{display:flex;flex-wrap:wrap;gap:6px;align-items:center;margin-top:6px}
 .meta-plantillas-label{font-size:10px;color:var(--soft);font-weight:700;margin-right:4px}
 
-/* Ajuste bubble padding por acciones */
+/* Ajuste compacto de burbujas del asistente */
 .msg.assistant .bubble{padding-bottom:14px}
-.msg.assistant .bubble .sofia-actions + .msg-copy,
-.msg.assistant .bubble .msg-copy{bottom:auto;top:8px}
 
 
 /* ==========================================================
@@ -1427,46 +1397,6 @@ html[data-theme="dark"] .workflow-card b{color:var(--navy)}
 }
 
 /* Sugerencias contextuales arriba del composer */
-.composer-suggestions{
-  width:min(900px,100%);
-  margin:0 auto 8px;
-  display:flex;
-  flex-wrap:wrap;
-  gap:6px;
-  min-height:0;
-}
-.composer-suggestions:empty{display:none}
-.composer-chip{
-  border:1px solid var(--line);
-  background:var(--surface,#fff);
-  color:var(--muted);
-  border-radius:999px;
-  padding:6px 12px;
-  font-size:11px;
-  font-weight:650;
-  cursor:pointer;
-  line-height:1.2;
-}
-.composer-chip:hover{
-  border-color:#b4d9d3;
-  color:var(--teal);
-  background:var(--tealbg);
-}
-.composer-chip.chip-muted{opacity:.85}
-html[data-theme="dark"] .composer-chip{
-  background:var(--surface);
-  border-color:var(--line);
-  color:var(--muted);
-}
-html[data-theme="dark"] .composer-chip:hover{
-  background:var(--tealbg);
-  color:var(--teal);
-}
-
-/* Quitar acciones dentro de burbuja (reemplazadas por chips) */
-.sofia-actions{display:none !important}
-
-
 /* ==========================================================
    Welcome sin scroll innecesario
    ========================================================== */
@@ -2204,15 +2134,15 @@ html[data-theme="dark"] .font-controls button:hover{color:var(--ink);background:
   --sb-collapsed:56px;
 }
 .page.chat-page > .top{
-  margin-bottom:6px !important;
-  padding-top:2px !important;
+  margin-bottom:2px !important;
+  padding-top:0 !important;
 }
 .page.chat-page > .top h1{
   font-size:18px !important;
   line-height:1.2 !important;
 }
 .chat-shell{
-  height:calc(100vh - 88px) !important;
+  height:calc(100vh - 82px) !important;
   min-height:0 !important;
   max-height:none !important;
   grid-template-columns:200px minmax(0,1fr) !important;
@@ -2258,13 +2188,6 @@ html[data-theme="dark"] .font-controls button:hover{color:var(--ink);background:
 .font-controls button{width:30px !important;font-size:15px !important}
 .global-date{font-size:10px !important}
 .global-avatar{font-size:11px !important}
-/* Chips / acciones Sofia */
-.sofia-actions, .composer-suggestions{
-  gap:6px !important;padding:4px 0 !important;
-}
-.sofia-actions button, .composer-suggestions button, .btn-soft{
-  padding:5px 10px !important;font-size:11px !important;border-radius:8px !important;
-}
 /* Welcome menos voluminoso */
 .welcome{padding:4px 4px 8px !important}
 .welcome>strong{width:32px !important;height:32px !important;font-size:14px !important}
@@ -2403,3 +2326,125 @@ html[data-sidebar="collapsed"] .brand .logo{
   border-radius:10px !important;
   font-size:14px !important;
 }
+
+/* ===== Tip de descubrimiento (arriba del chat) ===== */
+.chat-tip{display:flex;align-items:flex-start;gap:9px;margin:11px 14px 0;padding:10px 11px;border:1px solid #cfe4df;background:var(--tealbg);border-radius:11px;animation:chatTipIn .25s ease}
+.chat-tip[hidden]{display:none}
+.chat-tip-icon{font-size:14px;line-height:1;flex:0 0 auto;margin-top:1px}
+.chat-tip-body{min-width:0;flex:1}
+.chat-tip-title{display:block;font:600 12px Sora;color:#087a6d;margin-bottom:3px}
+.chat-tip-body p{margin:0;color:#2f4a45;font-size:12.5px;line-height:1.5}
+.chat-tip-close{flex:0 0 auto;width:20px;height:20px;margin:-1px -1px 0 0;border:0;border-radius:6px;background:transparent;color:#5c8f86;font-size:14px;line-height:1;cursor:pointer;display:grid;place-items:center}
+.chat-tip-close:hover{background:#ffffffa0;color:#0b6e62}
+html[data-theme="dark"] .chat-tip-body p{color:var(--ink)}
+html[data-theme="dark"] .chat-tip-title{color:#5eead4}
+@keyframes chatTipIn{from{opacity:0;transform:translateY(-3px)}to{opacity:1;transform:translateY(0)}}
+@media(max-width:560px){.chat-tip{margin:8px 10px 0}}
+
+/* ==========================================================
+   HERRAMIENTAS — v2: iconos completos y sidebar más cómoda
+   ========================================================== */
+:root{
+  --sb-w:230px;
+  --sb-collapsed:72px;
+}
+
+/* Sidebar abierta: un poco más de aire y botones de herramientas más grandes. */
+.sidebar{
+  width:var(--sb-w) !important;
+}
+.main{
+  margin-left:var(--sb-w) !important;
+}
+.quickaccess{
+  margin-top:10px;
+  padding:0 2px;
+}
+.quickaccess-grid{
+  gap:8px;
+  padding:0 7px;
+}
+.quickaccess-item{
+  width:42px;
+  height:42px;
+  border-radius:10px;
+  background:var(--hover,#f0f4f7);
+  border:1px solid var(--line);
+  overflow:hidden;
+}
+.quickaccess-item img{
+  display:block;
+  width:34px;
+  height:34px;
+  object-fit:contain;
+}
+
+/* Sidebar cerrada: el rail gana unos píxeles para que ningún logo quede
+   recortado ni aplastado. */
+html[data-sidebar="collapsed"] .sidebar{
+  width:var(--sb-collapsed) !important;
+  padding:14px 9px !important;
+}
+html[data-sidebar="collapsed"] .main{
+  margin-left:var(--sb-collapsed) !important;
+}
+html[data-sidebar="collapsed"] .quickaccess{
+  margin-top:8px;
+  padding:0;
+}
+html[data-sidebar="collapsed"] .quickaccess-grid{
+  display:flex;
+  flex-direction:column;
+  align-items:center;
+  gap:9px;
+  padding:0;
+}
+html[data-sidebar="collapsed"] .quickaccess-item{
+  width:48px;
+  height:48px;
+  flex:0 0 48px;
+  border-radius:11px;
+}
+html[data-sidebar="collapsed"] .quickaccess-item img{
+  width:40px;
+  height:40px;
+  object-fit:contain;
+}
+
+/* Gmail necesita el mismo tratamiento visual que los demás: sin padding
+   transparente exagerado y perfectamente centrado dentro de su tile. */
+.quickaccess-item img[src*="gmail.png"]{
+  width:35px;
+  height:35px;
+}
+html[data-sidebar="collapsed"] .quickaccess-item img[src*="gmail.png"]{
+  width:41px;
+  height:41px;
+}
+
+/* Datacar conserva su logo completo dentro de un tile, sin cortarlo. */
+.quickaccess-item img[src*="datacar.png"]{
+  width:37px;
+  height:37px;
+}
+html[data-sidebar="collapsed"] .quickaccess-item img[src*="datacar.png"]{
+  width:43px;
+  height:43px;
+}
+
+/* Un poquito más grandes también los elementos principales del menú. */
+.nav-item{
+  min-height:34px !important;
+  font-size:12.5px !important;
+}
+html[data-sidebar="collapsed"] .nav-item{
+  min-height:43px !important;
+}
+
+/* ==========================================================
+   HERRAMIENTAS V3 — iconos únicos, completos y sin recortes
+   ========================================================== */
+.quickaccess-item img[src*="drive.png"]{width:35px;height:35px;object-fit:contain}
+html[data-sidebar="collapsed"] .quickaccess-item img[src*="drive.png"]{width:41px;height:41px}
+.quickaccess-item img[src*="envios_ya.png"]{width:34px;height:34px;object-fit:contain}
+html[data-sidebar="collapsed"] .quickaccess-item img[src*="envios_ya.png"]{width:40px;height:40px}
