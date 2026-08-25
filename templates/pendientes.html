@@ -8,7 +8,10 @@
       <h1>Pendientes</h1>
       <p>Cola de trabajo real: cargas a Excel, flotas o cotis que quedaron a medias. No es el historial del chat.</p>
     </div>
-    <strong class="count" id="pendientesCount">—</strong>
+    <div style="display:flex;align-items:center;gap:10px">
+      <strong class="count" id="pendientesCount">—</strong>
+      <button type="button" class="primary" id="btnNuevoPendiente">+ Nuevo pendiente</button>
+    </div>
   </header>
 
   <div class="pend-filters">
@@ -21,13 +24,102 @@
     <div class="empty"><b>Cargando…</b></div>
   </div>
 </div>
+
+<div class="modal" id="pendModal" hidden>
+  <div>
+    <button type="button" id="pendModalCerrar">×</button>
+    <h2 id="pendModalTitulo">Nuevo pendiente</h2>
+    <form id="pendForm">
+      <input type="hidden" id="pendId">
+      <label>Título
+        <input id="pendTitulo" required maxlength="200" placeholder="Ej: llamar a Pérez por la póliza 12345">
+      </label>
+      <label>Tipo
+        <select id="pendTipo">
+          <option value="generico">Tarea</option>
+          <option value="excel">Excel</option>
+          <option value="flota">Flota</option>
+          <option value="coti">Cotización</option>
+          <option value="metadato">Metadato</option>
+          <option value="whatsapp">WhatsApp</option>
+          <option value="pdf_ficha">Ficha PDF</option>
+        </select>
+      </label>
+      <label>Notas / contenido (opcional)
+        <textarea id="pendContenido" rows="4" style="width:100%;margin-top:5px;padding:9px 11px;border:1px solid var(--line);border-radius:8px;font-size:11px;resize:vertical"></textarea>
+      </label>
+      <p id="pendModalError"></p>
+      <button type="submit" class="primary" style="width:100%;height:40px;margin-top:6px">Guardar</button>
+    </form>
+  </div>
+</div>
 {% endblock %}
 {% block scripts %}
 <script>
 (function(){
   let estadoActual='pendiente';
+  let itemsActuales=[];
   const lista=document.getElementById('pendientesLista');
   const countEl=document.getElementById('pendientesCount');
+
+  // Tanda 8 — modal de alta/edición manual, sin depender del chat.
+  const modal=document.getElementById('pendModal');
+  const modalTitulo=document.getElementById('pendModalTitulo');
+  const modalError=document.getElementById('pendModalError');
+  const form=document.getElementById('pendForm');
+  const campoId=document.getElementById('pendId');
+  const campoTitulo=document.getElementById('pendTitulo');
+  const campoTipo=document.getElementById('pendTipo');
+  const campoContenido=document.getElementById('pendContenido');
+
+  function abrirModal({id='',titulo='',tipo='generico',contenido=''}={}){
+    modalError.textContent='';
+    campoId.value=id;
+    campoTitulo.value=titulo;
+    campoTipo.value=tipo||'generico';
+    campoContenido.value=contenido||'';
+    modalTitulo.textContent=id?'Editar pendiente':'Nuevo pendiente';
+    modal.hidden=false;
+    campoTitulo.focus();
+  }
+  function cerrarModal(){modal.hidden=true}
+
+  document.getElementById('btnNuevoPendiente').addEventListener('click',()=>abrirModal());
+  document.getElementById('pendModalCerrar').addEventListener('click',cerrarModal);
+  modal.addEventListener('click',e=>{if(e.target===modal)cerrarModal()});
+
+  form.addEventListener('submit',async e=>{
+    e.preventDefault();
+    const id=campoId.value;
+    const titulo=campoTitulo.value.trim();
+    const tipo=campoTipo.value;
+    const contenido=campoContenido.value.trim();
+    if(!titulo){modalError.textContent='Poné un título.';return}
+    const payload=contenido?{contenido}:{};
+    try{
+      let r;
+      if(id){
+        r=await fetch('/api/pendientes/'+id,{
+          method:'PATCH',
+          headers:{'Content-Type':'application/json'},
+          credentials:'same-origin',
+          body:JSON.stringify({titulo,tipo,payload})
+        });
+      }else{
+        r=await fetch('/api/pendientes',{
+          method:'POST',
+          headers:{'Content-Type':'application/json'},
+          credentials:'same-origin',
+          body:JSON.stringify({titulo,tipo,payload})
+        });
+      }
+      const d=await r.json().catch(()=>({}));
+      if(!r.ok||!d.ok){modalError.textContent=d.error||'No se pudo guardar.';return}
+      cerrarModal();
+      if(window.showToast)showToast(id?'Pendiente actualizado':'Pendiente creado','success');
+      cargar();
+    }catch(_){modalError.textContent='No se pudo guardar. Probá de nuevo.'}
+  });
 
   const TIPO_LABEL={
     excel:'Excel',
@@ -80,11 +172,13 @@
               <button type="button" class="primary" data-act="hecho">Marcar hecho</button>
               <button type="button" class="secondary" data-act="descartado">Descartar</button>
             `:''}
+            <button type="button" class="secondary" data-act="editar">Editar</button>
             ${payload.contenido||payload.texto?`<button type="button" class="secondary" data-act="copiar">Copiar texto</button>`:''}
             <button type="button" class="secondary danger-text" data-act="borrar">Eliminar</button>
           </div>
         </article>`;
       }).join('');
+      itemsActuales=items;
     }catch(e){
       lista.innerHTML=`<div class="empty"><b>No se pudo cargar</b><small>${esc(e.message||'')}</small></div>`;
     }
@@ -117,13 +211,23 @@
     }
     if(act==='copiar'){
       try{
-        const r=await fetch('/api/pendientes?estado='+encodeURIComponent(estadoActual),{credentials:'same-origin'});
-        const d=await r.json();
-        const item=(d.pendientes||[]).find(x=>String(x.id)===String(id));
+        const item=itemsActuales.find(x=>String(x.id)===String(id));
         const texto=(item&&item.payload&&(item.payload.contenido||item.payload.texto||item.payload.preview))||'';
         await navigator.clipboard.writeText(String(texto));
         if(window.showToast)showToast('Texto copiado','success');
       }catch(_){if(window.showToast)showToast('No se pudo copiar','error')}
+      return;
+    }
+    if(act==='editar'){
+      const item=itemsActuales.find(x=>String(x.id)===String(id));
+      if(!item)return;
+      const payload=item.payload||{};
+      abrirModal({
+        id:item.id,
+        titulo:item.titulo,
+        tipo:item.tipo,
+        contenido:payload.contenido||payload.texto||''
+      });
       return;
     }
     if(act==='hecho'||act==='descartado'){

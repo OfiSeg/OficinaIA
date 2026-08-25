@@ -382,6 +382,20 @@ def cargar_configuracion():
             "drive": True,
             "envios_ya": True,
         },
+        # URLs de los accesos directos (Tanda 7). Se dejan cargadas las de
+        # los servicios con una dirección pública conocida; "envios_ya"
+        # queda vacía a propósito porque no hay una URL propia guardada en
+        # ningún lado del proyecto y no corresponde inventarla: se completa
+        # desde Configuración.
+        "herramientas_urls": {
+            "gmail": "https://mail.google.com/",
+            "whatsapp": "https://web.whatsapp.com/",
+            "datacar": "https://www.datacar.com.ar/",
+            "nosis": "https://www.nosis.com/es",
+            "chatgpt": "https://chatgpt.com/",
+            "drive": "https://drive.google.com/",
+            "envios_ya": "",
+        },
         "excel_visible": True,
     }
     try:
@@ -407,6 +421,22 @@ def cargar_configuracion():
             }
             defaults_visibles.update(visibles)
             config["herramientas_visibles"] = defaults_visibles
+
+            urls = config.get("herramientas_urls", {})
+            if not isinstance(urls, dict):
+                urls = {}
+            defaults_urls = {
+                "gmail": "https://mail.google.com/",
+                "whatsapp": "https://web.whatsapp.com/",
+                "datacar": "https://www.datacar.com.ar/",
+                "nosis": "https://www.nosis.com/es",
+                "chatgpt": "https://chatgpt.com/",
+                "drive": "https://drive.google.com/",
+                "envios_ya": "",
+            }
+            defaults_urls.update(urls)
+            config["herramientas_urls"] = defaults_urls
+
             config["excel_visible"] = bool(config.get("excel_visible", True))
     except Exception:
         pass
@@ -2149,7 +2179,7 @@ def _detectar_tipo_chat(mensaje):
         return "flota"
     if t.startswith("/coti"):
         return "coti"
-    if t.startswith("/guardar"):
+    if t.startswith("/guardar") or t.startswith("/alta"):
         return "alta"
     if t.startswith("/envios") or t.startswith("/envíos"):
         return "envios"
@@ -3258,10 +3288,11 @@ vehículo o mezclar dos.
                 salida.append(fila)
             resultado = {"vehiculos": salida}
             if sospechosos:
+                palabra = "vehículo" if sospechosos == 1 else "vehículos"
                 resultado["aviso_conteo"] = (
-                    f"Ojo: de {len(salida)} vehículo(s) detectados, {sospechosos} quedaron "
-                    "marcados como sospechosos (campos pegados o poco claros en el texto "
-                    "original) — revisalos a mano antes de pegar en Excel."
+                    f"Ojo: {sospechosos} {palabra} de los {len(salida)} que encontré "
+                    "conviene revisarlos antes de pasarlos al Excel, porque algunos datos "
+                    "no se leyeron del todo bien."
                 )
             return resultado
         except Exception as error:
@@ -3627,60 +3658,76 @@ def _armar_bloque_tsv_flota(vehiculos):
     return "\n".join(lineas)
 
 
+def _listar_numeros(items, conector="y"):
+    """Arma "16, 30, 32 y 36" a partir de una lista de números/strings."""
+    items = [str(i) for i in items]
+    if not items:
+        return ""
+    if len(items) == 1:
+        return items[0]
+    return ", ".join(items[:-1]) + f" {conector} " + items[-1]
+
+
 def _resumen_estado_flota(estado_flota, items_tocados_ahora, con_error, es_primera_vez, aviso_conteo=None):
-    """Ya no reporta "guardado en Excel" (Sección rediseño: /flota no
-    escribe el archivo real, sólo arma el bloque tabulado). Acá sólo se
-    informa cuántos vehículos se detectaron/actualizaron y cuáles quedaron
-    con campos incompletos o con datos sospechosos, como guía para revisar
-    antes de pegar."""
+    """Arma el mensaje que Sofia le muestra al usuario después de procesar
+    una póliza de flota. /flota no escribe el archivo real, sólo arma el
+    bloque tabulado; acá se cuenta en lenguaje simple qué se encontró, qué
+    conviene revisar y qué falta, sin tecnicismos ni jerga interna."""
     vehiculos = estado_flota.get("vehiculos") or []
-    datos_generales = estado_flota.get("datos_generales") or {}
     total = len(vehiculos)
     tocados_ahora = len(items_tocados_ahora) if items_tocados_ahora else 0
     pendientes = [v for v in vehiculos if _campos_pendientes_vehiculo(v) and _vehiculo_guardable(v)]
-    sospechosos = [
-        (v, _vehiculo_avisos(v)) for v in vehiculos if _vehiculo_guardable(v) and _vehiculo_avisos(v)
-    ]
+    sospechosos = [v for v in vehiculos if _vehiculo_guardable(v) and _vehiculo_avisos(v)]
 
     partes = []
-    encabezado_datos = ", ".join(
-        f"{k}: {v}" for k, v in datos_generales.items() if v
-    )
-    if es_primera_vez and encabezado_datos:
-        partes.append(f"Flota iniciada ({encabezado_datos}).")
 
     if tocados_ahora:
         if es_primera_vez:
-            partes.append(f"Detecté {total} vehículo(s). Te dejo el bloque para copiar y pegar en el Excel.")
+            palabra = "vehículo" if total == 1 else "vehículos"
+            partes.append(f"La póliza se cargó y encontré {total} {palabra}.")
         else:
-            partes.append(f"Sumé/actualicé {tocados_ahora} vehículo(s) más (total en la flota: {total}).")
+            palabra = "vehículo" if tocados_ahora == 1 else "vehículos"
+            partes.append(f"Sumé {tocados_ahora} {palabra} más. Ahora hay {total} en total.")
     elif total and es_primera_vez:
-        partes.append(f"Detecté {total} vehículo(s), pero ninguno tiene todavía datos suficientes para armar la fila.")
+        partes.append(f"Encontré {total} vehículos, pero todavía no tienen datos suficientes para armar el bloque.")
+    elif not total:
+        partes.append(
+            "Empecé a cargar la flota. Pasame los datos de la póliza y los vehículos, "
+            "todos juntos o de a poco, como te resulte más cómodo."
+        )
 
     if con_error:
-        items = ", ".join(str(i) for i, _ in con_error)
-        partes.append(f"El/los vehículo(s) {items} quedaron pendientes por un error puntual; el resto no se vio afectado.")
-
-    if aviso_conteo:
-        partes.append(aviso_conteo)
+        singular = len(con_error) == 1
+        articulo, palabra = ("El", "vehículo") if singular else ("Los", "vehículos")
+        numeros = _listar_numeros([i for i, _ in con_error])
+        verbo = "tuvo" if singular else "tuvieron"
+        partes.append(f"{articulo} {palabra} {numeros} {verbo} un problema puntual, pero no afectó al resto.")
 
     if sospechosos:
-        detalle = "; ".join(
-            f"#{v['item']} ({', '.join(avisos)})" for v, avisos in sospechosos[:6]
-        )
-        extra = "" if len(sospechosos) <= 6 else f" y {len(sospechosos) - 6} más"
+        singular = len(sospechosos) == 1
+        articulo, palabra = ("El", "vehículo") if singular else ("Los", "vehículos")
+        numeros = _listar_numeros([v["item"] for v in sospechosos])
+        verbo = "conviene revisarlo" if singular else "conviene revisarlos"
         partes.append(
-            f"Revisá antes de pegar {len(sospechosos)} fila(s) con datos sospechosos "
-            f"({detalle}{extra})."
+            f"{articulo} {palabra} {numeros} {verbo} porque algunos datos parecen estar mal separados."
         )
 
     if pendientes:
-        detalle = "; ".join(
-            f"#{v['item']} falta {', '.join(_campos_pendientes_vehiculo(v))}"
-            for v in pendientes[:6]
-        )
-        extra = "" if len(pendientes) <= 6 else f" y {len(pendientes) - 6} más"
-        partes.append(f"Quedan {len(pendientes)} con datos incompletos ({detalle}{extra}). Pasámelos cuando los tengas y actualizo el bloque.")
+        campos_faltantes = set()
+        for v in pendientes:
+            campos_faltantes.update(_campos_pendientes_vehiculo(v))
+        if len(pendientes) <= 3:
+            singular = len(pendientes) == 1
+            articulo, palabra = ("Al", "vehículo") if singular else ("A los", "vehículos")
+            numeros = _listar_numeros([v["item"] for v in pendientes])
+            verbo = "le falta" if singular else "les falta"
+            partes.append(f"{articulo} {palabra} {numeros} todavía {verbo} algún dato. Pasámelo cuando lo tengas y actualizo el bloque.")
+        else:
+            ejemplo = sorted(campos_faltantes)[0] if campos_faltantes else "algún dato"
+            partes.append(
+                f"Además, hay {len(pendientes)} vehículos a los que todavía les falta "
+                f"algún dato (por ejemplo, {ejemplo}). Pasámelos cuando los tengas y actualizo el bloque."
+            )
 
     if not partes:
         partes.append(
@@ -3688,8 +3735,6 @@ def _resumen_estado_flota(estado_flota, items_tocados_ahora, con_error, es_prime
             "(podés mandarlos todos juntos, en tandas, o uno por uno)."
         )
 
-    if total:
-        partes.append(f"Vehículos en la flota activa: {total}.")
     return " ".join(partes)
 
 
@@ -3814,6 +3859,459 @@ def _flota_procesar_turno(chat_id, mensaje, contexto_pdf_adjunto):
     bloque = _armar_bloque_tsv_flota(estado_flota["vehiculos"])
     respuesta = _resumen_estado_flota(estado_flota, tocados, [], es_primera_vez, aviso_conteo=aviso_conteo)
     return respuesta, True, (bloque or None)
+
+
+# ==========================================================
+# TANDA 4 — PÓLIZA → ASEGURADO (flujo nuevo, separado de /flota)
+# ==========================================================
+#
+# Este flujo NO toca /flota: no comparte estado (flotas_activas), no
+# reutiliza su deduplicación ni sus mensajes. Lo que se reutiliza de
+# /flota es el aprendizaje de cómo interpretar un frente de póliza
+# (mismo patrón de "Gemini con instrucción estricta, salida JSON, sin
+# inventar campos vacíos") — no su código de flota en sí.
+#
+# El comando es "/alta" y procesa UNA póliza individual (no una flota)
+# para dejar lista la propuesta de alta de asegurado. Es de un solo turno:
+# no arrastra estado entre mensajes como sí hace /flota.
+
+_COLUMNAS_ALTA_ASEGURADO = (
+    "ASEGURADO", "NUMERO", "VEHICULO", "PATENTE", "ENVIOS YA", "COMPAÑIA",
+    "MEDIO DE PAGO", "CODIGO POSTAL", "EMITIDO DÍA:", "IMPORTE APROX",
+)
+
+# Mensaje que arma solo el propio /api/chat cuando el usuario adjunta un PDF
+# sin escribir nada (botón o drag&drop). Se usa como referencia para saber
+# si, al detectar automáticamente una póliza (más abajo), conviene ignorar
+# ese texto de relleno o respetar algo que el usuario sí haya escrito.
+_MENSAJE_PDF_POR_DEFECTO = "Analizá el PDF que acabo de adjuntar y explicame de qué trata."
+
+# Patente argentina: formato viejo (3 letras + 3 números) o mercosur
+# (2 letras + 3 números + 2 letras).
+_PATENTE_REGEX_ALTA = re.compile(r"\b[A-Z]{2}\d{3}[A-Z]{2}\b|\b[A-Z]{3}\d{3}\b")
+
+
+def _pdf_parece_poliza_individual_para_alta(contexto_pdf_adjunto):
+    """Tanda 8 — drag&drop sin comando: decide si un PDF recién adjuntado
+    se parece al frente de UNA póliza individual (un asegurado, un
+    vehículo), para poder ofrecer el alta automáticamente sin que el
+    usuario tenga que escribir "/alta".
+
+    Es deliberadamente conservadora: si hay señales de que en realidad es
+    una flota (más de una patente, numeración de ítems), no dispara nada
+    acá y el mensaje sigue el camino normal (o /flota, si corresponde)."""
+    texto = str(contexto_pdf_adjunto or "")
+    if not texto.strip():
+        return False
+
+    patentes = {m.group(0).upper() for m in _PATENTE_REGEX_ALTA.finditer(texto)}
+    if len(patentes) >= 2:
+        return False  # más de un vehículo → parece flota, no alta individual
+
+    if len(re.findall(r"(?:^|\n)\s*(?:ITEM|ÍTEM|N[°º]\s*\d+)\b", texto, re.IGNORECASE)) >= 2:
+        return False  # listado numerado → parece flota
+
+    return bool(re.search(r"\b(P[ÓO]LIZA|ASEGURADO|PREMIO|PRIMA)\b", texto, re.IGNORECASE))
+
+# Mismas compañías que ya tiene el sistema en los accesos directos
+# (Sección /flota-adyacente): se reutilizan los nombres, no se inventan
+# nuevas. Sirven como pista para detectar la compañía en el texto de la
+# póliza cuando no viene con una etiqueta explícita "COMPAÑIA:".
+_COMPANIAS_CONOCIDAS_ALTA = [nombre for nombre, _url in CIAS_LINKS]
+
+
+def _detectar_compania_poliza(texto):
+    """Sólo confirma la compañía si aparece de forma razonablemente clara
+    en el propio texto de la póliza. No adivina a partir del nombre de
+    archivo ni de suposiciones: si no hay evidencia, se deja vacío."""
+    texto_norm = str(texto or "")
+    m = re.search(r"COMPA[ÑN][IÍ]A\s*:?\s*([A-ZÁÉÍÓÚÑ .]{3,40})", texto_norm, re.IGNORECASE)
+    if m:
+        candidato = re.sub(r"\s+", " ", m.group(1)).strip(" .")
+        if candidato:
+            return candidato
+    for nombre in _COMPANIAS_CONOCIDAS_ALTA:
+        if re.search(rf"\b{re.escape(nombre)}\b", texto_norm, re.IGNORECASE):
+            return nombre
+    return ""
+
+
+def interpretar_poliza_asegurado_a_json(texto):
+    """Extrae de un frente de póliza individual los datos para proponer el
+    alta de un asegurado. A diferencia de interpretar_flota_a_json, esto
+    NO es una lista de vehículos de una flota: es un único asegurado con
+    un único vehículo, con las columnas exactas que pide la Tanda 4.
+
+    Reglas que Gemini debe respetar (idénticas a la instrucción, para no
+    inventar datos):
+    - "envios_ya" NUNCA se completa acá: queda para carga manual.
+    - "medio_pago" sólo si hay evidencia clara en el texto; si no, vacío.
+    - "codigo_postal" sólo si aparece explícito o es inequívoco; si no, vacío.
+    - "emitido" es la FECHA DE EMISIÓN de la póliza (no la fecha actual).
+    - "importe_aprox" sale del PREMIO (precio final), no de una suma propia.
+    """
+    texto = str(texto or "").replace("\r", "")
+    if not texto.strip():
+        return {}
+
+    from servicios_ia import obtener_cliente_gemini, MODELOS_GEMINI
+    from google.genai import types
+
+    cliente = obtener_cliente_gemini()
+    if cliente is None:
+        raise RuntimeError("La IA todavía no está configurada. Falta GEMINI_API_KEY.")
+
+    instruccion = """
+Vas a recibir el texto crudo del frente de una póliza de seguro individual
+(un solo asegurado, un solo vehículo) de una compañía argentina, pegado sin
+formato. Tu tarea es identificar un conjunto fijo de datos para proponer el
+alta de ese asegurado en una planilla.
+
+Devolvé ÚNICAMENTE JSON válido, sin markdown ni texto fuera del JSON, con
+esta estructura exacta:
+{
+  "asegurado": "",
+  "numero": "",
+  "vehiculo": "",
+  "patente": "",
+  "compania": "",
+  "medio_pago": "",
+  "codigo_postal": "",
+  "emitido": "",
+  "premio": ""
+}
+
+REGLAS ESTRICTAS (no las rompas aunque el texto sea ambiguo):
+
+1. "asegurado": el nombre de la persona o razón social asegurada, tal como
+   figura en la póliza. Si no está claro, dejalo vacío.
+2. "numero": el número de póliza.
+3. "vehiculo": marca/modelo o descripción del vehículo tal como figura.
+4. "patente": la patente, si figura.
+5. "compania": la compañía de seguros que emitió la póliza.
+6. "medio_pago": SOLO si el texto permite identificarlo con evidencia clara
+   (por ejemplo dice explícitamente "cuponera", "CBU", "tarjeta de crédito").
+   NUNCA lo asumas a partir de qué compañía es. Si no hay evidencia clara,
+   dejalo vacío. No adivines.
+7. "codigo_postal": SOLO si aparece explícito en el texto o se puede
+   identificar sin ambigüedad a partir de los propios datos de la póliza.
+   Si no aparece, dejalo vacío. No lo inventes ni lo busques externamente.
+8. "emitido": la FECHA DE EMISIÓN de la póliza (no la fecha de hoy, no la
+   fecha de vigencia, no el vencimiento). Formato DD/MM/AAAA. Si no hay una
+   fecha de emisión confiable, dejalo vacío.
+9. "premio": el importe del PREMIO (el precio final del seguro), tal como
+   figura. Si la póliza usa otra palabra que equivale claramente al premio
+   final, usá ese valor. NUNCA sumes conceptos, ni calcules un precio
+   nuevo, ni estimes en base a la cobertura. Si no hay un premio
+   identificable con certeza, dejalo vacío.
+
+No inventes ningún dato. Un campo que no aparece con certeza en el texto
+queda vacío ("") — nunca "N/D", "no informado" ni similares.
+"""
+    ultimo_error = None
+    for modelo in MODELOS_GEMINI:
+        try:
+            config = types.GenerateContentConfig(
+                temperature=0,
+                max_output_tokens=1500,
+                response_mime_type="application/json",
+                system_instruction=instruccion.strip(),
+            )
+            respuesta = cliente.models.generate_content(
+                model=modelo,
+                contents=texto.strip(),
+                config=config,
+            )
+            bruto = str(getattr(respuesta, "text", "") or "").strip()
+            if not bruto:
+                raise ValueError("Gemini no devolvió JSON.")
+            datos = json.loads(bruto)
+            if not isinstance(datos, dict):
+                raise ValueError("Gemini no devolvió un objeto JSON.")
+
+            def limpio(clave):
+                valor = re.sub(r"\s+", " ", str(datos.get(clave, "") or "")).strip()
+                return valor
+
+            return {
+                "asegurado": limpio("asegurado"),
+                "numero": limpio("numero"),
+                "vehiculo": limpio("vehiculo"),
+                "patente": limpio("patente"),
+                "compania": limpio("compania") or _detectar_compania_poliza(texto),
+                "medio_pago": limpio("medio_pago"),
+                "codigo_postal": limpio("codigo_postal"),
+                "emitido": limpio("emitido"),
+                "premio": limpio("premio"),
+            }
+        except Exception as error:
+            ultimo_error = error
+            print("ERROR GEMINI /ALTA:", modelo, ":", error)
+    raise RuntimeError(f"No pude interpretar la póliza: {ultimo_error}")
+
+
+def _propuesta_alta_a_columnas(propuesta):
+    """Arma el dict con las columnas EXACTAS (mismo orden y mismos nombres)
+    que pide la Tanda 4/5. ENVIOS YA queda siempre vacío: es manual."""
+    return {
+        "ASEGURADO": propuesta.get("asegurado", ""),
+        "NUMERO": propuesta.get("numero", ""),
+        "VEHICULO": propuesta.get("vehiculo", ""),
+        "PATENTE": propuesta.get("patente", ""),
+        "ENVIOS YA": "",
+        "COMPAÑIA": propuesta.get("compania", ""),
+        "MEDIO DE PAGO": propuesta.get("medio_pago", ""),
+        "CODIGO POSTAL": propuesta.get("codigo_postal", ""),
+        "EMITIDO DÍA:": propuesta.get("emitido", ""),
+        "IMPORTE APROX": propuesta.get("premio", ""),
+    }
+
+
+def _resumen_alta_asegurado(columnas):
+    """Mensaje en lenguaje simple (Tanda 1) que resume lo que Sofia
+    encontró en la póliza, sin tecnicismos ni listar cada campo vacío."""
+    asegurado = columnas.get("ASEGURADO") or ""
+    compania = columnas.get("COMPAÑIA") or ""
+    numero = columnas.get("NUMERO") or ""
+
+    partes = []
+    if asegurado and compania:
+        partes.append(f"Leí la póliza: es de {asegurado}, en {compania}.")
+    elif asegurado:
+        partes.append(f"Leí la póliza: es de {asegurado}.")
+    else:
+        partes.append("Leí la póliza, pero no pude identificar con seguridad a nombre de quién está.")
+
+    if numero:
+        partes.append(f"El número de póliza es {numero}.")
+
+    faltan = [
+        etiqueta for etiqueta, clave in (
+            ("la compañía", "COMPAÑIA"),
+            ("el vehículo", "VEHICULO"),
+            ("la patente", "PATENTE"),
+        )
+        if not columnas.get(clave)
+    ]
+    if faltan:
+        partes.append(f"No encontré {', '.join(faltan)}; si lo tenés, pasámelo y lo agrego.")
+
+    if not columnas.get("MEDIO DE PAGO"):
+        partes.append("El medio de pago no queda claro en la póliza, así que lo dejé vacío para que lo completes vos.")
+    if not columnas.get("CODIGO POSTAL"):
+        partes.append("Tampoco encontré el código postal.")
+    if not columnas.get("IMPORTE APROX"):
+        partes.append("No encontré un premio identificable, así que el importe quedó vacío.")
+
+    partes.append("Envíos Ya lo dejo vacío siempre, para que lo cargues a mano.")
+
+    regla_pago = calcular_regla_pago(columnas.get("COMPAÑIA"), columnas.get("MEDIO DE PAGO"))
+    if regla_pago:
+        partes.append(regla_pago["descripcion"])
+
+    return " ".join(partes)
+
+
+def _procesar_alta_asegurado(mensaje, contexto_pdf_adjunto, automatico=False):
+    """Punto de entrada del comando /alta. Devuelve (respuesta, True,
+    propuesta_dict) si el mensaje fue absorbido por este flujo, o
+    (None, False, None) si no corresponde y debe seguir el flujo normal.
+
+    Este flujo es de UN SOLO TURNO (a diferencia de /flota): no arrastra
+    contexto entre mensajes.
+
+    `automatico=True` (Tanda 8) indica que "/alta" no lo escribió el
+    usuario: se agregó solo porque el PDF adjunto se detectó como una
+    póliza individual. Sólo cambia la primera frase de la respuesta, para
+    que quede claro que Sofia lo reconoció sola."""
+    if not re.match(r"^/alta\b", mensaje, re.IGNORECASE):
+        return None, False, None
+
+    texto_comando = re.sub(r"^/alta\s*", "", mensaje, count=1, flags=re.IGNORECASE).strip()
+    fuente = texto_comando
+    if contexto_pdf_adjunto:
+        fuente = f"{texto_comando}\n\n{contexto_pdf_adjunto}".strip() if texto_comando else contexto_pdf_adjunto
+
+    if not fuente:
+        return (
+            "Para dar de alta un asegurado desde una póliza, adjuntame el PDF "
+            "(con el clip o arrastrándolo al chat) y escribí /alta, o pegame "
+            "el texto del frente de póliza después de /alta.",
+            True,
+            None,
+        )
+
+    try:
+        propuesta = interpretar_poliza_asegurado_a_json(fuente)
+    except Exception as error:
+        print("ERROR PROCESANDO /ALTA:", error)
+        return (
+            "No pude leer bien esa póliza para armar el alta. Probá adjuntarla "
+            "de nuevo o pegar el texto del frente.",
+            True,
+            None,
+        )
+
+    columnas = _propuesta_alta_a_columnas(propuesta)
+    respuesta = _resumen_alta_asegurado(columnas)
+    if automatico:
+        respuesta = "Reconocí que me pasaste una póliza, así que te dejo directamente la propuesta de alta. " + respuesta
+    return respuesta, True, columnas
+
+
+# ==========================================================
+# TANDA 5 — DOS SALIDAS: TABULADO O GUARDAR EN EXCEL
+# ==========================================================
+#
+# A partir de la propuesta que arma la Tanda 4 (columnas), se ofrecen dos
+# caminos SIN volver a interpretar la póliza:
+#   - Tabulado: una fila lista para copiar/pegar, mismo orden y mismos
+#     nombres de columna que pide la instrucción (los campos que faltan
+#     quedan vacíos, nunca "N/D").
+#   - Guardar en Excel: reutiliza el mecanismo ya existente de
+#     /guardar asegurado (mismo formulario, misma validación, misma
+#     escritura en el Excel de Asegurados) en vez de duplicar esa lógica.
+
+def _armar_tabulado_alta(columnas):
+    """Fila TSV en el orden EXACTO de _COLUMNAS_ALTA_ASEGURADO, lista para
+    pegar en Excel. Un campo sin dato queda vacío, nunca "N/D" ni similar."""
+    valores = [str((columnas or {}).get(col, "") or "") for col in _COLUMNAS_ALTA_ASEGURADO]
+    return "\t".join(valores)
+
+
+def _alta_a_campos_guardar_asegurado(columnas):
+    """Convierte la propuesta de alta (columnas de la Tanda 4/5) a los
+    mismos campos que ya usa /guardar asegurado para el Excel de
+    Asegurados (Libro 1), para reutilizar ese formulario y esa función de
+    guardado sin crear un camino paralelo.
+
+    COMPAÑIA -> CIA y CODIGO POSTAL -> CP porque son los nombres reales de
+    esas columnas en ese Excel. EMITIDO DÍA e IMPORTE APROX todavía no
+    tienen columna en esa planilla, así que no viajan acá: quedan
+    disponibles en el Tabulado."""
+    columnas = columnas or {}
+    return {
+        "LIBRO_ID": "1",
+        "ASEGURADO": columnas.get("ASEGURADO", ""),
+        "NUMERO": columnas.get("NUMERO", ""),
+        "VEHICULO": columnas.get("VEHICULO", ""),
+        "PATENTE": columnas.get("PATENTE", ""),
+        "ENVIOS YA": "",
+        "CIA": columnas.get("COMPAÑIA", ""),
+        "MEDIO DE PAGO": columnas.get("MEDIO DE PAGO", ""),
+        "CP": columnas.get("CODIGO POSTAL", ""),
+        "MAIL": "",
+    }
+
+
+# ==========================================================
+# TANDA 6 — REGLAS DE NEGOCIO DE PAGOS
+# ==========================================================
+#
+# Con COMPAÑIA + MEDIO DE PAGO (los mismos datos que ya deja armados la
+# Tanda 4) se puede anticipar cómo funciona el pago: si el precio queda
+# fijo por varios meses, si hay cupones físicos o si el importe cambia
+# mes a mes. Son sólo las primeras reglas conocidas; el diccionario está
+# pensado para sumar compañías y medios de pago nuevos sin tocar la
+# lógica que los aplica.
+#
+# Si falta la compañía, falta el medio de pago, o la combinación todavía
+# no tiene una regla cargada, no se inventa nada: no se aplica ninguna
+# regla y listo.
+
+def _normalizar_texto_pago(valor):
+    """Deja el texto en mayúsculas y sin acentos, para poder comparar
+    compañías y medios de pago sin importar cómo los haya escrito Gemini
+    o el usuario (con o sin tildes, mayúsculas, espacios de más)."""
+    texto = unicodedata.normalize("NFKD", str(valor or ""))
+    texto = "".join(c for c in texto if not unicodedata.combining(c))
+    return re.sub(r"\s+", " ", texto.upper()).strip()
+
+
+def _normalizar_compania_pago(compania):
+    """Reduce el nombre de la compañía a una de las claves conocidas por
+    las reglas de pago (por ahora ATM y AGS). Si no coincide con ninguna
+    conocida, devuelve el texto normalizado tal cual: simplemente no va a
+    matchear ninguna regla, en vez de forzar un valor incorrecto."""
+    texto = _normalizar_texto_pago(compania)
+    if not texto:
+        return ""
+    if "ATM" in texto:
+        return "ATM"
+    if "AGS" in texto:
+        return "AGS"
+    return texto
+
+
+def _normalizar_medio_pago(medio_pago):
+    """Agrupa las formas habituales de escribir cada medio de pago en una
+    clave única. Si no reconoce ninguna, devuelve vacío: mejor no aplicar
+    ninguna regla que aplicar una equivocada."""
+    texto = _normalizar_texto_pago(medio_pago)
+    if not texto:
+        return ""
+    if "CUPON" in texto:
+        return "CUPONERA"
+    if "CBU" in texto or "DEBITO" in texto or "TRANSFERENCIA" in texto:
+        return "CBU"
+    if "CREDITO" in texto or "TARJETA" in texto:
+        return "CREDITO"
+    return ""
+
+
+# Reglas conocidas hasta ahora. Para agregar una compañía o medio de pago
+# nuevo alcanza con sumar una entrada acá, sin tocar el resto del sistema.
+_REGLAS_PAGO = {
+    ("ATM", "CUPONERA"): {
+        "precio_fijo": True,
+        "meses_precio_fijo": 3,
+        "cantidad_cupones": 3,
+        "cupones_fisicos": True,
+        "descripcion": (
+            "Con ATM y cuponera el precio se mantiene fijo 3 meses. "
+            "Hay 3 cupones, uno para cada mes, y se pueden pagar físicamente."
+        ),
+    },
+    ("ATM", "CBU"): {
+        "precio_fijo": False,
+        "meses_precio_fijo": None,
+        "cantidad_cupones": 0,
+        "cupones_fisicos": False,
+        "descripcion": "Con ATM y CBU el precio puede cambiar todos los meses. No hay cupones.",
+    },
+    ("ATM", "CREDITO"): {
+        "precio_fijo": False,
+        "meses_precio_fijo": None,
+        "cantidad_cupones": 0,
+        "cupones_fisicos": False,
+        "descripcion": "Con ATM y crédito el precio puede cambiar todos los meses. No hay cupones.",
+    },
+    ("AGS", "CUPONERA"): {
+        "precio_fijo": True,
+        "meses_precio_fijo": 4,
+        "cantidad_cupones": 4,
+        "cupones_fisicos": True,
+        "descripcion": (
+            "Con AGS y cuponera el precio se mantiene fijo 4 meses. "
+            "Hay 4 cupones, uno para cada mes."
+        ),
+    },
+}
+
+
+def calcular_regla_pago(compania, medio_pago):
+    """Devuelve la regla de pago que corresponde a esta combinación de
+    compañía + medio de pago, o None si falta alguno de los dos datos o si
+    todavía no hay una regla cargada para esa combinación. Nunca supone
+    una regla que no esté explícitamente definida arriba."""
+    compania_norm = _normalizar_compania_pago(compania)
+    medio_norm = _normalizar_medio_pago(medio_pago)
+    if not compania_norm or not medio_norm:
+        return None
+    regla = _REGLAS_PAGO.get((compania_norm, medio_norm))
+    if not regla:
+        return None
+    return dict(regla)
 
 
 def _normalizar_patente(valor):
@@ -4233,7 +4731,7 @@ def chat():
             return jsonify({"ok": False, "error": "No pude leer ese PDF. Verificá que el archivo no esté dañado."}), 422
 
     if not mensaje and archivo_pdf:
-        mensaje = "Analizá el PDF que acabo de adjuntar y explicame de qué trata."
+        mensaje = _MENSAJE_PDF_POR_DEFECTO
 
     if not mensaje:
 
@@ -4286,6 +4784,54 @@ def chat():
             "propuesta_excel": None,
             "propuesta_metadato": None,
             "tabulado_flota": tabulado_flota,
+        })
+
+    # ======================================================
+    # COMANDO /ALTA — PÓLIZA INDIVIDUAL → PROPUESTA DE ASEGURADO
+    # ======================================================
+    # Tanda 4: flujo nuevo y separado de /flota. Un solo turno, sin estado
+    # persistente por chat_id. La propuesta queda en sesión para que, más
+    # adelante (Tanda 5), el usuario pueda elegir "tabular" o "guardar en
+    # Excel" sin tener que repetir la extracción.
+    # Tanda 8 — detección automática: si el usuario tira el PDF de una
+    # póliza individual al chat (con el clip o arrastrándolo) SIN escribir
+    # "/alta", Sofia reconoce igual que es una póliza de un solo asegurado
+    # y arma la propuesta de alta directamente, sin obligarlo a escribir
+    # el comando. Sólo se activa cuando nada más ya se hizo cargo del
+    # mensaje (ni /coti, ni /flota) y el contenido del PDF no parece una
+    # flota (ver _pdf_parece_poliza_individual_para_alta).
+    es_alta_explicito = bool(re.match(r"^/alta\b", mensaje, re.IGNORECASE))
+    mensaje_para_alta = mensaje
+    alta_automatica = False
+    if (
+        not es_alta_explicito
+        and contexto_pdf_adjunto
+        and _pdf_parece_poliza_individual_para_alta(contexto_pdf_adjunto)
+    ):
+        texto_extra = "" if mensaje.strip() == _MENSAJE_PDF_POR_DEFECTO else mensaje.strip()
+        mensaje_para_alta = ("/alta " + texto_extra).strip()
+        alta_automatica = True
+
+    respuesta_alta, atendido_por_alta, propuesta_alta = _procesar_alta_asegurado(
+        mensaje_para_alta, contexto_pdf_adjunto, automatico=alta_automatica
+    )
+    if atendido_por_alta:
+        _guardar_mensaje(chat_id, "assistant", str(respuesta_alta))
+        tabulado_alta = _armar_tabulado_alta(propuesta_alta) if propuesta_alta else None
+        campos_guardar_alta = (
+            _alta_a_campos_guardar_asegurado(propuesta_alta) if propuesta_alta else None
+        )
+        if propuesta_alta:
+            session["alta_asegurado_propuesta"] = propuesta_alta
+        return jsonify({
+            "respuesta": respuesta_alta,
+            "chat_id": chat_id,
+            "archivo_adjunto": nombre_pdf_adjunto or None,
+            "propuesta_excel": None,
+            "propuesta_metadato": None,
+            "propuesta_alta_asegurado": propuesta_alta,
+            "tabulado_alta_asegurado": tabulado_alta,
+            "campos_guardar_alta_asegurado": campos_guardar_alta,
         })
 
     # ======================================================
@@ -4659,9 +5205,21 @@ def guardar_configuracion():
     for clave in ("gmail", "whatsapp", "datacar", "nosis", "chatgpt", "drive", "envios_ya"):
         herramientas[clave] = bool(herramientas_recibidas.get(clave, herramientas_actuales.get(clave, True)))
 
+    # URLs de los accesos directos (Tanda 7): se guardan tal cual las
+    # escribió el usuario en Configuración, sin completar ni adivinar
+    # ninguna que venga vacía.
+    urls_actuales = config.get("herramientas_urls", {})
+    urls_recibidas = data.get("herramientas_urls", urls_actuales)
+    if not isinstance(urls_recibidas, dict):
+        return jsonify(ok=False,error="La configuración de accesos directos no es válida."),400
+    urls = {}
+    for clave in ("gmail", "whatsapp", "datacar", "nosis", "chatgpt", "drive", "envios_ya"):
+        urls[clave] = str(urls_recibidas.get(clave, urls_actuales.get(clave, "")) or "").strip()
+
     config["nombre_oficina"]=nombre
     config["notificaciones"]=bool(data.get("notificaciones",config["notificaciones"]))
     config["herramientas_visibles"]=herramientas
+    config["herramientas_urls"]=urls
     config["excel_visible"]=bool(data.get("excel_visible", config.get("excel_visible", True)))
     config.update(colores)
     try:
@@ -5263,14 +5821,37 @@ def api_crear_pendiente():
 @app.route("/api/pendientes/<int:pendiente_id>", methods=["PATCH"])
 @requiere_login
 def api_actualizar_pendiente(pendiente_id):
+    # Tanda 8: este PATCH ahora sirve tanto para el cambio rápido de estado
+    # (marcar hecho/descartado, como antes) como para editar un pendiente
+    # completo (título, tipo, contenido) desde la solapa. Sólo se tocan los
+    # campos que vengan en el body; el resto queda igual.
     data = request.get_json(silent=True) or {}
-    estado = str(data.get("estado") or "").strip().lower()
-    if estado not in pendientes_ops.ESTADOS_VALIDOS:
-        return jsonify({"ok": False, "error": "Estado no válido."}), 400
+
+    estado = data.get("estado")
+    if estado is not None:
+        estado = str(estado).strip().lower()
+        if estado not in pendientes_ops.ESTADOS_VALIDOS:
+            return jsonify({"ok": False, "error": "Estado no válido."}), 400
+
+    titulo = data.get("titulo")
+    if titulo is not None:
+        titulo = str(titulo).strip()
+        if not titulo:
+            return jsonify({"ok": False, "error": "El título no puede quedar vacío."}), 400
+
+    tipo = data.get("tipo")
+    if tipo is not None:
+        tipo = str(tipo).strip().lower()
+
+    payload = data.get("payload") if isinstance(data.get("payload"), dict) else None
+
+    if estado is None and titulo is None and tipo is None and payload is None:
+        return jsonify({"ok": False, "error": "No hay cambios para guardar."}), 400
+
     if _pendientes_usar_pg():
         try:
-            from database_pg import actualizar_estado_pendiente as pg_upd, contar_pendientes as pg_contar
-            ok = pg_upd(pendiente_id, session["usuario"], estado)
+            from database_pg import editar_pendiente as pg_editar, contar_pendientes as pg_contar
+            ok = pg_editar(pendiente_id, session["usuario"], tipo=tipo, titulo=titulo, payload=payload, estado=estado)
             if not ok:
                 return jsonify({"ok": False, "error": "Pendiente no encontrado."}), 404
             total = pg_contar(session["usuario"], estado="pendiente")
@@ -5280,7 +5861,7 @@ def api_actualizar_pendiente(pendiente_id):
             return jsonify({"ok": False, "error": "No se pudo actualizar el pendiente."}), 500
     with closing(_conectar_db_pendientes()) as db:
         pendientes_ops.asegurar_tabla(db)
-        ok = pendientes_ops.actualizar_estado(db, pendiente_id, session["usuario"], estado)
+        ok = pendientes_ops.editar(db, pendiente_id, session["usuario"], tipo=tipo, titulo=titulo, payload=payload, estado=estado)
         if not ok:
             return jsonify({"ok": False, "error": "Pendiente no encontrado."}), 404
         total = pendientes_ops.contar(db, session["usuario"], estado="pendiente")

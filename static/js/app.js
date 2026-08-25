@@ -457,6 +457,106 @@ function mostrarTabuladoFlota(texto){
   c.appendChild(r);
 }
 
+// TANDA 5 — después de leer una póliza con /alta, se ofrecen dos caminos:
+// tabulado (copiar/pegar) o guardar en Excel (reutiliza el formulario y el
+// guardado que ya tiene /guardar asegurado).
+function mostrarTabuladoAlta(texto){
+  const c=document.getElementById('chat');
+  if(!c||!texto)return;
+
+  const r=document.createElement('div');
+  r.className='msg assistant';
+  const b=document.createElement('div');
+  b.className='bubble tabulado-flota';
+
+  const titulo=document.createElement('div');
+  titulo.className='tabulado-flota-title';
+  titulo.textContent='Fila lista para pegar en Excel';
+  b.appendChild(titulo);
+
+  const ayuda=document.createElement('div');
+  ayuda.className='tabulado-flota-help';
+  ayuda.textContent='Copiá el bloque y pegalo en la primera fila vacía. Las columnas están separadas por tabulador, así que Excel las va a acomodar solo.';
+  b.appendChild(ayuda);
+
+  const pre=document.createElement('pre');
+  pre.className='tabulado-flota-pre';
+  pre.textContent=texto;
+  b.appendChild(pre);
+
+  const acciones=document.createElement('div');
+  acciones.className='tabulado-flota-actions';
+  const btn=document.createElement('button');
+  btn.type='button';
+  btn.className='tabulado-flota-copy';
+  btn.textContent='Copiar bloque';
+  btn.onclick=async()=>{
+    try{
+      await navigator.clipboard.writeText(texto);
+      btn.textContent='¡Copiado!';
+      setTimeout(()=>{btn.textContent='Copiar bloque'},1800);
+    }catch(e){
+      pre.focus();
+      const sel=window.getSelection(),range=document.createRange();
+      range.selectNodeContents(pre);
+      sel.removeAllRanges();sel.addRange(range);
+      document.execCommand('copy');
+      btn.textContent='¡Copiado!';
+      setTimeout(()=>{btn.textContent='Copiar bloque'},1800);
+    }
+  };
+  acciones.appendChild(btn);
+  b.appendChild(acciones);
+
+  r.appendChild(b);
+  c.appendChild(r);
+}
+
+function mostrarOpcionesAltaAsegurado(tabulado,camposGuardar){
+  const c=document.getElementById('chat');
+  if(!c||(!tabulado&&!camposGuardar))return;
+
+  const r=document.createElement('div');
+  r.className='msg assistant';
+  const b=document.createElement('div');
+  b.className='bubble excel-proposal';
+
+  const titulo=document.createElement('div');
+  titulo.className='excel-proposal-title';
+  titulo.textContent='¿Cómo querés estos datos?';
+  b.appendChild(titulo);
+
+  const ayuda=document.createElement('div');
+  ayuda.className='excel-proposal-help';
+  ayuda.textContent='Elegí si preferís copiar la fila para pegarla vos, o guardar el asegurado directo en Excel.';
+  b.appendChild(ayuda);
+
+  const acciones=document.createElement('div');
+  acciones.className='excel-proposal-actions';
+
+  if(tabulado){
+    const btnTabular=document.createElement('button');
+    btnTabular.type='button';
+    btnTabular.className='tabulado-flota-copy';
+    btnTabular.textContent='Tabulado';
+    btnTabular.onclick=()=>{mostrarTabuladoAlta(tabulado);};
+    acciones.appendChild(btnTabular);
+  }
+
+  if(camposGuardar){
+    const btnGuardar=document.createElement('button');
+    btnGuardar.type='button';
+    btnGuardar.className='excel-proposal-save';
+    btnGuardar.textContent='Guardar en Excel';
+    btnGuardar.onclick=()=>{mostrarPropuestaExcel(camposGuardar);};
+    acciones.appendChild(btnGuardar);
+  }
+
+  b.appendChild(acciones);
+  r.appendChild(b);
+  c.appendChild(r);
+}
+
 function mostrarTextoEnviosYa(texto){
   const c=document.getElementById('chat');
   if(!c||!texto)return;
@@ -1153,6 +1253,7 @@ async function enviarMensaje(){
       if(d.propuesta_excel)mostrarPropuestaExcel(d.propuesta_excel);
       if(d.propuesta_metadato)mostrarPropuestaMetadato(d.propuesta_metadato);
       if(d.tabulado_flota)mostrarTabuladoFlota(d.tabulado_flota);
+      if(d.tabulado_alta_asegurado||d.campos_guardar_alta_asegurado)mostrarOpcionesAltaAsegurado(d.tabulado_alta_asegurado,d.campos_guardar_alta_asegurado);
       if(d.texto_envios_ya)mostrarTextoEnviosYa(d.texto_envios_ya);
       if(pdf)pdf.value='';
       mostrarPdf(null);
@@ -1211,20 +1312,10 @@ async function initChat(){
   const pdf=document.getElementById('pdfInput');
   if(pdf)pdf.addEventListener('change',()=>{
     const file=pdf.files?.[0];
-    if(file){
-      if(!file.name.toLowerCase().endsWith('.pdf')){
-        if(window.showToast)showToast('Solo podés adjuntar archivos PDF.','warning');else alert('Solo podés adjuntar archivos PDF.');
-        pdf.value='';
-        return;
-      }
-      if(file.size>20*1024*1024){
-        if(window.showToast)showToast('El PDF supera el límite de 20 MB.','warning');else alert('El PDF supera el límite de 20 MB.');
-        pdf.value='';
-        return;
-      }
-      mostrarPdf(file);
-    }
+    if(file)validarYAdjuntarPdf(file,pdf);
   });
+
+  wireDragAndDropPdf();
 
   document.addEventListener('click',e=>{
     const menu=document.getElementById('chatCommandMenu');
@@ -1267,6 +1358,98 @@ async function initChat(){
 async function buscar(q){const box=document.getElementById('resultadosBusqueda');if(!box)return;if(!q){box.innerHTML='<div class="empty"><b>Empezá a buscar</b><small>Los resultados aparecerán aquí.</small></div>';return}box.innerHTML='<div class="empty"><b>Buscando…</b></div>';try{const r=await fetch('/api/buscar?q='+encodeURIComponent(q)),d=await r.json();box.innerHTML=d.length?d.map(x=>`<div class="result"><b>${esc((x.extension||'FILE').replace('.','').toUpperCase())}</b><span><strong>${esc(x.nombre)}</strong><small>${esc(x.compania)} · ${esc(x.tamaño)} KB</small></span></div>`).join(''):'<div class="empty"><b>No encontramos coincidencias</b></div>'}catch{box.innerHTML='<div class="empty"><b>Error de búsqueda</b></div>'}}
 function mostrarPdf(file){const box=document.getElementById('pdfAdjunto'),name=document.getElementById('pdfNombre');if(!box||!name)return;if(file){name.textContent=file.name;box.hidden=false}else{box.hidden=true;name.textContent=''}}
 function quitarPdf(){const input=document.getElementById('pdfInput');if(input)input.value='';mostrarPdf(null)}
+
+// Validación única para un PDF adjuntado, ya sea por el botón de clip o
+// por drag & drop: mismas reglas (solo .pdf, hasta 20MB), mismo aviso al
+// usuario y mismo destino final (#pdfInput), para no crear un segundo
+// camino de lectura de PDF (Tanda 3).
+function validarYAdjuntarPdf(file,pdfInputEl){
+  const pdf=pdfInputEl||document.getElementById('pdfInput');
+  if(!file||!pdf)return false;
+  if(!file.name.toLowerCase().endsWith('.pdf')){
+    if(window.showToast)showToast('Solo podés adjuntar archivos PDF.','warning');else alert('Solo podés adjuntar archivos PDF.');
+    pdf.value='';
+    return false;
+  }
+  if(file.size>20*1024*1024){
+    if(window.showToast)showToast('El PDF supera el límite de 20 MB.','warning');else alert('El PDF supera el límite de 20 MB.');
+    pdf.value='';
+    return false;
+  }
+  try{
+    const transferencia=new DataTransfer();
+    transferencia.items.add(file);
+    pdf.files=transferencia.files;
+  }catch(_){
+    // Navegadores muy viejos sin DataTransfer: si el archivo ya vino del
+    // propio input (caso botón de clip), pdf.files ya lo tiene igual.
+  }
+  mostrarPdf(file);
+  return true;
+}
+
+// Arrastrar y soltar un PDF directamente sobre el chat (Tanda 3). No
+// reemplaza al botón de clip: es una segunda forma de hacer lo mismo,
+// usando el mismo input y el mismo procesamiento de PDF que ya existe.
+//
+// FIX: el overlay ("Soltá la póliza en PDF acá") se quedaba pegado en
+// pantalla cuando el drag terminaba fuera de la zona del chat (se soltaba
+// en otra parte de la página, se cancelaba con Esc, o el mouse salía de la
+// ventana del navegador arrastrando algo) porque el contador de
+// dragenter/dragleave nunca volvía a cero en esos casos. Ahora se usa
+// relatedTarget para decidir si realmente se salió de la zona, y se
+// agregan redes de seguridad a nivel documento/ventana para ocultar el
+// overlay pase lo que pase.
+function wireDragAndDropPdf(){
+  const zona=document.getElementById('chatDropZone');
+  const overlay=document.getElementById('chatDropOverlay');
+  const pdf=document.getElementById('pdfInput');
+  if(!zona||!overlay||!pdf)return;
+  const contieneArchivo=e=>Array.from(e.dataTransfer?.types||[]).includes('Files');
+  const ocultar=()=>{overlay.hidden=true};
+
+  zona.addEventListener('dragenter',e=>{
+    if(!contieneArchivo(e))return;
+    e.preventDefault();
+    overlay.hidden=false;
+  });
+  zona.addEventListener('dragover',e=>{
+    if(!contieneArchivo(e))return;
+    e.preventDefault();
+    e.dataTransfer.dropEffect='copy';
+  });
+  zona.addEventListener('dragleave',e=>{
+    if(!contieneArchivo(e))return;
+    // relatedTarget es el elemento al que entra el mouse. Si sigue dentro
+    // de la zona (pasó a un hijo interno), NO hay que ocultar el overlay;
+    // sólo se oculta cuando realmente lo abandona.
+    if(e.relatedTarget && zona.contains(e.relatedTarget))return;
+    ocultar();
+  });
+  zona.addEventListener('drop',e=>{
+    if(!contieneArchivo(e))return;
+    e.preventDefault();
+    ocultar();
+    const archivo=e.dataTransfer.files?.[0];
+    if(archivo)validarYAdjuntarPdf(archivo,pdf);
+  });
+
+  // Redes de seguridad: el drag puede terminar sin que la zona reciba
+  // ningún evento más (se soltó afuera, se canceló, se salió de la
+  // ventana). Cualquiera de estos casos oculta el overlay igual.
+  document.addEventListener('dragend',ocultar);
+  document.addEventListener('drop',e=>{
+    if(e.target!==zona && !zona.contains(e.target))ocultar();
+  });
+  document.addEventListener('dragleave',e=>{
+    // Chrome dispara este evento con clientX/clientY en 0 cuando el drag
+    // sale de la ventana del navegador por completo.
+    if(e.clientX<=0 && e.clientY<=0)ocultar();
+  });
+  window.addEventListener('blur',ocultar);
+  document.addEventListener('keydown',e=>{if(e.key==='Escape')ocultar()});
+}
+
 document.addEventListener('DOMContentLoaded',()=>{const s=document.getElementById('buscadorCompanias');if(s){let t;s.oninput=()=>{clearTimeout(t);t=setTimeout(()=>buscar(s.value.trim()),220)}}});
 
 // Menú Cias integrado en la sidebar.

@@ -5,7 +5,10 @@
 <header class="top"><div><h1>{{config_global.nombre_oficina}}</h1></div></header>
 <div class="chat-shell">
 <aside class="chat-list"><div class="chat-list-head"><div><b>Conversaciones</b><small>Historial guardado</small></div><button onclick="nuevoChat()" title="Nueva conversación">＋</button></div><div id="chatList" class="chat-list-items"></div></aside>
-<section class="chat">
+<section class="chat" id="chatDropZone">
+<div id="chatDropOverlay" class="chat-drop-overlay" hidden aria-hidden="true">
+  <div class="chat-drop-overlay-inner"><span>📎</span>Soltá la póliza en PDF acá</div>
+</div>
 <header>
   <strong>✦</strong>
   <div><b>Chat</b></div>
@@ -27,50 +30,204 @@
   <div id="chatWelcome" class="welcome">
     <strong>✦</strong>
     <h2>¿Qué necesitás resolver?</h2>
-    <p>Preguntá por coberturas, flotas, pólizas o datos de la planilla. Usá los atajos para los flujos que más tiempo consumen.</p>
-    <div class="workflow-grid" id="workflowGrid">
-      <button type="button" class="workflow-card" data-fill="/guardar asegurado ">
-        <b>Alta asegurado</b>
-        <small>Cargar a Excel con campos en orden</small>
-      </button>
-      <button type="button" class="workflow-card" data-fill="/flota ">
-        <b>Armar flota</b>
-        <small>Propuesta de vehículos para la planilla</small>
-      </button>
-      <button type="button" class="workflow-card" data-fill="/coti ">
-        <b>Cotización</b>
-        <small>Comando /coti con datos del riesgo</small>
-      </button>
-      <button type="button" class="workflow-card" data-fill="¿Cuántos servicios de remolque tiene ">
-        <b>Remolque / asistencia</b>
-        <small>Consulta rápida por compañía y plan</small>
-      </button>
-      <button type="button" class="workflow-card" data-fill="Armame un mensaje de WhatsApp para el asegurado: ">
-        <b>WhatsApp al cliente</b>
-        <small>Texto listo para copiar y enviar</small>
-      </button>
-      <button type="button" class="workflow-card" data-fill="/envios ya ">
-        <b>Envíos Ya</b>
-        <small>Datos limpios para cargar el envío</small>
-      </button>
-    </div>
+    <p>Preguntá por coberturas, flotas, pólizas o datos de la planilla. Usá el bloc de notas rápidas (botón + junto al cuadro de escritura) para tener a mano lo que consultás seguido.</p>
   </div>
 </div>
-<div class="composer-wrap"><div id="chatCommandMenu" class="chat-command-menu" hidden role="listbox" aria-label="Comandos del chat"></div><div id="pdfAdjunto" class="pdf-attached" hidden><span>📎</span><strong id="pdfNombre"></strong><button type="button" onclick="quitarPdf()" title="Quitar PDF">×</button></div><div class="composer"><label class="attach-pdf" title="Adjuntar PDF">📎<input id="pdfInput" type="file" accept="application/pdf,.pdf"></label><textarea id="mensaje" rows="1" maxlength="6000" placeholder="Escribí tu consulta o usá / para comandos…"></textarea><button type="button" class="slash-btn" id="slashBtn" title="Comandos" aria-label="Abrir menú de comandos">/</button><button class="send" onclick="enviarMensaje()">↑</button></div><small>PDF hasta 20 MB · Enter envía · Shift+Enter nueva línea · /comandos · Pendientes en el menú lateral</small></div>
+<div class="composer-wrap">
+  <div id="chatCommandMenu" class="chat-command-menu" hidden role="listbox" aria-label="Comandos del chat"></div>
+  <div id="pdfAdjunto" class="pdf-attached" hidden><span>📎</span><strong id="pdfNombre"></strong><button type="button" onclick="quitarPdf()" title="Quitar PDF">×</button></div>
+  <div class="notas-toolbar">
+    <button type="button" class="notas-btn" id="notasBtn" title="Notas rápidas" aria-label="Notas rápidas" aria-haspopup="true" aria-expanded="false">+</button>
+    <div id="notasPanel" class="notas-panel" hidden role="dialog" aria-label="Notas rápidas">
+      <div class="notas-panel-head"><b>Notas rápidas</b><button type="button" id="notaNueva" title="Nueva nota" aria-label="Nueva nota">+</button></div>
+      <div id="notasLista" class="notas-lista"></div>
+    </div>
+  </div>
+  <div class="composer"><label class="attach-pdf" title="Adjuntar PDF">📎<input id="pdfInput" type="file" accept="application/pdf,.pdf"></label><textarea id="mensaje" rows="1" maxlength="6000" placeholder="Escribí tu consulta o usá / para comandos…"></textarea><button type="button" class="slash-btn" id="slashBtn" title="Comandos" aria-label="Abrir menú de comandos">/</button><button class="send" onclick="enviarMensaje()">↑</button></div>
+  <small>PDF hasta 20 MB · Enter envía · Shift+Enter nueva línea · /comandos · Pendientes en el menú lateral</small>
+</div>
+
+<div class="modal" id="notaModal" hidden>
+  <div>
+    <button type="button" id="notaModalCerrar">×</button>
+    <h2 id="notaModalTitulo">Nueva nota</h2>
+    <form id="notaForm">
+      <input type="hidden" id="notaId">
+      <label>Título
+        <input id="notaTitulo" required maxlength="80" placeholder="Ej: Terceros Completos">
+      </label>
+      <label>Contenido
+        <textarea id="notaContenido" rows="5" style="width:100%;margin-top:5px;padding:9px 11px;border:1px solid var(--line);border-radius:8px;font-size:13px;resize:vertical" placeholder="Lo que querés tener a mano…"></textarea>
+      </label>
+      <p id="notaModalError"></p>
+      <div style="display:flex;gap:8px;margin-top:6px">
+        <button type="submit" class="primary" style="flex:1;height:40px">Guardar</button>
+        <button type="button" class="secondary danger-text" id="notaEliminar" style="height:40px;display:none">Eliminar</button>
+      </div>
+    </form>
+  </div>
+</div>
 </section></div></div>
 {% endblock %}
 {% block scripts %}<script>window.FORZAR_CHAT_NUEVO = {{ 'true' if forzar_chat_nuevo else 'false' }};</script>
+
 <script>
-document.getElementById('workflowGrid')?.addEventListener('click',e=>{
-  const card=e.target.closest('.workflow-card');
-  if(!card)return;
-  const fill=card.dataset.fill||'';
-  const i=document.getElementById('mensaje');
-  if(!i)return;
-  i.value=fill;
-  if(typeof size==='function')size();
-  i.focus();
-});
+(function(){
+  // Bloc de notas rápidas del chat: personal, por navegador, igual que el
+  // resto de las preferencias de interfaz (tema, tamaño de fuente, sidebar)
+  // que ya viven en localStorage. No toca la IA, el historial ni Excel.
+  const CLAVE='oficinaia_notas_rapidas';
+  const btn=document.getElementById('notasBtn');
+  const panel=document.getElementById('notasPanel');
+  const lista=document.getElementById('notasLista');
+  const nuevaBtn=document.getElementById('notaNueva');
+  const modal=document.getElementById('notaModal');
+  const modalTitulo=document.getElementById('notaModalTitulo');
+  const modalError=document.getElementById('notaModalError');
+  const form=document.getElementById('notaForm');
+  const campoId=document.getElementById('notaId');
+  const campoTitulo=document.getElementById('notaTitulo');
+  const campoContenido=document.getElementById('notaContenido');
+  const btnEliminar=document.getElementById('notaEliminar');
+  if(!btn||!panel)return;
+
+  function leerNotas(){
+    try{
+      const crudo=localStorage.getItem(CLAVE);
+      const arr=crudo?JSON.parse(crudo):[];
+      return Array.isArray(arr)?arr:[];
+    }catch(_){return []}
+  }
+  function guardarNotas(notas){
+    try{localStorage.setItem(CLAVE,JSON.stringify(notas))}catch(_){}
+  }
+  function esc(s){return String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]))}
+
+  function render(){
+    const notas=leerNotas();
+    if(!notas.length){
+      lista.innerHTML='<div class="notas-vacio">Todavía no tenés notas.<br>Usá "+" para crear la primera.</div>';
+      return;
+    }
+    lista.innerHTML=notas.map((n,i)=>{
+      const preview=String(n.contenido||'').replace(/\s+/g,' ').trim().slice(0,60);
+      return `<div class="nota-item" data-id="${esc(n.id)}">
+        <span class="nota-info" data-act="usar">
+          <b>${esc(n.titulo)}</b>
+          ${preview?`<small>${esc(preview)}</small>`:''}
+        </span>
+        <button type="button" class="nota-orden" data-act="subir" title="Subir prioridad" aria-label="Subir prioridad"${i===0?' disabled':''}>↑</button>
+        <button type="button" class="nota-orden" data-act="bajar" title="Bajar prioridad" aria-label="Bajar prioridad"${i===notas.length-1?' disabled':''}>↓</button>
+        <button type="button" class="nota-edit" data-act="editar" title="Editar" aria-label="Editar nota">✎</button>
+      </div>`;
+    }).join('');
+  }
+
+  function abrirPanel(){
+    render();
+    panel.hidden=false;
+    btn.setAttribute('aria-expanded','true');
+  }
+  function cerrarPanel(){
+    panel.hidden=true;
+    btn.setAttribute('aria-expanded','false');
+  }
+
+  btn.addEventListener('click',e=>{
+    e.stopPropagation();
+    if(panel.hidden)abrirPanel();else cerrarPanel();
+  });
+  document.addEventListener('click',e=>{
+    if(panel.hidden)return;
+    if(panel.contains(e.target)||e.target===btn)return;
+    cerrarPanel();
+  });
+  document.addEventListener('keydown',e=>{
+    if(e.key==='Escape'&&!panel.hidden)cerrarPanel();
+  });
+
+  function usarNota(id){
+    const nota=leerNotas().find(n=>String(n.id)===String(id));
+    if(!nota)return;
+    const campo=document.getElementById('mensaje');
+    if(!campo)return;
+    campo.value=nota.contenido||'';
+    if(typeof size==='function')size();
+    campo.focus();
+    cerrarPanel();
+  }
+
+  function abrirModal(nota){
+    modalError.textContent='';
+    campoId.value=nota?nota.id:'';
+    campoTitulo.value=nota?nota.titulo:'';
+    campoContenido.value=nota?nota.contenido:'';
+    modalTitulo.textContent=nota?'Editar nota':'Nueva nota';
+    btnEliminar.style.display=nota?'block':'none';
+    modal.hidden=false;
+    campoTitulo.focus();
+  }
+  function cerrarModal(){modal.hidden=true}
+
+  function moverNota(id,delta){
+    const notas=leerNotas();
+    const i=notas.findIndex(n=>String(n.id)===String(id));
+    if(i<0)return;
+    const j=i+delta;
+    if(j<0||j>=notas.length)return;
+    const tmp=notas[i];notas[i]=notas[j];notas[j]=tmp;
+    guardarNotas(notas);
+    render();
+  }
+
+  nuevaBtn.addEventListener('click',()=>abrirModal(null));
+  document.getElementById('notaModalCerrar').addEventListener('click',cerrarModal);
+  modal.addEventListener('click',e=>{if(e.target===modal)cerrarModal()});
+
+  lista.addEventListener('click',e=>{
+    const item=e.target.closest('.nota-item');
+    if(!item)return;
+    const id=item.dataset.id;
+    const act=e.target.closest('[data-act]')?.dataset.act;
+    if(act==='editar'){
+      const nota=leerNotas().find(n=>String(n.id)===String(id));
+      if(nota)abrirModal(nota);
+      return;
+    }
+    if(act==='subir'||act==='bajar'){
+      moverNota(id,act==='subir'?-1:1);
+      return;
+    }
+    usarNota(id);
+  });
+
+  form.addEventListener('submit',e=>{
+    e.preventDefault();
+    const titulo=campoTitulo.value.trim();
+    const contenido=campoContenido.value.trim();
+    if(!titulo){modalError.textContent='Poné un título.';return}
+    const notas=leerNotas();
+    const id=campoId.value;
+    if(id){
+      const i=notas.findIndex(n=>String(n.id)===String(id));
+      if(i>=0){notas[i].titulo=titulo;notas[i].contenido=contenido}
+    }else{
+      notas.push({id:String(Date.now()),titulo,contenido});
+    }
+    guardarNotas(notas);
+    cerrarModal();
+    render();
+  });
+
+  btnEliminar.addEventListener('click',()=>{
+    const id=campoId.value;
+    if(!id)return;
+    if(!confirm('¿Eliminar esta nota?'))return;
+    guardarNotas(leerNotas().filter(n=>String(n.id)!==String(id)));
+    cerrarModal();
+    render();
+  });
+})();
 </script>
 
 <script>

@@ -940,6 +940,46 @@ def crear_pendiente(usuario, tipo, titulo, payload=None):
         return pid
 
 
+def editar_pendiente(pendiente_id, usuario, tipo=None, titulo=None, payload=None, estado=None):
+    """Actualización parcial (Tanda 8), espejo de pendientes_ops.editar pero
+    contra Postgres. Sólo toca los campos que vengan distintos de None."""
+    import json as _json
+
+    campos = []
+    valores = []
+    if tipo is not None:
+        tipo = (tipo or "generico").strip().lower()
+        if tipo not in PENDIENTES_TIPOS:
+            tipo = "generico"
+        campos.append("tipo = %s")
+        valores.append(tipo)
+    if titulo is not None:
+        campos.append("titulo = %s")
+        valores.append((titulo or "Pendiente").strip()[:200] or "Pendiente")
+    if payload is not None:
+        campos.append("payload = %s::jsonb")
+        valores.append(_json.dumps(payload if isinstance(payload, dict) else {}, ensure_ascii=False))
+    if estado is not None:
+        estado = (estado or "").strip().lower()
+        if estado not in PENDIENTES_ESTADOS:
+            return False
+        campos.append("estado = %s")
+        valores.append(estado)
+    if not campos:
+        return False
+    campos.append("actualizado_en = CURRENT_TIMESTAMP")
+    valores.extend([pendiente_id, usuario])
+    with closing(conectar_pg()) as db:
+        with db.cursor() as cursor:
+            cursor.execute(
+                f"UPDATE pendientes SET {', '.join(campos)} WHERE id = %s AND usuario = %s",
+                valores,
+            )
+            ok = cursor.rowcount > 0
+        db.commit()
+        return ok
+
+
 def actualizar_estado_pendiente(pendiente_id, usuario, estado):
     estado = (estado or "").strip().lower()
     if estado not in PENDIENTES_ESTADOS:

@@ -98,6 +98,43 @@ def actualizar_estado(db: sqlite3.Connection, pendiente_id: int, usuario: str, e
     return cur.rowcount > 0
 
 
+def editar(db: sqlite3.Connection, pendiente_id: int, usuario: str, tipo=None, titulo=None, payload=None, estado=None):
+    """Actualización parcial (Tanda 8): sólo toca los campos que vengan
+    distintos de None, para poder usar el mismo PATCH tanto para el cambio
+    rápido de estado (como antes) como para editar título/tipo/contenido
+    desde la solapa de Pendientes."""
+    campos = []
+    valores = []
+    if tipo is not None:
+        tipo = (tipo or "generico").strip().lower()
+        if tipo not in TIPOS_VALIDOS:
+            tipo = "generico"
+        campos.append("tipo=?")
+        valores.append(tipo)
+    if titulo is not None:
+        campos.append("titulo=?")
+        valores.append((titulo or "Pendiente").strip()[:200] or "Pendiente")
+    if payload is not None:
+        campos.append("payload=?")
+        valores.append(json.dumps(payload if isinstance(payload, dict) else {}, ensure_ascii=False))
+    if estado is not None:
+        if estado not in ESTADOS_VALIDOS:
+            return False
+        campos.append("estado=?")
+        valores.append(estado)
+    if not campos:
+        return False
+    campos.append("actualizado_en=?")
+    valores.append(_now())
+    valores.extend([pendiente_id, usuario])
+    cur = db.execute(
+        f"UPDATE pendientes SET {', '.join(campos)} WHERE id=? AND usuario=?",
+        valores,
+    )
+    db.commit()
+    return cur.rowcount > 0
+
+
 def obtener(db: sqlite3.Connection, pendiente_id: int, usuario: str):
     row = db.execute(
         "SELECT id, tipo, titulo, payload, estado, creado_en, actualizado_en FROM pendientes WHERE id=? AND usuario=?",

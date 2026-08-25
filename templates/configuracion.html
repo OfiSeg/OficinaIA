@@ -8,6 +8,16 @@
 <label><input id="visChatgpt" type="checkbox" {%if config.herramientas_visibles.chatgpt%}checked{%endif%}> ChatGPT</label>
 <label><input id="visDrive" type="checkbox" {%if config.herramientas_visibles.drive%}checked{%endif%}> Drive</label>
 <label><input id="visEnviosYa" type="checkbox" {%if config.herramientas_visibles.envios_ya%}checked{%endif%}> Envíos Ya</label>
+</div>
+<small>La dirección de cada acceso directo (usadas por el ícono chico del menú lateral). Dejá vacía la que no uses.</small>
+<div class="visibility-grid urls-grid">
+<label>Gmail<input id="urlGmail" type="url" value="{{config.herramientas_urls.gmail}}" placeholder="https://mail.google.com/"></label>
+<label>WhatsApp<input id="urlWhatsapp" type="url" value="{{config.herramientas_urls.whatsapp}}" placeholder="https://web.whatsapp.com/"></label>
+<label>Datacar<input id="urlDatacar" type="url" value="{{config.herramientas_urls.datacar}}" placeholder="https://www.datacar.com.ar/"></label>
+<label>Nosis<input id="urlNosis" type="url" value="{{config.herramientas_urls.nosis}}" placeholder="https://www.nosis.com/es"></label>
+<label>ChatGPT<input id="urlChatgpt" type="url" value="{{config.herramientas_urls.chatgpt}}" placeholder="https://chatgpt.com/"></label>
+<label>Drive<input id="urlDrive" type="url" value="{{config.herramientas_urls.drive}}" placeholder="https://drive.google.com/"></label>
+<label>Envíos Ya<input id="urlEnviosYa" type="url" value="{{config.herramientas_urls.envios_ya}}" placeholder="Pegá acá el link que uses"></label>
 </div></div>
 <div class="setting">
 <span><b>Excel</b><small>Mostrar Excel en el menú lateral para toda la oficina.</small></span>
@@ -25,6 +35,15 @@ nosis:document.getElementById('visNosis').checked,
 chatgpt:document.getElementById('visChatgpt').checked,
 drive:document.getElementById('visDrive').checked,
 envios_ya:document.getElementById('visEnviosYa').checked
+},
+herramientas_urls:{
+gmail:document.getElementById('urlGmail').value.trim(),
+whatsapp:document.getElementById('urlWhatsapp').value.trim(),
+datacar:document.getElementById('urlDatacar').value.trim(),
+nosis:document.getElementById('urlNosis').value.trim(),
+chatgpt:document.getElementById('urlChatgpt').value.trim(),
+drive:document.getElementById('urlDrive').value.trim(),
+envios_ya:document.getElementById('urlEnviosYa').value.trim()
 },
 excel_visible:document.getElementById('excelVisible').checked})});if(!r.ok){e.textContent=r.status===403?'No tenés permiso para guardar estos cambios.':'No se pudo guardar. Probá de nuevo.';return}const d=await r.json();if(d.ok){document.querySelectorAll('[data-app-name]').forEach(el=>el.textContent=d.config.nombre_oficina);document.title=d.config.nombre_oficina;e.textContent='✓ Cambios guardados'}else e.textContent=d.error||'No se pudo guardar.'}catch(err){e.textContent='No se pudo guardar. Probá de nuevo.'}} {%if usuario_es_admin%}const modal=document.createElement('div');modal.className='modal';modal.hidden=true;modal.innerHTML=`<div><button onclick="cerrarUsuarioModal()">×</button><h2 id="mt">Nuevo usuario</h2><form id="uf"><input type="hidden" id="uid"><label>Usuario<input id="nu" required></label><label>Contraseña<input id="np" type="password"></label><label>Confirmar contraseña<input id="cp" type="password"></label><label>Correo<input id="ne" type="email"></label><label>Rol<select id="nr"><option value="usuario">Usuario</option><option value="admin">Administrador</option></select></label><p id="ue"></p><button>Guardar usuario</button></form></div>`;document.body.appendChild(modal);function abrirUsuarioModal(){uf.reset();uid.value='';mt.textContent='Nuevo usuario';nu.disabled=false;nr.disabled=false;modal.hidden=false}function cerrarUsuarioModal(){modal.hidden=true}function editarUsuario(id,u,e,r,p){uf.reset();uid.value=id;mt.textContent='Editar usuario';nu.value=u;nu.disabled=true;ne.value=e;nr.value=r;nr.disabled=p;modal.hidden=false}uf.onsubmit=async ev=>{
 ev.preventDefault();
