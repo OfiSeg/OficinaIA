@@ -2,8 +2,9 @@ async function leerJsonSeguro(response){
   const text=await response.text();
   let data=null;
   try{data=JSON.parse(text)}catch{
-    const detalle=text.replace(/<[^>]*>/g,' ').replace(/\s+/g,' ').trim().slice(0,180);
-    throw new Error(response.status===401||response.redirected?'La sesión expiró. Volvé a iniciar sesión.':`No se pudo procesar la respuesta del servidor (${response.status}).${detalle?' '+detalle:''}`);
+    if(response.status===401||response.redirected)throw new Error('La sesión expiró. Volvé a iniciar sesión.');
+    if(response.status>=500)throw new Error('El servidor interrumpió esta consulta. Probá enviar el mensaje nuevamente; el chat debería seguir funcionando.');
+    throw new Error(`No se pudo procesar la respuesta del servidor (${response.status}).`);
   }
   if(!data || typeof data!=='object') throw new Error('La respuesta del servidor no es válida.');
   return data;
@@ -167,7 +168,7 @@ function wireWelcomeWorkflows(root){
 
 function usarSugerencia(t){const i=document.getElementById('mensaje');if(i){i.value=t;size();i.focus()}}
 let currentChatId=null;
-function historialParaApi(){const c=document.getElementById('chat');return c?[...c.querySelectorAll('.msg')].map(x=>({rol:x.classList.contains('user')?'user':'assistant',contenido:x.querySelector('.bubble')?.textContent?.trim()||''})).filter(x=>x.contenido).slice(-10):[]}
+function historialParaApi(){const c=document.getElementById('chat');return c?[...c.querySelectorAll('.msg')].map(x=>({rol:x.classList.contains('user')?'user':'assistant',contenido:(x.querySelector('.bubble')?.textContent?.trim()||'').slice(0,2000)})).filter(x=>x.contenido).slice(-8):[]}
 let _chatsCache=[];
 let _chatSearchQuery='';
 

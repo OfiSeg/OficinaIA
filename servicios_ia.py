@@ -1037,24 +1037,19 @@ def buscar_en_metadatos(consulta):
     }
 
 
-# Compañías con biblioteca/documentación operativa actualmente soportada por OficinaIA.
-# Se mantienen separadas de los accesos directos visuales: esto define el universo
-# documental que tiene sentido comparar para consultas de colocación.
-_COMPANIAS_COMPARABLES = (
-    "ATM",
-    "Mercantil Andina",
-    "Federación Patronal",
-    "San Cristóbal",
-    "Rivadavia",
-    "EuroAmérica",
-    "AgroSalta",
-    "Triunfo",
-    "PROF",
-)
+# V16: el universo de comparación se deriva de la misma fuente de verdad de
+# compañías/alias que usa el resto de OficinaIA. Así una compañía nueva no
+# queda afuera del comparador por olvidar agregarla a una segunda lista fija.
+def _companias_comparables():
+    vistas = []
+    for _alias, (_codigo, display) in aliases_companias().items():
+        if display and display not in vistas:
+            vistas.append(display)
+    return tuple(vistas)
 
 
 def _aliases_por_compania_visible():
-    grupos = {nombre: set() for nombre in _COMPANIAS_COMPARABLES}
+    grupos = {nombre: set() for nombre in _companias_comparables()}
     for alias, (_codigo, display) in aliases_companias().items():
         if display in grupos:
             grupos[display].add(_normalizar_texto(alias))
@@ -1124,9 +1119,15 @@ def _consulta_comparativa_con_historial(pregunta, historial=None):
     followups = (
         "otras alternativas", "otra alternativa", "alguna otra", "algunas otras",
         "que otra", "que otras", "otra opcion", "otras opciones", "y alguna mas",
-        "alguna mas", "y agrosalta", "y atm", "y mercantil", "y federacion",
+        "alguna mas",
     )
     es_followup = any(frase in norm for frase in followups)
+    if not es_followup and norm.startswith("y "):
+        alias_norm = {_normalizar_texto(a) for a in aliases_companias().keys()}
+        es_followup = any(
+            re.search(rf"(?<![a-z0-9]){re.escape(a)}(?![a-z0-9])", norm)
+            for a in alias_norm if a
+        )
     if not es_followup:
         return pregunta
 
@@ -1249,6 +1250,62 @@ def _evaluar_evidencia_por_antiguedad(consulta, evidencia):
     }
 
 
+def _clasificar_compatibilidad_documental(consulta, evidencia, validacion):
+    """Clasifica sólo lo que la evidencia permite afirmar.
+
+    Ausencia de prohibición nunca equivale a aceptación. Para recomendar una
+    compañía hace falta una regla positiva de admisión/aceptación o un límite
+    de antigüedad explícito compatible con el riesgo consultado.
+    """
+    if not evidencia:
+        return {
+            "estado": "SIN_INFORMACION_SUFICIENTE",
+            "detalle": "No hay evidencia positiva suficiente para confirmar aceptación.",
+        }
+
+    if (validacion or {}).get("estado") == "NO_COMPATIBLE_POR_ANTIGUEDAD":
+        return {
+            "estado": "NO_COMPATIBLE_CONFIRMADO",
+            "detalle": str((validacion or {}).get("detalle") or "La restricción de antigüedad descarta el riesgo."),
+        }
+
+    texto = _normalizar_texto("\n".join(str(x.get("contenido") or "") for x in evidencia))
+    negativos = (
+        r"\bno (?:se )?(?:acepta|aceptan|toma|toman|asegura|aseguran|admite|admiten|emite|emiten)\b",
+        r"\b(?:riesgo|vehiculo|vehiculos) no (?:aceptable|asegurable|admisible)\b",
+        r"\b(?:queda|quedan) excluid[oa]s?\b",
+    )
+    if any(re.search(p, texto) for p in negativos):
+        return {
+            "estado": "NO_COMPATIBLE_CONFIRMADO",
+            "detalle": "La evidencia recuperada contiene una exclusión o rechazo explícito.",
+        }
+
+    positivos = (
+        r"\bsin (?:excepcion|limite).{0,35}(?:ano|antiguedad)\b",
+        r"\bcualquier ano\b",
+        r"\b(?:se )?(?:acepta|aceptan|toma|toman|admite|admiten)\b",
+        r"\b(?:vehiculos?|unidades?) (?:aceptados?|admitidos?|asegurables?)\b",
+        r"\b(?:antiguedad maxima|maximo|maxima|hasta)\s*(?:de\s*)?\d{1,3}\s*anos\b",
+    )
+    hay_regla_positiva = any(re.search(p, texto) for p in positivos)
+    estado_validacion = (validacion or {}).get("estado")
+    if hay_regla_positiva and estado_validacion in {
+        "COMPATIBLE_POR_ANTIGUEDAD",
+        "COMPATIBLE_POR_LIMITE_DE_ANTIGUEDAD",
+        "SIN_VALIDACION_NUMERICA",
+    }:
+        return {
+            "estado": "COMPATIBLE_CONFIRMADO",
+            "detalle": "Hay evidencia positiva de admisión compatible con la restricción temporal detectada.",
+        }
+
+    return {
+        "estado": "SIN_INFORMACION_SUFICIENTE",
+        "detalle": "La ficha puede ser relevante, pero no confirma de forma positiva que este riesgo sea aceptado.",
+    }
+
+
 def comparar_companias(consulta):
     """Recuperación transversal determinística sobre metadatos internos.
 
@@ -1272,7 +1329,7 @@ def comparar_companias(consulta):
     grupos_alias = _aliases_por_compania_visible()
     salida = []
 
-    for compania in _COMPANIAS_COMPARABLES:
+    for compania in _companias_comparables():
         alias_norm = grupos_alias.get(compania, {_normalizar_texto(compania)})
         candidatos = []
         for ficha in fichas:
@@ -1311,14 +1368,20 @@ def comparar_companias(consulta):
             "estado": "SIN_EVIDENCIA",
             "detalle": "No hay evidencia interna suficiente para validar esta compañía.",
         }
+        compatibilidad = _clasificar_compatibilidad_documental(consulta, evidencia, validacion)
         salida.append({
             "compania": compania,
             "tiene_evidencia": bool(evidencia),
+            "compatibilidad": compatibilidad,
             "validacion": validacion,
             "evidencia": evidencia,
         })
 
     con_evidencia = sum(1 for item in salida if item["tiene_evidencia"])
+    compatibles_confirmadas = sum(
+        1 for item in salida
+        if (item.get("compatibilidad") or {}).get("estado") == "COMPATIBLE_CONFIRMADO"
+    )
     print(
         f"COMPARACION COMPANIAS: consulta={consulta!r} "
         f"companias={len(salida)} con_evidencia={con_evidencia}"
@@ -1326,6 +1389,7 @@ def comparar_companias(consulta):
     return {
         "cantidad": con_evidencia,
         "companias_con_evidencia": con_evidencia,
+        "companias_compatibles_confirmadas": compatibles_confirmadas,
         "companias_evaluadas": len(salida),
         "companias": salida,
         "fuente": "Metadatos internos por compañía",
@@ -1350,6 +1414,12 @@ def _formatear_contexto_comparativo(resultado):
             sin_evidencia.append(compania)
             continue
         lineas.append(f"\n{compania}:")
+        compatibilidad = item.get("compatibilidad") or {}
+        if compatibilidad.get("estado"):
+            lineas.append(
+                f"- COMPATIBILIDAD DOCUMENTAL: {compatibilidad.get('estado')}"
+                + (f" — {compatibilidad.get('detalle')}" if compatibilidad.get("detalle") else "")
+            )
         validacion = item.get("validacion") or {}
         if validacion.get("estado"):
             detalle_validacion = str(validacion.get("detalle") or "").strip()
@@ -1438,7 +1508,14 @@ _TOOL_HANDLERS = {
 }
 
 
-def _ejecutar_tool(nombre, argumentos):
+def _ejecutar_tool(nombre, argumentos, cache=None):
+    """Ejecuta una herramienta una sola vez por request cuando es cacheable.
+
+    V16 elimina el concepto de "reintento obligatorio" dirigido por el modelo.
+    Una búsqueda vacía se informa como tal y el turno puede terminar sin abrir
+    cadenas de llamadas cada vez más caras. El cache vive sólo dentro de
+    consultar_gemini(), por lo que nunca contamina requests posteriores.
+    """
     handler = _TOOL_HANDLERS.get(nombre)
     if not handler:
         return {"error": f"Herramienta desconocida: {nombre}"}
@@ -1451,40 +1528,46 @@ def _ejecutar_tool(nombre, argumentos):
         "buscar_vehiculos",
         "buscar_en_internet",
     }
+    herramientas_cacheables = {
+        "buscar_en_manuales",
+        "buscar_en_metadatos",
+        "comparar_companias",
+        "consultar_excel",
+        "buscar_vehiculos",
+    }
 
-    def _marcar_vacia(resultado, motivo=""):
-        resultado = dict(resultado) if isinstance(resultado, dict) else {"error": str(resultado)}
-        resultado["busqueda_vacia"] = True
-        resultado["instruccion_reintento"] = (
-            "No cierres la respuesta todavía. Debe realizarse una segunda "
-            "búsqueda con términos descompuestos o sinónimos relevantes. "
-            "Orden obligatorio para consultas documentales: "
-            "1) buscar_en_metadatos (prioridad) → 2) buscar_en_manuales. "
-            "Si ya buscaste metadatos y dio 0, probá manuales/PDFs. "
-            "Si ya buscaste manuales, reformulá o usá sinónimos "
-            "(remolque/grúa/asistencia/auxilio/traslado)."
-            + (f" Motivo: {motivo}" if motivo else "")
-        )
-        return resultado
+    clave_cache = None
+    if cache is not None and nombre in herramientas_cacheables:
+        try:
+            clave_cache = (
+                nombre,
+                json.dumps(argumentos or {}, ensure_ascii=False, sort_keys=True, default=str),
+            )
+            if clave_cache in cache:
+                return cache[clave_cache]
+        except Exception:
+            clave_cache = None
 
     try:
         resultado = handler(**argumentos)
         if isinstance(resultado, dict) and nombre in herramientas_busqueda:
             cantidad = resultado.get("cantidad")
-            # cantidad 0 o presencia de error → forzar reintento
             if cantidad == 0 or resultado.get("error"):
-                resultado = _marcar_vacia(
-                    resultado,
-                    motivo=resultado.get("error") or "sin resultados",
-                )
+                resultado = dict(resultado)
+                resultado["busqueda_vacia"] = True
+        if cache is not None and clave_cache is not None:
+            cache[clave_cache] = resultado
         return resultado
     except Exception as error:
         print(f"ERROR TOOL {nombre}:", error)
-        # También marcar vacía para que el flujo de segundo intento se active
-        return _marcar_vacia(
-            {"error": f"No se pudo ejecutar {nombre}.", "cantidad": 0},
-            motivo=str(error),
-        )
+        resultado = {
+            "error": f"No se pudo ejecutar {nombre}.",
+            "cantidad": 0,
+            "busqueda_vacia": True,
+        }
+        if cache is not None and clave_cache is not None:
+            cache[clave_cache] = resultado
+        return resultado
 
 
 
@@ -1511,17 +1594,60 @@ def _partes_function_calls(respuesta):
     return calls
 
 
+def _compactar_historial_para_modelo(historial, max_chars=8000, max_por_turno=1800):
+    """Convierte el historial visible en memoria conversacional liviana.
+
+    La UI y la base conservan los mensajes completos. Sólo el contexto enviado
+    a Gemini se recorta por presupuesto real de caracteres, para que un análisis
+    de PDF, un tabulado o una respuesta extensa no siga pesando en todos los
+    turnos posteriores. El historial sirve para entender continuaciones; nunca
+    representa una operación todavía activa.
+    """
+    seleccionados = []
+    usados = 0
+    for turno in reversed((historial or [])[-16:]):
+        if not isinstance(turno, dict):
+            continue
+        rol = turno.get("rol")
+        if rol not in {"user", "assistant"}:
+            continue
+        contenido = str(turno.get("contenido", "") or "").strip()
+        if not contenido:
+            continue
+
+        # Los bloques tabulados pueden ser enormes y no aportan contexto
+        # conversacional en el turno siguiente.
+        if contenido.count("\t") >= 8:
+            lineas = [ln for ln in contenido.splitlines() if "\t" not in ln]
+            contenido = "\n".join(lineas).strip() or "[Resultado tabulado omitido del contexto]"
+
+        if len(contenido) > max_por_turno:
+            cabeza = max_por_turno - 280
+            contenido = contenido[:cabeza].rstrip() + " … [resumen recortado] … " + contenido[-240:].lstrip()
+
+        linea = f"{'USUARIO' if rol == 'user' else 'ASISTENTE'}: {contenido}"
+        costo = len(linea) + 1
+        if seleccionados and usados + costo > max_chars:
+            break
+        if costo > max_chars:
+            linea = linea[:max_chars]
+            costo = len(linea)
+        seleccionados.append(linea)
+        usados += costo
+
+    seleccionados.reverse()
+    return "\n".join(seleccionados) or "Sin historial relevante."
+
+
 def consultar_gemini(pregunta, contexto="", historial=None):
     cliente = obtener_cliente_gemini()
     if cliente is None:
         return "La IA todavía no está configurada. Falta GEMINI_API_KEY."
 
     historial = historial or []
-    historial_texto = "\n".join(
-        f"{'USUARIO' if turno.get('rol') == 'user' else 'ASISTENTE'}: {str(turno.get('contenido', '')).strip()}"
-        for turno in historial[-10:]
-        if str(turno.get('contenido', '')).strip()
-    ) or "Sin historial relevante."
+    historial_texto = _compactar_historial_para_modelo(historial)
+    # Cache estrictamente efímero: nace y muere dentro de este turno.
+    tool_cache = {}
 
     contexto_comparativo = ""
     pregunta_comparativa = _consulta_comparativa_con_historial(pregunta, historial)
@@ -1530,7 +1656,9 @@ def consultar_gemini(pregunta, contexto="", historial=None):
         or pregunta_comparativa != str(pregunta or "").strip()
     ):
         try:
-            resultado_comparativo = comparar_companias(pregunta_comparativa)
+            resultado_comparativo = _ejecutar_tool(
+                "comparar_companias", {"consulta": pregunta_comparativa}, cache=tool_cache
+            )
             contexto_comparativo = _formatear_contexto_comparativo(resultado_comparativo)
         except Exception as error:
             print("ERROR PRECONTEXTO COMPARATIVO:", error)
@@ -1544,16 +1672,18 @@ FECHA ACTUAL DEL SISTEMA: {fecha_hoy}
 
 REGLAS:
 - Si el usuario saluda, agradece, comenta algo, escribe una frase coloquial o simplemente sigue una conversación, respondé de forma natural usando el historial. No fuerces una herramienta ni un flujo estructurado si no hace falta.
-- Si la pregunta es contextual o incompleta pero el historial permite entenderla razonablemente, continuá desde ese contexto.
+- El HISTORIAL es memoria conversacional, no estado de ejecución. Una operación de PDF, /flota, Excel, manuales o herramientas terminó al responder el turno en que se ejecutó. Nunca reactives una operación anterior sólo porque aparece en el historial.
+- Si la pregunta actual es una continuación inequívoca (por ejemplo "¿alguna otra?" después de una consulta de colocación), podés usar el historial sólo para completar los datos mínimos que faltan.
 - Si falta un dato concreto para poder hacer lo pedido, pedí solamente ese dato.
 - Si ni con el historial se puede determinar razonablemente qué quiere el usuario, respondé exactamente: "Reformulame la pregunta."
 - Una entrada poco clara nunca es motivo para inventar datos ni para forzar una operación de Excel, PDF, flota o metadatos.
 - OficinaIA puede haber recuperado METADATOS INTERNOS PRIORITARIOS antes de esta llamada. Si aparecen dentro del contexto, utilizalos directamente como fuente prioritaria; no afirmes que el dato no está disponible si está allí.
 - Si el contexto ya contiene metadatos suficientes para responder, no vuelvas a llamar buscar_en_metadatos() innecesariamente. Podés usarla nuevamente únicamente si necesitás información adicional o una búsqueda más específica.
 - Elegí las herramientas necesarias según el significado de la pregunta.
-- CONSULTAS TRANSVERSALES / COLOCACIÓN: si el usuario pregunta "¿en qué compañía puedo emitir...?", "¿quién toma...?", "¿qué compañía acepta...?", "¿dónde puedo asegurar...?" o pide comparar compañías, NO busques una sola compañía. Usá el CONTEXTO COMPARATIVO ya recuperado si está presente y, si necesitás ampliar, llamá comparar_companias.
+- CONSULTAS TRANSVERSALES / COLOCACIÓN: si el usuario pregunta "¿en qué compañía puedo emitir...?", "¿quién toma...?", "¿qué compañía acepta...?", "¿dónde puedo asegurar...?" o pide comparar compañías, NO busques una sola compañía. Usá el CONTEXTO COMPARATIVO ya recuperado si está presente. No vuelvas a llamar comparar_companias para repetir la misma búsqueda dentro del mismo turno.
 - En comparaciones, clasificá la evidencia con tres estados conceptuales: COMPATIBLE CONFIRMADO, NO COMPATIBLE CONFIRMADO y SIN INFORMACIÓN SUFICIENTE. Jamás conviertas "no encontré información" en "no lo toma".
-- Si existe al menos una compañía con compatibilidad confirmada, respondé con esa opción aunque no puedas confirmar las demás. Ejemplo: si AgroSalta está respaldada por una ficha que dice "sin excepción de año", no respondas "no pude completar" sólo porque otras compañías no tengan ficha equivalente.
+- Sólo presentes como alternativa real una compañía cuyo CONTEXTO COMPARATIVO marque COMPATIBILIDAD DOCUMENTAL: COMPATIBLE_CONFIRMADO. Tener una ficha relacionada, no encontrar una prohibición o quedar como SIN INFORMACIÓN SUFICIENTE NO habilita a recomendarla. Nunca inventes "consulta especial" ni excepciones no documentadas.
+- Si existe al menos una compañía con compatibilidad confirmada, respondé con esa opción aunque no puedas confirmar las demás.
 - Para frases abreviadas de oficina como "auto 56", interpretá el número como año/modelo del vehículo cuando el contexto lo haga razonable (por ejemplo, 1956). Si hubiera una ambigüedad real, indicá brevemente la interpretación usada en vez de bloquear la consulta.
 - VALIDACIÓN DE RESTRICCIONES: antes de recomendar una compañía, verificá que TODAS las restricciones numéricas recuperadas sean compatibles con el riesgo concreto. Si el vehículo es modelo 1956 y la fecha actual es 2026, tiene aproximadamente 70 años. Una ficha que diga "máximo 30 años" DESCARTA esa alternativa: nunca la presentes como opción.
 - Si el CONTEXTO COMPARATIVO incluye validacion.estado="NO_COMPATIBLE_POR_ANTIGUEDAD", esa compañía NO puede recomendarse para ese vehículo salvo que exista otra evidencia explícita y más específica que contradiga el límite general; si hay contradicción, marcala como REVISAR/confirmar y no inventes.
@@ -1644,22 +1774,12 @@ PREGUNTA:
     propuesta_excel = None
     propuesta_metadato = None
 
-    # Si una búsqueda devuelve 0, el modelo no puede cerrar la respuesta en ese turno:
-    # debe existir al menos una nueva llamada de búsqueda antes de permitir texto final.
-    reintento_pendiente = False
-    fuentes_reintentadas = set()
-    # buscar_en_manuales y buscar_en_internet quedan afuera de este set a
-    # propósito: son herramientas pesadas (PDFs completos / búsqueda web) y
-    # no deben disparar una vuelta forzada adicional si dan 0 resultados. El
-    # reintento automático solo aplica a las fuentes livianas (metadatos,
-    # excel, vehículos), que es donde vale la pena insistir con sinónimos
-    # antes de responder "no tengo esa información".
-    herramientas_busqueda = {
-        "buscar_en_metadatos",
-        "comparar_companias",
-        "consultar_excel",
-        "buscar_vehiculos",
-    }
+    # V16: las búsquedas vacías ya no abren un "reintento obligatorio".
+    # El modelo recibe el resultado vacío/error y puede responder con claridad.
+    # Esto evita que las consultas difíciles sean justamente las que más
+    # llamadas encadenen y más se acerquen al timeout del único worker.
+    total_tool_calls = 0
+    MAX_TOOL_CALLS = 8
 
     # Antes eran 6 vueltas x hasta 3 modelos cada una (hasta 18 llamadas a
     # Gemini encadenadas en un mismo request). Con timeout de gunicorn en
@@ -1703,30 +1823,6 @@ PREGUNTA:
         if not calls:
             texto = _contenido_respuesta(respuesta) or "No pude generar una respuesta con la información disponible."
 
-            if reintento_pendiente:
-                # No se permite cerrar con un "no encontré" o cualquier texto final
-                # después de una búsqueda vacía sin que exista una segunda búsqueda.
-                contents.append(
-                    types.Content(
-                        role="user",
-                        parts=[types.Part.from_text(
-                            text=(
-                                "CONTROL DE RECUPERACIÓN: una herramienta de búsqueda "
-                                "devolvió 0 resultados o error. No respondas todavía. "
-                                "Hacé ahora una segunda búsqueda en buscar_en_metadatos "
-                                "con sinónimos (remolque/grúa/asistencia/auxilio/traslado) "
-                                "u otra formulación. NO uses buscar_en_manuales salvo que "
-                                "el usuario haya pedido explícitamente un manual/PDF por "
-                                "nombre: es una herramienta pesada de uso excepcional. "
-                                "Sólo después de ese segundo intento en metadatos podés "
-                                "responder, aunque sea para decir que no tenés esa ficha "
-                                "cargada."
-                            )
-                        )],
-                    )
-                )
-                continue
-
             if propuesta_excel or propuesta_metadato:
                 return texto, propuesta_excel, propuesta_metadato
             return texto
@@ -1737,28 +1833,19 @@ PREGUNTA:
             else respuesta
         )
 
-        busqueda_realizada_despues_de_cero = False
-
         for call in calls:
             nombre = getattr(call, "name", "")
             argumentos = dict(getattr(call, "args", {}) or {})
             print("GEMINI TOOL CALL:", nombre, argumentos)
 
-            if reintento_pendiente and nombre in herramientas_busqueda:
-                # La llamada actual satisface el segundo intento obligatorio,
-                # aunque el modelo haya elegido una fuente complementaria.
-                busqueda_realizada_despues_de_cero = True
-                fuentes_reintentadas.add(nombre)
-
-            resultado = _ejecutar_tool(nombre, argumentos)
-
-            if (
-                isinstance(resultado, dict)
-                and resultado.get("busqueda_vacia")
-                and nombre in herramientas_busqueda
-                and nombre not in fuentes_reintentadas
-            ):
-                reintento_pendiente = True
+            total_tool_calls += 1
+            if total_tool_calls > MAX_TOOL_CALLS:
+                resultado = {
+                    "error": "Se alcanzó el límite de herramientas para este turno.",
+                    "cantidad": 0,
+                }
+            else:
+                resultado = _ejecutar_tool(nombre, argumentos, cache=tool_cache)
 
             if nombre == "proponer_registro_excel":
                 propuesta_excel = (
@@ -1778,9 +1865,6 @@ PREGUNTA:
                 name=nombre,
                 response={"resultado": resultado},
             ))
-
-        if busqueda_realizada_despues_de_cero:
-            reintento_pendiente = False
 
     if propuesta_excel or propuesta_metadato:
         return (

@@ -78,6 +78,7 @@ from coti import procesar_comando_coti
 from servicios_ia import buscar_en_metadatos
 from companias import normalizar_compania, nombre_compania as _nombre_compania_canonico
 import estudio_ops
+import envios_masivos
 
 # ==========================================================
 # CONFIGURACIÓN
@@ -634,7 +635,6 @@ MAX_PDF_TEXT_CHARS_INDEX = 120_000
 MAX_PDF_FILE_SIZE_BYTES = 15 * 1024 * 1024
 MAX_PDF_PAGES_CHAT = 30
 MAX_PDF_TEXT_CHARS_CHAT = 40_000
-_PDF_CACHE = {}  # Se conserva por compatibilidad; no se utiliza para retener PDFs.
 
 _STOPWORDS_ES = {
     "para", "como", "cual", "cuál", "que", "qué", "del", "las", "los",
@@ -3787,6 +3787,31 @@ def _resumen_estado_flota(estado_flota, items_tocados_ahora, con_error, es_prime
     return " ".join(partes)
 
 
+def _flota_parece_continuacion_explicita(mensaje):
+    """Reconoce sólo continuaciones inequívocas de una flota previa.
+
+    V16: tener una fila en flotas_activas ya no habilita a /flota a mirar
+    todos los mensajes del chat. El estado puede persistir como snapshot,
+    pero la ejecución sólo se reactiva cuando el mensaje actual lo pide de
+    forma clara. Así un "hola", un PDF nuevo o una consulta normal nunca
+    quedan secuestrados por una operación anterior.
+    """
+    texto = str(mensaje or "").strip()
+    if not texto:
+        return False
+    if re.match(r"^/flota\b", texto, re.IGNORECASE):
+        return True
+
+    patrones = (
+        r"^(?:el|la|los|las)?\s*(?:veh[ií]culo\s*)?\d+\b",
+        r"\b(?:veh[ií]culo|item|ítem)\s*#?\d+\b",
+        r"\b(?:sum[aá]|sumame|agreg[aá]|agregame|correg[ií]|corregime|actualiz[aá]|actualizame|cambi[aá]|cambiame)\b.*\b(?:flota|veh[ií]culo|patente|chasis|motor|cobertura|suma|uso)\b",
+        r"\b(?:cerrar|cerr[aá]|terminar|termin[aá]|finalizar|finaliz[aá])\s+(?:la\s+)?flota\b",
+        r"\bflota\s+(?:completa|lista|terminada)\b",
+    )
+    return any(re.search(p, texto, re.IGNORECASE) for p in patrones)
+
+
 def _flota_procesar_turno(chat_id, mensaje, contexto_pdf_adjunto):
     """Punto central del flujo /flota persistente. Devuelve
     (respuesta, True, bloque_tsv) si el mensaje fue absorbido por la tarea
@@ -3803,9 +3828,18 @@ def _flota_procesar_turno(chat_id, mensaje, contexto_pdf_adjunto):
     llega al Excel real sin que se vea antes."""
 
     es_comando_flota = bool(re.match(r"^/flota\b", mensaje, re.IGNORECASE))
+    es_continuacion_explicita = _flota_parece_continuacion_explicita(mensaje)
+
+    # V16: no consultamos siquiera el snapshot de flota para mensajes normales.
+    # Persistir datos no significa mantener una operación ejecutándose.
+    if not es_comando_flota and not es_continuacion_explicita:
+        return None, False, None
+
     estado_flota = _flota_obtener(chat_id)
     es_primera_vez = estado_flota is None
 
+    # Una frase con aspecto de corrección de flota, pero sin una flota previa,
+    # no abre una tarea por accidente: sólo /flota inicia una nueva.
     if not es_comando_flota and estado_flota is None:
         return None, False, None
 
@@ -4683,6 +4717,7 @@ def chat():
     # El chat acepta JSON para consultas normales y multipart/form-data
     # cuando el usuario adjunta un PDF. El PDF se procesa en memoria y no
     # se guarda como documento permanente.
+    logger.info("CHAT[%s] etapa=request_parse", getattr(g, "chat_request_id", "-"))
     if request.is_json:
         data = request.get_json(silent=True) or {}
         mensaje = str(data.get("mensaje", "")).strip()
@@ -4708,6 +4743,10 @@ def chat():
     # inmediata; cualquier nuevo mensaje de chat invalida ese destino para no
     # arrastrarlo accidentalmente a otra propuesta.
     session.pop("guardar_asegurado_libro_id", None)
+    # V16: cualquier residuo de una extracción /alta anterior muere al empezar
+    # un nuevo turno. La propuesta útil viaja en la respuesta del mismo request
+    # y no necesita persistir en la cookie de sesión.
+    session.pop("alta_asegurado_propuesta", None)
 
     try:
         chat_id = int(chat_id) if chat_id else None
@@ -4725,6 +4764,7 @@ def chat():
 
     # P1.3 — Historial desde DB (fuente de verdad). El JSON del cliente es
     # legacy/opcional y solo se usa si la DB no tiene mensajes aún.
+    logger.info("CHAT[%s] etapa=historial_inicio chat_id=%s", getattr(g, "chat_request_id", "-"), chat_id)
     historial_db = _historial_desde_db(chat_id, session["usuario"], limite=10)
     if historial_db:
         historial = historial_db
@@ -4738,12 +4778,15 @@ def chat():
             and str(x.get("contenido", "")).strip()
         ][-10:]
 
+    logger.info("CHAT[%s] etapa=historial_fin mensajes=%s", getattr(g, "chat_request_id", "-"), len(historial))
+
     # P2.6 — tipo de chat persistido (flota/coti/alta/envios)
     _asignar_tipo_chat(chat_id, session["usuario"], mensaje)
 
     contexto_pdf_adjunto = ""
     nombre_pdf_adjunto = ""
     if archivo_pdf and archivo_pdf.filename:
+        logger.info("CHAT[%s] etapa=pdf_inicio", getattr(g, "chat_request_id", "-"))
         nombre_pdf_adjunto = secure_filename(archivo_pdf.filename) or "documento.pdf"
         if not nombre_pdf_adjunto.lower().endswith(".pdf"):
             return jsonify({"ok": False, "error": "El archivo adjunto debe ser un PDF."}), 400
@@ -4805,6 +4848,10 @@ def chat():
                     "error": "El PDF parece ser escaneado o no contiene texto seleccionable. En esta versión puedo leer PDFs con texto."
                 }), 422
 
+            logger.info(
+                "CHAT[%s] etapa=pdf_extraido paginas=%s chars=%s",
+                getattr(g, "chat_request_id", "-"), max_paginas, total_chars
+            )
             contexto_pdf_adjunto = (
                 "\n\n===== PDF ADJUNTADO EN EL CHAT =====\n"
                 f"ARCHIVO: {nombre_pdf_adjunto}\n"
@@ -4850,15 +4897,12 @@ def chat():
         })
 
     # ======================================================
-    # COMANDO /FLOTA — TAREA CONVERSACIONAL PERSISTENTE
+    # COMANDO /FLOTA — SNAPSHOT PERSISTENTE, EJECUCIÓN EFÍMERA
     # ======================================================
-    # A diferencia de /coti y /guardar asegurado, /flota no se resuelve en
-    # un solo turno: el contexto (datos generales + vehículos, guardados o
-    # pendientes) vive en `flotas_activas` atado a chat_id, así que TODOS
-    # los mensajes de esta conversación pasan por acá primero — no sólo los
-    # que empiezan con "/flota" — para poder reconocer continuaciones
-    # ("vehículos 11-20"), correcciones ("el 7 es C3") y el cierre de la
-    # tarea sin que el usuario tenga que repetir el comando cada vez.
+    # V16: los datos acumulados pueden quedar guardados para retomarlos, pero
+    # /flota NO intercepta todos los mensajes futuros. Sólo se reactiva ante
+    # /flota o una continuación inequívoca (p. ej. "el 7 es C3").
+    logger.info("CHAT[%s] etapa=flota_router", getattr(g, "chat_request_id", "-"))
     respuesta_flota, atendido_por_flota, tabulado_flota = _flota_procesar_turno(
         chat_id, mensaje, contexto_pdf_adjunto
     )
@@ -4876,10 +4920,9 @@ def chat():
     # ======================================================
     # COMANDO /ALTA — PÓLIZA INDIVIDUAL → PROPUESTA DE ASEGURADO
     # ======================================================
-    # Tanda 4: flujo nuevo y separado de /flota. Un solo turno, sin estado
-    # persistente por chat_id. La propuesta queda en sesión para que, más
-    # adelante (Tanda 5), el usuario pueda elegir "tabular" o "guardar en
-    # Excel" sin tener que repetir la extracción.
+    # V16: flujo de un solo turno. La propuesta se devuelve al frontend en
+    # esta misma respuesta y NO queda guardada en sesión ni como ejecución
+    # pendiente. El análisis del PDF termina acá.
     # Tanda 8 — detección automática: si el usuario tira el PDF de una
     # póliza individual al chat (con el clip o arrastrándolo) SIN escribir
     # "/alta", Sofia reconoce igual que es una póliza de un solo asegurado
@@ -4899,17 +4942,17 @@ def chat():
         mensaje_para_alta = ("/alta " + texto_extra).strip()
         alta_automatica = True
 
+    logger.info("CHAT[%s] etapa=alta_router", getattr(g, "chat_request_id", "-"))
     respuesta_alta, atendido_por_alta, propuesta_alta = _procesar_alta_asegurado(
         mensaje_para_alta, contexto_pdf_adjunto, automatico=alta_automatica
     )
     if atendido_por_alta:
+        logger.info("CHAT[%s] etapa=alta_resuelta", getattr(g, "chat_request_id", "-"))
         _guardar_mensaje(chat_id, "assistant", str(respuesta_alta))
         tabulado_alta = _armar_tabulado_alta(propuesta_alta) if propuesta_alta else None
         campos_guardar_alta = (
             _alta_a_campos_guardar_asegurado(propuesta_alta) if propuesta_alta else None
         )
-        if propuesta_alta:
-            session["alta_asegurado_propuesta"] = propuesta_alta
         return jsonify({
             "respuesta": respuesta_alta,
             "chat_id": chat_id,
@@ -5083,6 +5126,7 @@ def chat():
             )
 
     _guardar_mensaje(chat_id, "assistant", str(respuesta))
+    logger.info("CHAT[%s] etapa=respuesta_guardada chat_id=%s", getattr(g, "chat_request_id", "-"), chat_id)
 
     return jsonify({
         "respuesta": respuesta,
@@ -6270,6 +6314,82 @@ def estudio_eliminar_ejemplo(ejemplo_id):
         return jsonify(ok=False, error="Ejemplo inexistente."), 404
     return jsonify(ok=True)
 
+
+
+# ==========================================================
+# ENVÍOS MASIVOS — importador inteligente + salida EnvíosYA
+# ==========================================================
+
+@app.route("/envios-masivos")
+@requiere_login
+def envios_masivos_pagina():
+    return render_template("envios_masivos.html", usuario=session["usuario"])
+
+
+@app.route("/api/envios-masivos/procesar", methods=["POST"])
+@requiere_login
+def envios_masivos_procesar():
+    inicio_envios = time.perf_counter()
+    archivos = [a for a in request.files.getlist("bases") if a and a.filename]
+    if not archivos:
+        return jsonify(ok=False, error="Seleccioná al menos una base de datos."), 400
+    payload = []
+    try:
+        for archivo in archivos:
+            nombre = secure_filename(archivo.filename) or "base.xlsx"
+            datos = archivo.read()
+            if not datos:
+                continue
+            payload.append((nombre, datos))
+        fecha_modo = (request.form.get("fecha_modo") or "conservar").strip().lower()
+        if fecha_modo not in {"conservar", "vencimiento"}:
+            fecha_modo = "conservar"
+        usar_compania_fuente = (request.form.get("usar_compania_fuente") or "").lower() in {"1", "true", "si", "on"}
+        resultado = envios_masivos.procesar_bases(payload, fecha_modo=fecha_modo, usar_compania_fuente=usar_compania_fuente)
+        logger.info(
+            "ENVIOS MASIVOS listo archivos=%s bytes=%s exportables=%s revisar=%s tiempo=%.2fs",
+            len(payload), sum(len(datos) for _, datos in payload),
+            (resultado.get("resumen") or {}).get("exportables"),
+            (resultado.get("resumen") or {}).get("revisar"),
+            time.perf_counter() - inicio_envios,
+        )
+        return jsonify(ok=True, **resultado)
+    except ValueError as error:
+        return jsonify(ok=False, error=str(error)), 400
+    except Exception as error:
+        logger.exception("ENVIOS MASIVOS procesamiento fallido tras %.2fs: %s", time.perf_counter() - inicio_envios, error)
+        return jsonify(ok=False, error="No pude terminar esta importación. El archivo original no se modifica; podés volver a procesarlo. Si se repite, revisá el log de Envíos Masivos."), 500
+
+
+@app.route("/api/envios-masivos/descargar/<token>", methods=["GET"])
+@requiere_login
+def envios_masivos_descargar(token):
+    archivo = envios_masivos.obtener_excel(token)
+    if not archivo:
+        return jsonify(ok=False, error="La exportación venció o no existe. Procesá la base nuevamente."), 404
+    return send_file(
+        archivo,
+        as_attachment=True,
+        download_name="EnviosYA! - Contactos.xlsx",
+        mimetype="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    )
+
+@app.route("/api/envios-masivos/descargar-notificaciones/<token>", methods=["GET"])
+@requiere_login
+def envios_masivos_descargar_notificaciones(token):
+    archivo = envios_masivos.obtener_exportacion(token, "notificaciones")
+    if not archivo:
+        return jsonify(ok=False, error="La exportación venció o no existe. Procesá la base nuevamente."), 404
+    return send_file(archivo, as_attachment=True, download_name="EnviosYA! - Notificaciones.csv", mimetype="text/csv; charset=utf-8")
+
+
+@app.route("/api/envios-masivos/descargar-maestro/<token>", methods=["GET"])
+@requiere_login
+def envios_masivos_descargar_maestro(token):
+    archivo = envios_masivos.obtener_exportacion(token, "maestro")
+    if not archivo:
+        return jsonify(ok=False, error="La exportación venció o no existe. Procesá la base nuevamente."), 404
+    return send_file(archivo, as_attachment=True, download_name="OficinaIA - Base normalizada.xlsx", mimetype="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
 
 @app.route("/pendientes")
 @requiere_login
