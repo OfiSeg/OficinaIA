@@ -1207,6 +1207,10 @@ async function enviarMensaje(){
     document.getElementById('chatWelcome')?.remove();try{document.getElementById('chat')?.classList.remove('history-empty')}catch(_){};
   try{document.getElementById('chat')?.classList.remove('history-empty')}catch(_){};
     add('user',(archivo?'📎 '+archivo.name+'\n':'')+(t||'Analizá este PDF.'));
+    // El archivo ya quedó capturado en la variable `archivo`. Limpiamos el
+    // input y la pastilla visual AHORA, al enviar, para que el PDF no quede
+    // pegado esperando la respuesta del servidor ni se reenvíe por accidente.
+    if(archivo)quitarPdf();
     i.value='';size();
     if(seguirConversacion)scrollToBottom(false);
     const thinking=add('assistant','<span class="typing"><i></i><i></i><i></i></span>',true);
@@ -1450,12 +1454,15 @@ function inicializarFechaGlobal(){const e=document.getElementById('fechaHoy');if
 document.addEventListener('DOMContentLoaded',inicializarFechaGlobal);
 
 /* ==========================================================
-   Apariencia — tema + tamaño general
+   Apariencia — tema + tamaño legible
    ========================================================== */
 (function(){
   const THEME_KEY = 'oficinaia_theme';
   const FONT_KEY = 'oficinaia_font_general_px';
-  const MIN_FONT = 12, MAX_FONT = 18;
+  const SIDEBAR_KEY = 'oficinaia_font_sidebar_px';
+  const CHAT_KEY = 'oficinaia_font_chat_px';
+  // La app arranca legible. +/- cambia los tres tamaños coordinadamente.
+  const MIN_FONT = 14, MAX_FONT = 20, DEFAULT_FONT = 16;
 
   function getTheme(){
     const t=localStorage.getItem(THEME_KEY);
@@ -1476,16 +1483,36 @@ document.addEventListener('DOMContentLoaded',inicializarFechaGlobal);
   function setTheme(theme){localStorage.setItem(THEME_KEY,theme);applyTheme(theme)}
   function toggleTheme(){setTheme(getTheme()==='dark'?'light':'dark')}
 
+  function numeroGuardado(clave, fallback){
+    const n=parseInt(localStorage.getItem(clave)||String(fallback),10);
+    return Number.isFinite(n)?n:fallback;
+  }
   function getFont(){
-    const n=parseInt(localStorage.getItem(FONT_KEY)||'14',10);
-    return Number.isFinite(n)?Math.max(MIN_FONT,Math.min(MAX_FONT,n)):14;
+    return Math.max(MIN_FONT,Math.min(MAX_FONT,numeroGuardado(FONT_KEY,DEFAULT_FONT)));
   }
   function applyFont(px){
-    document.documentElement.style.setProperty('--ui-font-size',px+'px');
+    const general=Math.max(MIN_FONT,Math.min(MAX_FONT,px));
+    // Sidebar apenas un punto menor; chat igual al general para lectura cómoda.
+    const sidebar=Math.max(14,Math.min(19,numeroGuardado(SIDEBAR_KEY,general-1)));
+    const chat=Math.max(15,Math.min(20,numeroGuardado(CHAT_KEY,general)));
+    document.documentElement.style.setProperty('--ui-font-size',general+'px');
+    document.documentElement.style.setProperty('--sidebar-font-size',sidebar+'px');
+    document.documentElement.style.setProperty('--chat-font-size',chat+'px');
     const dec=document.getElementById('fontDec'),inc=document.getElementById('fontInc');
-    if(dec)dec.disabled=px<=MIN_FONT;if(inc)inc.disabled=px>=MAX_FONT;
+    if(dec)dec.disabled=general<=MIN_FONT;
+    if(inc)inc.disabled=general>=MAX_FONT;
   }
-  function setFont(px){px=Math.max(MIN_FONT,Math.min(MAX_FONT,px));localStorage.setItem(FONT_KEY,String(px));applyFont(px)}
+  function setFont(px){
+    const general=Math.max(MIN_FONT,Math.min(MAX_FONT,px));
+    localStorage.setItem(FONT_KEY,String(general));
+    localStorage.setItem(SIDEBAR_KEY,String(Math.max(14,general-1)));
+    localStorage.setItem(CHAT_KEY,String(general));
+    applyFont(general);
+    // Configuración usa sliders propios: mantenerlos sincronizados si están visibles.
+    const g=document.getElementById('fontGeneral'),s=document.getElementById('fontSidebar'),c=document.getElementById('fontChat');
+    if(g)g.value=String(general);if(s)s.value=String(Math.max(14,general-1));if(c)c.value=String(general);
+    g?.dispatchEvent(new Event('input'));s?.dispatchEvent(new Event('input'));c?.dispatchEvent(new Event('input'));
+  }
 
   window.showToast=function(message,type){
     const host=document.getElementById('toastHost');if(!host)return;
@@ -1495,6 +1522,18 @@ document.addEventListener('DOMContentLoaded',inicializarFechaGlobal);
   };
 
   function initAppearance(){
+    // Migración visual V4: la versión anterior guardaba 14/14/15 y en
+    // pantallas de escritorio quedaba demasiado chica. Se hace una sola vez;
+    // después +/- y Configuración respetan lo que el usuario elija.
+    if(localStorage.getItem('oficinaia_ui_v4_migrated')!=='1'){
+      const g=numeroGuardado(FONT_KEY,DEFAULT_FONT);
+      const sb=numeroGuardado(SIDEBAR_KEY,15);
+      const ch=numeroGuardado(CHAT_KEY,16);
+      if(g<=15)localStorage.setItem(FONT_KEY,'16');
+      if(sb<=14)localStorage.setItem(SIDEBAR_KEY,'15');
+      if(ch<=15)localStorage.setItem(CHAT_KEY,'16');
+      localStorage.setItem('oficinaia_ui_v4_migrated','1');
+    }
     applyTheme(getTheme());applyFont(getFont());
     document.getElementById('themeToggle')?.addEventListener('click',toggleTheme);
     document.getElementById('fontDec')?.addEventListener('click',()=>setFont(getFont()-1));
@@ -1507,7 +1546,6 @@ document.addEventListener('DOMContentLoaded',inicializarFechaGlobal);
   }
   if(document.readyState==='loading')document.addEventListener('DOMContentLoaded',initAppearance);else initAppearance();
 })();
-
 
 /* Sidebar collapse / rail */
 (function(){

@@ -1,0 +1,62 @@
+{% extends 'base.html' %}
+{% block title %}Estudio · {{config_global.nombre_oficina}}{% endblock %}
+{% block content %}
+<div class="page estudio-page">
+  <header class="top clean-page-head estudio-head"><h1>Estudio</h1></header>
+
+  <div class="estudio-tabs" role="tablist">
+    <button class="active" data-estudio-tab="analizar">Analizar siniestros</button>
+    <button data-estudio-tab="ejemplos">Criterios y ejemplos</button>
+    <button data-estudio-tab="historial">Historial</button>
+  </div>
+
+  <section class="estudio-panel active" data-estudio-panel="analizar">
+    <div class="estudio-card estudio-upload-card">
+      <div class="estudio-card-head"><div><h2>Nuevo análisis</h2><p>Podés seleccionar muchos PDFs a la vez. Se procesan uno por uno para que un archivo lento no tire abajo todo el lote.</p></div></div>
+      <label class="estudio-drop" id="estudioDrop">
+        <input id="estudioFiles" type="file" accept="application/pdf,.pdf" multiple hidden>
+        <span class="drop-pdf-mark" aria-hidden="true">PDF</span><b>Arrastrá los PDFs acá</b><span>o hacé clic para seleccionarlos</span>
+      </label>
+      <div class="estudio-file-summary" id="estudioFileSummary">Todavía no seleccionaste archivos.</div>
+      <div class="estudio-actions"><button class="primary" id="estudioStart" type="button" disabled>Analizar lote</button><button class="secondary" id="estudioClear" type="button">Limpiar</button></div>
+      <div class="estudio-progress" id="estudioProgress" hidden><div><span id="estudioProgressBar"></span></div><p id="estudioProgressText"></p></div>
+    </div>
+
+    <div class="estudio-results" id="estudioResults" hidden>
+      <div class="estudio-result-head"><div><h2>Resultado</h2><p id="estudioResultSummary"></p></div><button class="primary" id="estudioDownloadAll" type="button">Descargar todo</button></div>
+      <div class="estudio-stats" id="estudioStats"></div>
+      <div class="estudio-cases" id="estudioCases"></div>
+    </div>
+  </section>
+
+  <section class="estudio-panel" data-estudio-panel="ejemplos">
+    <div class="estudio-learning-note"><b>Cómo aprende Sofía</b><span>Usa únicamente ejemplos validados por una persona como antecedentes internos. Sus propias respuestas no se incorporan solas como criterio.</span></div>
+
+    <div class="estudio-card estudio-example-card">
+      <div class="estudio-card-head"><div><h2>Agregar ejemplo validado</h2><p>Guardá un caso real con la clasificación y el fundamento que usaría el estudio.</p></div></div>
+      <form id="ejemploForm" class="estudio-example-form">
+        <label>Nombre del ejemplo<input id="ejemploNombre" required placeholder="Ej. Alcance trasero con lesiones"></label>
+        <label>Clasificación<select id="ejemploClasificacion"><option value="TOMAR">Tomar</option><option value="REVISAR">Revisar</option><option value="NO_TOMAR">No tomar</option><option value="INCOMPLETO">Incompleto</option></select></label>
+        <label class="example-foundation">Por qué<textarea id="ejemploFundamento" required rows="3" placeholder="Criterio del letrado / resultado real"></textarea></label>
+        <div class="example-pdf-field">
+          <span class="example-label">PDF del caso <small>(opcional, recomendado)</small></span>
+          <label class="example-pdf-drop" id="examplePdfDrop">
+            <input id="ejemploPdf" type="file" accept="application/pdf,.pdf" hidden>
+            <span class="drop-pdf-mark" aria-hidden="true">PDF</span>
+            <span><b>Arrastrá el PDF acá</b><small>o hacé clic para seleccionarlo</small></span>
+          </label>
+          <div class="example-pdf-selected" id="examplePdfSelected" hidden><div><b id="examplePdfName"></b><small id="examplePdfMeta"></small></div><button type="button" class="icon-button" id="examplePdfClear" aria-label="Quitar PDF" title="Quitar PDF">×</button></div>
+        </div>
+        <div class="example-form-footer"><button class="primary" type="submit">Guardar ejemplo</button><span id="ejemploEstado"></span></div>
+      </form>
+    </div>
+
+    <div class="estudio-card"><div class="estudio-card-head"><div><h2>Ejemplos cargados</h2><p>Antecedentes ya validados que Sofía puede usar para comparar casos nuevos.</p></div></div><div id="ejemplosList" class="estudio-examples-list"></div></div>
+  </section>
+
+  <section class="estudio-panel" data-estudio-panel="historial">
+    <div class="estudio-card"><h2>Análisis anteriores</h2><div id="estudioHistory" class="estudio-history"></div></div>
+  </section>
+</div>
+{% endblock %}
+{% block scripts %}<script src="{{url_for('static',filename='js/estudio.js', v='20260905-estudio-v3')}}"></script>{% endblock %}

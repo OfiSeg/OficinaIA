@@ -2448,3 +2448,27 @@ html[data-sidebar="collapsed"] .nav-item{
 html[data-sidebar="collapsed"] .quickaccess-item img[src*="drive.png"]{width:41px;height:41px}
 .quickaccess-item img[src*="envios_ya.png"]{width:34px;height:34px;object-fit:contain}
 html[data-sidebar="collapsed"] .quickaccess-item img[src*="envios_ya.png"]{width:40px;height:40px}
+
+/* ==========================================================
+   V12 — Toggle del sidebar montado sobre el borde
+   El control es fixed para que el overflow interno del menú no
+   recorte su circunferencia cuando el sidebar está colapsado.
+   ========================================================== */
+.sidebar-toggle{
+  position:fixed !important;
+  top:18px !important;
+  left:calc(var(--sb-w) - 14px) !important;
+  right:auto !important;
+  width:28px !important;
+  height:28px !important;
+  border-radius:50% !important;
+  z-index:120 !important;
+  overflow:visible !important;
+}
+html[data-sidebar="collapsed"] .sidebar-toggle{
+  left:calc(var(--sb-collapsed) - 14px) !important;
+  right:auto !important;
+}
+@media(max-width:800px){
+  .sidebar-toggle{display:none !important}
+}

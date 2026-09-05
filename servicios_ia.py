@@ -492,6 +492,26 @@ TOOL_DEFINITIONS = [
             parameters_json_schema={"type": "object", "properties": {"consulta": {"type": "string"}}, "required": ["consulta"]},
         ),
         types.FunctionDeclaration(
+            name="comparar_companias",
+            description=(
+                "Busca de forma transversal en las fichas internas de TODAS las compañías soportadas. "
+                "Usala para preguntas del tipo '¿en qué compañía puedo emitir...?', '¿quién toma...?', "
+                "'¿qué compañía acepta...?', '¿dónde aseguro...?' o comparaciones entre compañías. "
+                "Devuelve evidencia por compañía y distingue entre información encontrada y compañía sin evidencia. "
+                "Nunca debe interpretarse ausencia de evidencia como rechazo de la compañía."
+            ),
+            parameters_json_schema={
+                "type": "object",
+                "properties": {
+                    "consulta": {
+                        "type": "string",
+                        "description": "Riesgo o condición a comparar, por ejemplo: auto modelo 1956, moto 1994, uso Uber, pickup comercial."
+                    }
+                },
+                "required": ["consulta"],
+            },
+        ),
+        types.FunctionDeclaration(
             name="proponer_registro_excel",
             description=(
                 "Cuando el usuario pide guardar o agregar un asegurado a la planilla, "
@@ -1017,6 +1037,337 @@ def buscar_en_metadatos(consulta):
     }
 
 
+# Compañías con biblioteca/documentación operativa actualmente soportada por OficinaIA.
+# Se mantienen separadas de los accesos directos visuales: esto define el universo
+# documental que tiene sentido comparar para consultas de colocación.
+_COMPANIAS_COMPARABLES = (
+    "ATM",
+    "Mercantil Andina",
+    "Federación Patronal",
+    "San Cristóbal",
+    "Rivadavia",
+    "EuroAmérica",
+    "AgroSalta",
+    "Triunfo",
+    "PROF",
+)
+
+
+def _aliases_por_compania_visible():
+    grupos = {nombre: set() for nombre in _COMPANIAS_COMPARABLES}
+    for alias, (_codigo, display) in aliases_companias().items():
+        if display in grupos:
+            grupos[display].add(_normalizar_texto(alias))
+            grupos[display].add(_normalizar_texto(display))
+    return grupos
+
+
+def _texto_menciona_compania(texto_norm, aliases):
+    for alias in aliases:
+        alias = str(alias or "").strip()
+        if not alias:
+            continue
+        if re.search(rf"(?<![a-z0-9]){re.escape(alias)}(?![a-z0-9])", texto_norm):
+            return True
+    return False
+
+
+def _es_consulta_comparativa_companias(pregunta):
+    """Detecta consultas de colocación/comparación que deben revisar varias compañías.
+
+    Es deliberadamente acotado: no intenta clasificar todo el chat, sólo evita que una
+    pregunta como '¿en qué compañía puedo emitir un auto 56?' termine buscando una
+    única compañía o una única ficha.
+    """
+    t = _normalizar_texto(pregunta)
+    if not t:
+        return False
+    patrones = (
+        r"\ben que compania\b",
+        r"\ben cuales companias\b",
+        r"\bque compania (?:toma|acepta|asegura|emite|cotiza)\b",
+        r"\bque companias (?:toman|aceptan|aseguran|emiten|cotizan)\b",
+        r"\bdonde (?:puedo )?(?:emitir|asegurar|cotizar|colocar)\b",
+        r"\bquien (?:toma|acepta|asegura|emite|cotiza)\b",
+        r"\bquienes (?:toman|aceptan|aseguran|emiten|cotizan)\b",
+        r"\bcompar(?:a|ame|ar)\b.*\bcompan",
+        r"\bcual compania me sirve\b",
+        r"\bque compania me sirve\b",
+    )
+    return any(re.search(p, t) for p in patrones)
+
+
+def _consulta_comparativa_enriquecida(consulta):
+    """Agrega vocabulario de aceptación sin cambiar el riesgo consultado.
+
+    Las fichas suelen hablar de 'antigüedad', 'sin excepción de año', 'admisión' o
+    'vehículos aceptados', mientras el usuario dice simplemente 'auto 56'.
+    """
+    texto = str(consulta or "").strip()
+    norm = _normalizar_texto(texto)
+    extras = ["acepta", "toma", "emision", "asegurable", "condiciones"]
+    if any(x in norm for x in ("auto", "automovil", "vehiculo", "moto", "pickup", "pick up")):
+        extras.extend(["ano", "modelo", "antiguedad", "sin excepcion de ano"])
+    return f"{texto} {' '.join(extras)}".strip()
+
+
+def _consulta_comparativa_con_historial(pregunta, historial=None):
+    """Completa follow-ups breves usando el último riesgo comparativo del historial.
+
+    Ej.: después de "tengo un auto 56, ¿dónde lo aseguro?", una pregunta
+    "¿otras alternativas?" conserva automáticamente "auto 56" como riesgo.
+    """
+    pregunta = str(pregunta or "").strip()
+    historial = historial or []
+    norm = _normalizar_texto(pregunta)
+
+    followups = (
+        "otras alternativas", "otra alternativa", "alguna otra", "algunas otras",
+        "que otra", "que otras", "otra opcion", "otras opciones", "y alguna mas",
+        "alguna mas", "y agrosalta", "y atm", "y mercantil", "y federacion",
+    )
+    es_followup = any(frase in norm for frase in followups)
+    if not es_followup:
+        return pregunta
+
+    # Buscamos hacia atrás el último mensaje del usuario con intención de colocación
+    # o con un riesgo vehicular concreto.
+    for turno in reversed(historial[-12:]):
+        if turno.get("rol") != "user":
+            continue
+        anterior = str(turno.get("contenido") or "").strip()
+        if not anterior:
+            continue
+        anterior_norm = _normalizar_texto(anterior)
+        if (
+            _es_consulta_comparativa_companias(anterior)
+            or re.search(r"\b(auto|automovil|vehiculo|moto|pickup|pick up|camioneta)\b", anterior_norm)
+        ):
+            return f"{anterior}\nSEGUIMIENTO DEL USUARIO: {pregunta}"
+
+    return pregunta
+
+
+def _extraer_anio_vehiculo(consulta):
+    """Extrae un año/modelo vehicular razonable para validaciones de antigüedad."""
+    texto = _normalizar_texto(consulta)
+    hoy = datetime.now().year
+
+    # Primero años explícitos de 4 dígitos.
+    candidatos = [int(x) for x in re.findall(r"\b(19\d{2}|20\d{2})\b", texto)]
+    candidatos = [x for x in candidatos if 1900 <= x <= hoy]
+    if candidatos:
+        return candidatos[-1]
+
+    # Luego abreviaturas típicas de oficina: "auto 56", "moto 94", "modelo 05".
+    m = re.search(
+        r"\b(?:auto|automovil|vehiculo|moto|pickup|pick up|camioneta|modelo)\s+(?:modelo\s+)?['’]?(\d{2})\b",
+        texto,
+    )
+    if not m:
+        return None
+
+    corto = int(m.group(1))
+    corte = hoy % 100
+    anio = 2000 + corto if corto <= corte else 1900 + corto
+    return anio if 1900 <= anio <= hoy else None
+
+
+def _limites_antiguedad_en_texto(texto):
+    """Devuelve límites máximos de antigüedad expresados de forma inequívoca."""
+    norm = _normalizar_texto(texto)
+    patrones = (
+        r"(?:hasta|maximo|maxima|antiguedad maxima|limite de antiguedad|no mayor a|no superior a)\s*(?:de\s*)?(\d{1,3})\s*anos",
+        r"(\d{1,3})\s*anos\s*(?:de antiguedad\s*)?(?:maximo|maxima|como maximo)",
+    )
+    valores = []
+    for pat in patrones:
+        for n in re.findall(pat, norm):
+            try:
+                valores.append(int(n))
+            except Exception:
+                pass
+    return [n for n in valores if 0 < n < 150]
+
+
+def _evaluar_evidencia_por_antiguedad(consulta, evidencia):
+    """Valida compatibilidad temporal cuando la evidencia contiene un límite claro.
+
+    No intenta decidir reglas comerciales complejas: sólo evita contradicciones
+    matemáticas como recomendar un vehículo de 70 años donde el máximo es 30.
+    """
+    anio = _extraer_anio_vehiculo(consulta)
+    if not anio:
+        return {
+            "anio_vehiculo": None,
+            "antiguedad_aprox": None,
+            "estado": "SIN_VALIDACION_NUMERICA",
+            "detalle": "",
+        }
+
+    hoy = datetime.now().year
+    antiguedad = hoy - anio
+    contenido = "\n".join(str(x.get("contenido") or "") for x in evidencia)
+    norm = _normalizar_texto(contenido)
+
+    frases_sin_limite = (
+        "sin excepcion de ano", "sin excepcion del ano", "sin limite de antiguedad",
+        "sin limite de ano", "cualquier ano", "todos los anos",
+    )
+    if any(frase in norm for frase in frases_sin_limite):
+        return {
+            "anio_vehiculo": anio,
+            "antiguedad_aprox": antiguedad,
+            "estado": "COMPATIBLE_POR_ANTIGUEDAD",
+            "detalle": f"El vehículo modelo {anio} tiene aproximadamente {antiguedad} años y la evidencia indica que no hay límite/excepción de año.",
+        }
+
+    limites = _limites_antiguedad_en_texto(contenido)
+    if limites:
+        limite = min(limites)
+        if antiguedad > limite:
+            return {
+                "anio_vehiculo": anio,
+                "antiguedad_aprox": antiguedad,
+                "estado": "NO_COMPATIBLE_POR_ANTIGUEDAD",
+                "limite_detectado": limite,
+                "detalle": f"El vehículo modelo {anio} tiene aproximadamente {antiguedad} años, que supera el máximo detectado de {limite} años.",
+            }
+        return {
+            "anio_vehiculo": anio,
+            "antiguedad_aprox": antiguedad,
+            "estado": "COMPATIBLE_POR_LIMITE_DE_ANTIGUEDAD",
+            "limite_detectado": limite,
+            "detalle": f"El vehículo modelo {anio} tiene aproximadamente {antiguedad} años y no supera el máximo detectado de {limite} años.",
+        }
+
+    return {
+        "anio_vehiculo": anio,
+        "antiguedad_aprox": antiguedad,
+        "estado": "SIN_VALIDACION_NUMERICA",
+        "detalle": f"Modelo {anio}: antigüedad aproximada {antiguedad} años. La evidencia recuperada no contiene un límite inequívoco de antigüedad.",
+    }
+
+
+def comparar_companias(consulta):
+    """Recuperación transversal determinística sobre metadatos internos.
+
+    Devuelve evidencia separada por compañía. Una compañía sin evidencia queda como
+    'sin evidencia' y jamás como 'no acepta'. Esto permite que Gemini sintetice una
+    comparación fiable sin confundir ausencia documental con rechazo comercial.
+    """
+    try:
+        fichas = _cargar_metadatos()
+    except Exception as error:
+        print("ERROR comparar_companias al cargar metadatos:", error)
+        return {
+            "cantidad": 0,
+            "companias_con_evidencia": 0,
+            "companias": [],
+            "fuente": "Metadatos internos",
+            "error": "No se pudieron cargar los metadatos.",
+        }
+
+    consulta_busqueda = _consulta_comparativa_enriquecida(consulta)
+    grupos_alias = _aliases_por_compania_visible()
+    salida = []
+
+    for compania in _COMPANIAS_COMPARABLES:
+        alias_norm = grupos_alias.get(compania, {_normalizar_texto(compania)})
+        candidatos = []
+        for ficha in fichas:
+            titulo = str(ficha.get("titulo") or "")
+            contenido_total = str(ficha.get("contenido") or "")
+            texto_ficha_norm = _normalizar_texto(f"{titulo}\n{contenido_total}")
+
+            # La ficha debe pertenecer razonablemente a la compañía actual.
+            # Esto evita atribuir a ATM una condición que en realidad pertenecía a AGS.
+            if not _texto_menciona_compania(texto_ficha_norm, alias_norm):
+                continue
+
+            for fragmento in _chunks_metadato(contenido_total):
+                score = _puntuar_metadato(
+                    f"{compania} {consulta_busqueda}",
+                    f"{titulo}\n{fragmento}",
+                )
+                if score <= 0:
+                    continue
+                candidatos.append({
+                    "id": ficha.get("id"),
+                    "titulo": titulo,
+                    "contenido": fragmento,
+                    "puntuacion": score,
+                    "actualizado_en": ficha.get("actualizado_en"),
+                })
+
+        candidatos.sort(key=lambda x: x["puntuacion"], reverse=True)
+        evidencia = candidatos[:3]
+        validacion = _evaluar_evidencia_por_antiguedad(consulta, evidencia) if evidencia else {
+            "anio_vehiculo": _extraer_anio_vehiculo(consulta),
+            "antiguedad_aprox": (
+                datetime.now().year - _extraer_anio_vehiculo(consulta)
+                if _extraer_anio_vehiculo(consulta) else None
+            ),
+            "estado": "SIN_EVIDENCIA",
+            "detalle": "No hay evidencia interna suficiente para validar esta compañía.",
+        }
+        salida.append({
+            "compania": compania,
+            "tiene_evidencia": bool(evidencia),
+            "validacion": validacion,
+            "evidencia": evidencia,
+        })
+
+    con_evidencia = sum(1 for item in salida if item["tiene_evidencia"])
+    print(
+        f"COMPARACION COMPANIAS: consulta={consulta!r} "
+        f"companias={len(salida)} con_evidencia={con_evidencia}"
+    )
+    return {
+        "cantidad": con_evidencia,
+        "companias_con_evidencia": con_evidencia,
+        "companias_evaluadas": len(salida),
+        "companias": salida,
+        "fuente": "Metadatos internos por compañía",
+        "regla": (
+            "Sin evidencia significa información no confirmada; no significa que la compañía rechace el riesgo."
+        ),
+    }
+
+
+def _formatear_contexto_comparativo(resultado):
+    if not isinstance(resultado, dict):
+        return ""
+    lineas = [
+        "CONSULTA TRANSVERSAL ENTRE COMPAÑÍAS (fuente: metadatos internos):",
+        "Regla: 'sin evidencia' NO significa 'no acepta'; sólo significa que no está confirmado con las fichas disponibles.",
+    ]
+    sin_evidencia = []
+    for item in resultado.get("companias", []):
+        compania = item.get("compania", "")
+        evidencia = item.get("evidencia") or []
+        if not evidencia:
+            sin_evidencia.append(compania)
+            continue
+        lineas.append(f"\n{compania}:")
+        validacion = item.get("validacion") or {}
+        if validacion.get("estado"):
+            detalle_validacion = str(validacion.get("detalle") or "").strip()
+            lineas.append(
+                f"- VALIDACION: {validacion.get('estado')}"
+                + (f" — {detalle_validacion}" if detalle_validacion else "")
+            )
+        for ev in evidencia[:2]:
+            titulo = str(ev.get("titulo") or "").strip()
+            contenido = str(ev.get("contenido") or "").strip()
+            if len(contenido) > 900:
+                contenido = contenido[:900].rsplit(" ", 1)[0] + "…"
+            lineas.append(f"- {titulo}: {contenido}" if titulo else f"- {contenido}")
+    if sin_evidencia:
+        lineas.append("\nSin evidencia suficiente en metadatos para: " + ", ".join(sin_evidencia) + ".")
+    return "\n".join(lineas)
+
+
 def _buscar_vehiculos_filtrados(datos, compania=None, tipo=None, cliente=None):
     filas = list(datos)
     if compania:
@@ -1079,6 +1430,7 @@ _TOOL_HANDLERS = {
     "contar_registros": contar_registros,
     "buscar_en_manuales": buscar_en_manuales,
     "buscar_en_metadatos": buscar_en_metadatos,
+    "comparar_companias": comparar_companias,
     "proponer_registro_excel": proponer_registro_excel,
     "guardar_metadato_relevante": guardar_metadato_relevante,
     "buscar_vehiculos": buscar_vehiculos,
@@ -1094,6 +1446,7 @@ def _ejecutar_tool(nombre, argumentos):
     herramientas_busqueda = {
         "buscar_en_manuales",
         "buscar_en_metadatos",
+        "comparar_companias",
         "consultar_excel",
         "buscar_vehiculos",
         "buscar_en_internet",
@@ -1170,6 +1523,19 @@ def consultar_gemini(pregunta, contexto="", historial=None):
         if str(turno.get('contenido', '')).strip()
     ) or "Sin historial relevante."
 
+    contexto_comparativo = ""
+    pregunta_comparativa = _consulta_comparativa_con_historial(pregunta, historial)
+    if (
+        _es_consulta_comparativa_companias(pregunta_comparativa)
+        or pregunta_comparativa != str(pregunta or "").strip()
+    ):
+        try:
+            resultado_comparativo = comparar_companias(pregunta_comparativa)
+            contexto_comparativo = _formatear_contexto_comparativo(resultado_comparativo)
+        except Exception as error:
+            print("ERROR PRECONTEXTO COMPARATIVO:", error)
+            contexto_comparativo = ""
+
     fecha_hoy = datetime.now().strftime("%d/%m/%Y")
     prompt = f"""
 Sos el asistente interno de OficinaIA, una oficina de seguros de Argentina.
@@ -1177,9 +1543,23 @@ Respondé la pregunta completa y no inventes datos.
 FECHA ACTUAL DEL SISTEMA: {fecha_hoy}
 
 REGLAS:
+- Si el usuario saluda, agradece, comenta algo, escribe una frase coloquial o simplemente sigue una conversación, respondé de forma natural usando el historial. No fuerces una herramienta ni un flujo estructurado si no hace falta.
+- Si la pregunta es contextual o incompleta pero el historial permite entenderla razonablemente, continuá desde ese contexto.
+- Si falta un dato concreto para poder hacer lo pedido, pedí solamente ese dato.
+- Si ni con el historial se puede determinar razonablemente qué quiere el usuario, respondé exactamente: "Reformulame la pregunta."
+- Una entrada poco clara nunca es motivo para inventar datos ni para forzar una operación de Excel, PDF, flota o metadatos.
 - OficinaIA puede haber recuperado METADATOS INTERNOS PRIORITARIOS antes de esta llamada. Si aparecen dentro del contexto, utilizalos directamente como fuente prioritaria; no afirmes que el dato no está disponible si está allí.
 - Si el contexto ya contiene metadatos suficientes para responder, no vuelvas a llamar buscar_en_metadatos() innecesariamente. Podés usarla nuevamente únicamente si necesitás información adicional o una búsqueda más específica.
 - Elegí las herramientas necesarias según el significado de la pregunta.
+- CONSULTAS TRANSVERSALES / COLOCACIÓN: si el usuario pregunta "¿en qué compañía puedo emitir...?", "¿quién toma...?", "¿qué compañía acepta...?", "¿dónde puedo asegurar...?" o pide comparar compañías, NO busques una sola compañía. Usá el CONTEXTO COMPARATIVO ya recuperado si está presente y, si necesitás ampliar, llamá comparar_companias.
+- En comparaciones, clasificá la evidencia con tres estados conceptuales: COMPATIBLE CONFIRMADO, NO COMPATIBLE CONFIRMADO y SIN INFORMACIÓN SUFICIENTE. Jamás conviertas "no encontré información" en "no lo toma".
+- Si existe al menos una compañía con compatibilidad confirmada, respondé con esa opción aunque no puedas confirmar las demás. Ejemplo: si AgroSalta está respaldada por una ficha que dice "sin excepción de año", no respondas "no pude completar" sólo porque otras compañías no tengan ficha equivalente.
+- Para frases abreviadas de oficina como "auto 56", interpretá el número como año/modelo del vehículo cuando el contexto lo haga razonable (por ejemplo, 1956). Si hubiera una ambigüedad real, indicá brevemente la interpretación usada en vez de bloquear la consulta.
+- VALIDACIÓN DE RESTRICCIONES: antes de recomendar una compañía, verificá que TODAS las restricciones numéricas recuperadas sean compatibles con el riesgo concreto. Si el vehículo es modelo 1956 y la fecha actual es 2026, tiene aproximadamente 70 años. Una ficha que diga "máximo 30 años" DESCARTA esa alternativa: nunca la presentes como opción.
+- Si el CONTEXTO COMPARATIVO incluye validacion.estado="NO_COMPATIBLE_POR_ANTIGUEDAD", esa compañía NO puede recomendarse para ese vehículo salvo que exista otra evidencia explícita y más específica que contradiga el límite general; si hay contradicción, marcala como REVISAR/confirmar y no inventes.
+- Si validacion.estado indica compatibilidad por antigüedad, eso sólo valida el requisito temporal: todavía respetá cualquier otra condición de la evidencia (uso, inspección, club de clásicos, cobertura, tipo de vehículo, etc.).
+- CONTINUIDAD: expresiones como "otras alternativas", "alguna otra", "¿y AgroSalta?" o "¿qué otra?" continúan el mismo riesgo de la pregunta anterior. No pierdas año/modelo/uso/cobertura ya establecidos y no reinicies la búsqueda como si fuera una consulta nueva.
+- En un seguimiento de "otras alternativas", evitá repetir como nuevas opciones las compañías ya mencionadas salvo que necesites corregir una respuesta anterior.
 - FUENTE PRINCIPAL Y AUTOSUFICIENTE: buscar_en_metadatos (fichas cargadas a
   mano). Para coberturas, asistencia, remolque, grúas, límites, condiciones,
   procedimientos y datos de compañías, buscá primero ahí y, si hay resultado
@@ -1189,7 +1569,9 @@ REGLAS:
   EXCEPCIONAL: implica descargar y procesar archivos grandes. Usala ÚNICAMENTE
   cuando el usuario pida explícitamente un manual, documento o PDF por nombre,
   o cuando metadatos haya dado 0 resultados Y el usuario insista en que la
-  información debería existir. Nunca la uses como paso automático de rutina.
+  información debería existir. EXCEPCIÓN: en una consulta transversal de colocación/comparación,
+  si el contexto comparativo no alcanza, podés hacer UNA búsqueda genérica en manuales para ampliar
+  la evidencia; no descargues manual por manual de todas las compañías.
 - Si metadatos da 0 resultados en un tema puntual, está bien responder que no
   tenés esa ficha cargada y sugerir cargarla (guardar_metadato_relevante),
   en lugar de encadenar automáticamente una búsqueda en PDFs.
@@ -1197,6 +1579,7 @@ REGLAS:
   probá una reformulación de la MISMA búsqueda en metadatos (sinónimos:
   remolque/grúa/asistencia/auxilio/traslado, singular/plural) antes de descartar.
 - REGLA CRÍTICA DE EXACTITUD NUMÉRICA: cualquier cantidad, total, suma, promedio o porcentaje sobre datos internos debe provenir literalmente del resultado de una herramienta determinística. Nunca lo estimes, redondees, extrapoles ni lo calcules mirando filas visibles.
+- ARITMÉTICA DE CONDICIONES: para validar años, edades, antigüedades y límites de aceptación, compará explícitamente los valores antes de concluir. No recomiendes una opción que contradiga matemáticamente el límite recuperado.
 - Para TODO conteo del Excel interno usá contar_registros. consultar_excel devuelve una muestra para inspección y NUNCA es una fuente válida para contar. No cuentes visualmente registros, previews ni resultados truncados.
 - Desambiguación importante: "¿cuántos remolques/trailers tiene ATM?" o "¿cuántos tenemos asegurados?" significa contar vehículos/registros del Excel; usá contar_registros. En cambio, "¿cuántos servicios de remolque/grúa cubre ATM?" es una consulta de cobertura y va a metadatos. Mirá palabras como "tenemos", "asegurados", "vehículos" versus "cubre", "asistencia", "servicios".
 - En contar_registros usá tipo_conteo="unicos" sólo para personas/asegurados únicos. Para pólizas, vehículos, remolques, trailers y registros usá tipo_conteo="filas".
@@ -1247,6 +1630,9 @@ REGLAS:
 HISTORIAL:
 {historial_texto}
 
+CONTEXTO COMPARATIVO AUTOMÁTICO:
+{contexto_comparativo or 'No aplica a esta consulta o no hubo evidencia transversal previa.'}
+
 CONTEXTO DOCUMENTAL YA DISPONIBLE:
 {contexto or 'No hay contexto documental previo.'}
 
@@ -1270,6 +1656,7 @@ PREGUNTA:
     # antes de responder "no tengo esa información".
     herramientas_busqueda = {
         "buscar_en_metadatos",
+        "comparar_companias",
         "consultar_excel",
         "buscar_vehiculos",
     }

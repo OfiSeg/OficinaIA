@@ -5,115 +5,95 @@
 <div class="page settings-page">
   <header class="top clean-page-head"><h1>Configuración</h1></header>
 
-  <div class="settings-layout">
+  {% if usuario_es_admin %}
+  <div class="settings-shell">
     <nav class="settings-nav" aria-label="Secciones de configuración">
-      <button class="active" data-settings-tab="apariencia">Apariencia</button>
-      {% if usuario_es_admin %}
-      <button data-settings-tab="general">General</button>
+      <button class="active" data-settings-tab="general">General</button>
       <button data-settings-tab="herramientas">Herramientas</button>
+      <button data-settings-tab="companias">Compañías</button>
       <button data-settings-tab="usuarios">Usuarios</button>
-      {% endif %}
     </nav>
 
     <div class="settings-content">
-      <section class="settings-section active" data-settings-panel="apariencia">
-        <h2>Apariencia</h2>
-        <div class="settings-card">
-          <div class="setting-row">
-            <label for="themeSelect"><b>Tema</b></label>
-            <select id="themeSelect"><option value="light">Claro</option><option value="dark">Oscuro</option></select>
-          </div>
-          <div class="setting-row range-row">
-            <label for="fontGeneral"><b>Tamaño general</b><output id="fontGeneralOut"></output></label>
-            <input id="fontGeneral" type="range" min="12" max="18" step="1">
-          </div>
-          <div class="setting-row range-row">
-            <label for="fontSidebar"><b>Menú lateral</b><output id="fontSidebarOut"></output></label>
-            <input id="fontSidebar" type="range" min="12" max="17" step="1">
-          </div>
-          <div class="setting-row range-row">
-            <label for="fontChat"><b>Chat</b><output id="fontChatOut"></output></label>
-            <input id="fontChat" type="range" min="13" max="20" step="1">
-          </div>
-          <button class="primary settings-save" type="button" id="saveAppearance">Guardar</button>
-          <span class="save-state" id="appearanceState"></span>
+      <section class="settings-section active" data-settings-panel="general">
+        <div class="settings-section-head">
+          <div><h2>General</h2><p>Preferencias generales de OficinaIA.</p></div>
         </div>
-      </section>
-
-      {% if usuario_es_admin %}
-      <section class="settings-section" data-settings-panel="general">
-        <h2>General</h2>
-        <div class="settings-card">
-          <div class="setting-row field-row"><label for="nombreOficina"><b>Nombre</b></label><input id="nombreOficina" value="{{config.nombre_oficina}}"></div>
-          <div class="setting-row"><span><b>Notificaciones</b></span><label class="switch"><input id="notificaciones" type="checkbox" {% if config.notificaciones %}checked{% endif %}><span></span></label></div>
-          <div class="setting-row"><span><b>Excel</b></span><label class="switch"><input id="excelVisible" type="checkbox" {% if config.excel_visible %}checked{% endif %}><span></span></label></div>
-          <button class="primary settings-save" type="button" onclick="guardarConfiguracion()">Guardar</button>
-          <span class="save-state" id="estadoConfig"></span>
+        <div class="settings-card settings-card-spaced">
+          <div class="setting-row field-row"><label for="nombreOficina"><b>Nombre de la oficina</b><small>Se muestra en la barra lateral y en el título.</small></label><input id="nombreOficina" value="{{config.nombre_oficina}}"></div>
+          <div class="setting-row"><span><b>Mostrar Excel</b><small>Hace visible el acceso al Excel interno.</small></span><label class="switch"><input id="excelVisible" type="checkbox" {% if config.excel_visible %}checked{% endif %}><span></span></label></div>
+          <div class="setting-row"><span><b>Mostrar “¿Sabías que...?”</b><small>Activa o desactiva los consejos breves del chat.</small></span><label class="switch"><input id="tipsVisibles" type="checkbox" {% if config.tips_visibles %}checked{% endif %}><span></span></label></div>
         </div>
+        <div class="settings-footer"><button class="primary settings-save" type="button" onclick="guardarConfiguracion()">Guardar cambios</button><span class="save-state" id="estadoConfig"></span></div>
       </section>
 
       <section class="settings-section" data-settings-panel="herramientas">
-        <div class="settings-title-row"><h2>Herramientas</h2><button type="button" class="secondary compact" id="addTool">{{ icon('plus') }} Agregar</button></div>
+        <div class="settings-section-head settings-title-row"><div><h2>Herramientas</h2><p>Accesos rápidos visibles al pie de la barra lateral.</p></div><button type="button" class="secondary compact" id="addTool">{{ icon('plus') }} Agregar</button></div>
         <div class="tools-editor" id="toolsEditor"></div>
-        <button class="primary settings-save" type="button" onclick="guardarConfiguracion()">Guardar</button>
-        <span class="save-state" id="estadoHerramientas"></span>
+        <div class="settings-footer"><button class="primary settings-save" type="button" onclick="guardarConfiguracion()">Guardar cambios</button><span class="save-state" id="estadoHerramientas"></span></div>
+      </section>
+
+      <section class="settings-section" data-settings-panel="companias">
+        <div class="settings-section-head settings-title-row"><div><h2>Compañías</h2><p>Enlaces que aparecen dentro del acceso Compañías.</p></div><button type="button" class="secondary compact" id="addCompany">{{ icon('plus') }} Agregar</button></div>
+        <div class="tools-editor" id="companiesEditor"></div>
+        <div class="settings-footer"><button class="primary settings-save" type="button" onclick="guardarConfiguracion()">Guardar cambios</button><span class="save-state" id="estadoCompanias"></span></div>
       </section>
 
       <section class="settings-section" data-settings-panel="usuarios">
-        <div class="settings-title-row"><h2>Usuarios</h2><button class="primary compact" type="button" onclick="abrirUsuarioModal()">{{ icon('plus') }} Nuevo usuario</button></div>
-        <div class="settings-card users-card">
-          <div class="table-wrap"><table><thead><tr><th>Usuario</th><th>Rol</th><th>Correo</th><th></th></tr></thead><tbody>
-          {% for u in usuarios %}<tr data-user-id="{{u.id}}"><td><b>{{u.usuario}}</b>{% if u.protegido %}<em>Principal</em>{% endif %}</td><td>{{'Administrador' if u.rol=='admin' else 'Usuario'}}</td><td>{{u.email or '—'}}</td><td class="row-actions"><button onclick='editarUsuario({{u.id}},{{u.usuario|tojson}},{{u.email|tojson}},{{u.rol|tojson}},{{"true" if u.protegido else "false"}})'>Editar</button>{% if not u.protegido %}<button class="danger" onclick='eliminarUsuario({{u.id}},{{u.usuario|tojson}})'>Eliminar</button>{% endif %}</td></tr>{% endfor %}
-          </tbody></table></div>
+        <div class="settings-section-head settings-title-row"><div><h2>Usuarios</h2><p>Administrá accesos y permisos sin exponer acciones destructivas todo el tiempo.</p></div><button class="primary compact" type="button" onclick="abrirUsuarioModal()">{{ icon('plus') }} Nuevo usuario</button></div>
+        <div class="users-list" id="usersList">
+          {% for u in usuarios %}
+          <article class="user-row" data-user-id="{{u.id}}">
+            <div class="user-avatar" aria-hidden="true">{{u.usuario[0]|upper}}</div>
+            <div class="user-main">
+              <div class="user-name-line"><b>{{u.usuario}}</b>{% if u.protegido %}<span class="user-principal">Principal</span>{% endif %}</div>
+              <small>{{u.email or 'Sin correo'}}</small>
+            </div>
+            <span class="user-role">{{'Administrador' if u.rol=='admin' else 'Usuario'}}</span>
+            <button class="secondary compact user-edit" type="button" onclick='editarUsuario({{u.id}},{{u.usuario|tojson}},{{u.email|tojson}},{{u.rol|tojson}},{{"true" if u.protegido else "false"}})'>Editar</button>
+            {% if not u.protegido %}
+            <details class="user-more">
+              <summary aria-label="Más acciones" title="Más acciones">•••</summary>
+              <div class="user-menu-pop"><button type="button" class="danger-text" onclick='eliminarUsuario({{u.id}},{{u.usuario|tojson}})'>Eliminar usuario</button></div>
+            </details>
+            {% else %}<span class="user-more-spacer"></span>{% endif %}
+          </article>
+          {% else %}
+          <div class="settings-empty">No hay usuarios para mostrar.</div>
+          {% endfor %}
         </div>
       </section>
-      {% endif %}
     </div>
   </div>
+  {% else %}
+  <div class="settings-shell settings-shell-single">
+    <div class="settings-content">
+      <section class="settings-section active">
+        <div class="settings-section-head"><div><h2>Cuenta</h2><p>La configuración general solo puede modificarla un administrador.</p></div></div>
+        <div class="settings-card settings-card-spaced"><div class="setting-row"><span><b>{{usuario}}</b><small>Usuario de OficinaIA</small></span><span class="user-role">Usuario</span></div></div>
+      </section>
+    </div>
+  </div>
+  {% endif %}
 </div>
 {% endblock %}
 
 {% block scripts %}
+{% if usuario_es_admin %}
 <script>
 (() => {
-  const root = document.documentElement;
   document.querySelectorAll('[data-settings-tab]').forEach(btn => btn.addEventListener('click', () => {
     document.querySelectorAll('[data-settings-tab]').forEach(x => x.classList.toggle('active', x === btn));
     document.querySelectorAll('[data-settings-panel]').forEach(x => x.classList.toggle('active', x.dataset.settingsPanel === btn.dataset.settingsTab));
   }));
 
-  const theme = document.getElementById('themeSelect');
-  const general = document.getElementById('fontGeneral');
-  const side = document.getElementById('fontSidebar');
-  const chat = document.getElementById('fontChat');
-  const generalOut = document.getElementById('fontGeneralOut');
-  const sideOut = document.getElementById('fontSidebarOut');
-  const chatOut = document.getElementById('fontChatOut');
-  theme.value = root.getAttribute('data-theme') || 'light';
-  general.value = localStorage.getItem('oficinaia_font_general_px') || '14';
-  side.value = localStorage.getItem('oficinaia_font_sidebar_px') || '14';
-  chat.value = localStorage.getItem('oficinaia_font_chat_px') || '15';
-  const preview = () => {
-    generalOut.value = general.value + ' px'; sideOut.value = side.value + ' px'; chatOut.value = chat.value + ' px';
-    root.style.setProperty('--ui-font-size', general.value + 'px');
-    root.style.setProperty('--sidebar-font-size', side.value + 'px');
-    root.style.setProperty('--chat-font-size', chat.value + 'px');
-    root.setAttribute('data-theme', theme.value);
-  };
-  [theme,general,side,chat].forEach(el => el.addEventListener('input', preview)); preview();
-  document.getElementById('saveAppearance').addEventListener('click', () => {
-    localStorage.setItem('oficinaia_theme', theme.value);
-    localStorage.setItem('oficinaia_font_general_px', general.value);
-    localStorage.setItem('oficinaia_font_sidebar_px', side.value);
-    localStorage.setItem('oficinaia_font_chat_px', chat.value);
-    const state=document.getElementById('appearanceState'); state.textContent='Guardado'; setTimeout(()=>state.textContent='',1800);
-  });
-
-  {% if usuario_es_admin %}
   let tools = {{ (config.herramientas or [])|tojson }};
+  let companies = {{ (config.companias or [])|tojson }};
   const editor = document.getElementById('toolsEditor');
+  const companiesEditor = document.getElementById('companiesEditor');
   const esc = s => String(s ?? '').replace(/[&<>'"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;',"'":'&#39;','"':'&quot;'}[c]));
   const favicon = url => 'https://www.google.com/s2/favicons?sz=64&domain_url=' + encodeURIComponent(url || 'https://example.com');
+
   function renderTools(){
     if(!tools.length){editor.innerHTML='<div class="settings-empty">No hay herramientas.</div>'; return;}
     editor.innerHTML=tools.map((t,i)=>`<div class="tool-editor-row" data-index="${i}">
@@ -132,8 +112,27 @@
   document.getElementById('addTool').onclick=()=>{tools.push({id:'herramienta-'+Date.now(),nombre:'',url:'',visible:true});renderTools(); const rows=editor.querySelectorAll('.tool-editor-row'); rows[rows.length-1]?.querySelector('.tool-name')?.focus();};
   renderTools();
 
+  function renderCompanies(){
+    if(!companies.length){companiesEditor.innerHTML='<div class="settings-empty">No hay compañías.</div>'; return;}
+    companiesEditor.innerHTML=companies.map((c,i)=>`<div class="tool-editor-row" data-index="${i}">
+      <img class="tool-favicon" src="${favicon(c.url)}" alt="">
+      <input class="tool-name company-name" value="${esc(c.nombre)}" aria-label="Nombre" placeholder="Nombre">
+      <input class="tool-url company-url" type="url" value="${esc(c.url)}" aria-label="URL" placeholder="https://...">
+      <label class="switch" title="Mostrar"><input class="company-visible" type="checkbox" ${c.visible!==false?'checked':''}><span></span></label>
+      <button type="button" class="icon-button company-remove" title="Eliminar" aria-label="Eliminar">{{ icon('trash') }}</button>
+    </div>`).join('');
+    companiesEditor.querySelectorAll('.tool-editor-row').forEach(row=>{
+      const i=Number(row.dataset.index), url=row.querySelector('.company-url'), img=row.querySelector('.tool-favicon');
+      url.addEventListener('change',()=>img.src=favicon(url.value.trim()));
+      row.querySelector('.company-remove').onclick=()=>{companies.splice(i,1);renderCompanies()};
+    });
+  }
+  document.getElementById('addCompany').onclick=()=>{companies.push({id:'compania-'+Date.now(),nombre:'',url:'',visible:true});renderCompanies(); const rows=companiesEditor.querySelectorAll('.tool-editor-row'); rows[rows.length-1]?.querySelector('.company-name')?.focus();};
+  renderCompanies();
+
   window.guardarConfiguracion = async function(){
-    const e=document.querySelector('[data-settings-panel="herramientas"].active')?document.getElementById('estadoHerramientas'):document.getElementById('estadoConfig');
+    const active = document.querySelector('[data-settings-panel].active')?.dataset.settingsPanel;
+    const e = active==='herramientas' ? document.getElementById('estadoHerramientas') : (active==='companias' ? document.getElementById('estadoCompanias') : document.getElementById('estadoConfig'));
     if(e)e.textContent='Guardando...';
     tools=[...editor.querySelectorAll('.tool-editor-row')].map((row,i)=>({
       id: tools[i]?.id || 'herramienta-'+Date.now()+'-'+i,
@@ -141,27 +140,36 @@
       url: row.querySelector('.tool-url').value.trim(),
       visible: row.querySelector('.tool-visible').checked
     })).filter(t=>t.nombre||t.url);
+    companies=[...companiesEditor.querySelectorAll('.tool-editor-row')].map((row,i)=>({
+      id: companies[i]?.id || 'compania-'+Date.now()+'-'+i,
+      nombre: row.querySelector('.company-name').value.trim(),
+      url: row.querySelector('.company-url').value.trim(),
+      visible: row.querySelector('.company-visible').checked
+    })).filter(c=>c.nombre||c.url);
     const payload={
       nombre_oficina:document.getElementById('nombreOficina').value.trim(),
-      notificaciones:document.getElementById('notificaciones').checked,
       excel_visible:document.getElementById('excelVisible').checked,
+      tips_visibles:document.getElementById('tipsVisibles').checked,
       herramientas:tools,
+      companias:companies,
       color_principal:'#122033',color_acento:'#0D8B7C',color_fondo:'#F7F9FB',color_sidebar:'#FFFFFF',color_botones:'#122033'
     };
     try{
       const r=await fetch('/api/configuracion',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)});
       const d=await r.json(); if(!r.ok||!d.ok){if(e)e.textContent=d.error||'No se pudo guardar';return}
-      tools=d.config.herramientas||tools; renderTools(); document.querySelectorAll('[data-app-name]').forEach(x=>x.textContent=d.config.nombre_oficina); if(e)e.textContent='Guardado'; setTimeout(()=>{if(e)e.textContent=''},1800);
+      tools=d.config.herramientas||tools; companies=d.config.companias||companies; renderTools(); renderCompanies(); document.querySelectorAll('[data-app-name]').forEach(x=>x.textContent=d.config.nombre_oficina); if(e)e.textContent='Guardado'; setTimeout(()=>{if(e)e.textContent=''},1800);
     }catch(_){if(e)e.textContent='No se pudo guardar'}
   };
 
   const modal=document.createElement('div');modal.className='modal';modal.hidden=true;modal.innerHTML=`<div><button class="modal-close" onclick="cerrarUsuarioModal()">×</button><h2 id="mt">Nuevo usuario</h2><form id="uf"><input type="hidden" id="uid"><label>Usuario<input id="nu" required></label><label>Contraseña<input id="np" type="password"></label><label>Confirmar contraseña<input id="cp" type="password"></label><label>Correo<input id="ne" type="email"></label><label>Rol<select id="nr"><option value="usuario">Usuario</option><option value="admin">Administrador</option></select></label><p id="ue"></p><button class="primary">Guardar</button></form></div>`;document.body.appendChild(modal);
+  const uf=document.getElementById('uf'),uid=document.getElementById('uid'),mt=document.getElementById('mt'),nu=document.getElementById('nu'),np=document.getElementById('np'),cp=document.getElementById('cp'),ne=document.getElementById('ne'),nr=document.getElementById('nr'),ue=document.getElementById('ue');
   window.abrirUsuarioModal=()=>{uf.reset();uid.value='';mt.textContent='Nuevo usuario';nu.disabled=false;nr.disabled=false;modal.hidden=false};
   window.cerrarUsuarioModal=()=>modal.hidden=true;
   window.editarUsuario=(id,u,e,r,p)=>{uf.reset();uid.value=id;mt.textContent='Editar usuario';nu.value=u;nu.disabled=true;ne.value=e;nr.value=r;nr.disabled=p;modal.hidden=false};
   uf.onsubmit=async ev=>{ev.preventDefault();ue.textContent='';if(!uid.value&&!np.value)return ue.textContent='La contraseña es obligatoria.';if(np.value&&np.value!==cp.value)return ue.textContent='Las contraseñas no coinciden.';const id=uid.value,payload={usuario:nu.value.trim(),password:np.value,email:ne.value.trim(),rol:nr.value};const r=await fetch(id?'/api/usuarios/'+id:'/api/usuarios',{method:id?'PUT':'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)});const d=await r.json();if(!r.ok)return ue.textContent=d.error||'No se pudo guardar.';location.reload()};
-  window.eliminarUsuario=async(id,nombre)=>{if(!confirm('¿Eliminar '+nombre+'?'))return;const r=await fetch('/api/usuarios/'+id,{method:'DELETE'});const d=await r.json();if(!r.ok)return alert(d.error||'No se pudo eliminar.');document.querySelector(`tr[data-user-id="${id}"]`)?.remove()};
-  {% endif %}
+  window.eliminarUsuario=async(id,nombre)=>{if(!confirm('¿Eliminar '+nombre+'?'))return;const r=await fetch('/api/usuarios/'+id,{method:'DELETE'});const d=await r.json();if(!r.ok)return alert(d.error||'No se pudo eliminar.');document.querySelector(`.user-row[data-user-id="${id}"]`)?.remove()};
+  document.addEventListener('click',e=>{document.querySelectorAll('.user-more[open]').forEach(d=>{if(!d.contains(e.target))d.removeAttribute('open')})});
 })();
 </script>
+{% endif %}
 {% endblock %}

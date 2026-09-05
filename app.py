@@ -7,8 +7,10 @@ from flask import (
     session,
     jsonify,
     send_from_directory,
+    send_file,
     Response,
     stream_with_context,
+    g,
 )
 
 from pathlib import Path
@@ -21,6 +23,7 @@ import json
 import sqlite3
 import logging
 import traceback
+import time
 from contextlib import closing
 from werkzeug.security import generate_password_hash, check_password_hash
 from werkzeug.utils import secure_filename
@@ -74,6 +77,7 @@ from docx import Document
 from coti import procesar_comando_coti
 from servicios_ia import buscar_en_metadatos
 from companias import normalizar_compania, nombre_compania as _nombre_compania_canonico
+import estudio_ops
 
 # ==========================================================
 # CONFIGURACIÓN
@@ -205,6 +209,14 @@ CIAS_LINKS = [
     ("EuroAmerica", "https://pas.euroamericaseguros.seg.ar/login"),
     ("Allianz", "https://auth.allianz.com.ar/login"),
 ]
+
+def _companias_sidebar_default():
+    """Convierte el catálogo histórico en una lista editable para la sidebar."""
+    salida = []
+    for i, (nombre, url) in enumerate(CIAS_LINKS):
+        ident = re.sub(r"[^a-z0-9_-]+", "-", str(nombre).lower()).strip("-") or f"compania-{i+1}"
+        salida.append({"id": ident, "nombre": nombre, "url": url, "visible": True})
+    return salida
 
 MANUALES_DIR = BASE_DIR / "manuales_companias"
 POLIZAS_DIR = BASE_DIR / "polizas"
@@ -463,6 +475,8 @@ def cargar_configuracion():
         "color_sidebar": "#ffffff",
         "color_botones": "#122033",
         "herramientas": [],
+        "companias": _companias_sidebar_default(),
+        "tips_visibles": True,
         "excel_visible": True,
     }
     try:
@@ -503,9 +517,33 @@ def cargar_configuracion():
                 if nombre and url:
                     limpias.append({"id": ident, "nombre": nombre, "url": url, "visible": bool(item.get("visible", True))})
             config["herramientas"] = limpias
+
+            companias_cfg = config.get("companias")
+            if not isinstance(companias_cfg, list):
+                companias_cfg = _companias_sidebar_default()
+            cias_limpias = []
+            vistos_cias = set()
+            for i, item in enumerate(companias_cfg):
+                if not isinstance(item, dict):
+                    continue
+                nombre = str(item.get("nombre", "") or "").strip()
+                url = str(item.get("url", "") or "").strip()
+                ident = re.sub(r"[^a-z0-9_-]+", "-", str(item.get("id", "") or "").lower()).strip("-")
+                if not ident:
+                    ident = f"compania-{i+1}"
+                base = ident
+                n = 2
+                while ident in vistos_cias:
+                    ident = f"{base}-{n}"; n += 1
+                vistos_cias.add(ident)
+                if nombre and url:
+                    cias_limpias.append({"id": ident, "nombre": nombre, "url": url, "visible": bool(item.get("visible", True))})
+            config["companias"] = cias_limpias
+
             # Las claves viejas pueden seguir guardadas en Neon/JSON por
             # compatibilidad, pero la interfaz nueva ya no depende de ellas.
             config["excel_visible"] = bool(config.get("excel_visible", True))
+            config["tips_visibles"] = bool(config.get("tips_visibles", True))
     except Exception:
         pass
     return config
@@ -517,7 +555,7 @@ def contexto_usuario():
         "usuario_rol": u["rol"] if u else None,
         "usuario_es_admin": bool(u and u["rol"] == "admin"),
         "config_global": config,
-        "cias_links": CIAS_LINKS,
+        "cias_links": [(c["nombre"], c["url"]) for c in config.get("companias", []) if c.get("visible", True)],
     }
 
 app.context_processor(contexto_usuario)
@@ -4600,14 +4638,37 @@ def _mensaje_error_chat(error):
 
 
 def _envolver_chat_con_manejo_de_errores(func):
-    """Evita que una excepción no clasificada del chat termine en un 500 genérico."""
+    """Red defensiva del chat sin alterar los flujos que ya funcionan.
+
+    Cada request recibe un id corto y tiempos en logs. Si algo escapa de los
+    manejos específicos, se registra el traceback completo pero al navegador
+    vuelve JSON controlado con HTTP 200: una frase mal formulada nunca debe
+    convertirse en una pantalla 500. No crea threads, colas ni reintentos.
+    """
     @wraps(func)
     def wrapper(*args, **kwargs):
+        request_id = os.urandom(4).hex()
+        inicio = time.monotonic()
+        g.chat_request_id = request_id
         try:
-            return func(*args, **kwargs)
+            logger.info("CHAT[%s] inicio", request_id)
+            respuesta = func(*args, **kwargs)
+            logger.info("CHAT[%s] fin %.2fs", request_id, time.monotonic() - inicio)
+            return respuesta
         except Exception as error:
-            print("ERROR CHAT NO CONTROLADO:", error)
-            return jsonify({"ok": False, "error": _mensaje_error_chat(error)}), 500
+            logger.exception(
+                "CHAT[%s] excepción no controlada tras %.2fs: %s",
+                request_id,
+                time.monotonic() - inicio,
+                error,
+            )
+            # El frontend lo muestra dentro de la burbuja de Sofia, sin una
+            # página/estado HTTP 500. El detalle técnico queda sólo en Render.
+            return jsonify({
+                "ok": False,
+                "error": _mensaje_error_chat(error),
+                "request_id": request_id,
+            }), 200
     return wrapper
 
 
@@ -4769,6 +4830,7 @@ def chat():
     if nombre_pdf_adjunto:
         mensaje_guardado = f"[PDF adjunto: {nombre_pdf_adjunto}]\n{mensaje}"
     _guardar_mensaje(chat_id, "user", mensaje_guardado)
+    logger.info("CHAT[%s] mensaje usuario guardado chat_id=%s", getattr(g, "chat_request_id", "-"), chat_id)
 
     # ======================================================
     # COMANDO /COTI — RESOLUCIÓN LOCAL Y DETERMINÍSTICA
@@ -4971,10 +5033,17 @@ def chat():
             consultar_gemini
         )
 
+        logger.info("CHAT[%s] Gemini inicio", getattr(g, "chat_request_id", "-"))
+        _inicio_gemini = time.monotonic()
         resultado_gemini = consultar_gemini(
             mensaje,
             contexto,
             historial=historial
+        )
+        logger.info(
+            "CHAT[%s] Gemini fin %.2fs",
+            getattr(g, "chat_request_id", "-"),
+            time.monotonic() - _inicio_gemini,
         )
         if isinstance(resultado_gemini, tuple):
             respuesta = resultado_gemini[0]
@@ -5253,9 +5322,42 @@ def guardar_configuracion():
             "visible": bool(item.get("visible", True)),
         })
 
+    companias_recibidas = data.get("companias", config.get("companias", _companias_sidebar_default()))
+    if not isinstance(companias_recibidas, list):
+        return jsonify(ok=False,error="La configuración de compañías no es válida."),400
+
+    companias_cfg = []
+    ids_cias = set()
+    for i, item in enumerate(companias_recibidas):
+        if not isinstance(item, dict):
+            return jsonify(ok=False,error="Hay una compañía inválida."),400
+        nombre_c = str(item.get("nombre", "") or "").strip()
+        url_c = str(item.get("url", "") or "").strip()
+        if not nombre_c or not url_c:
+            return jsonify(ok=False,error="Cada compañía necesita nombre y URL."),400
+        if len(nombre_c) > 80 or len(url_c) > 1000:
+            return jsonify(ok=False,error="Nombre o URL de compañía demasiado largo."),400
+        if not re.match(r"^https?://", url_c, re.IGNORECASE):
+            return jsonify(ok=False,error=f"La URL de {nombre_c} debe comenzar con http:// o https://"),400
+        ident = re.sub(r"[^a-z0-9_-]+", "-", str(item.get("id", "") or "").lower()).strip("-")
+        if not ident:
+            ident = f"compania-{i+1}"
+        base = ident; n = 2
+        while ident in ids_cias:
+            ident = f"{base}-{n}"; n += 1
+        ids_cias.add(ident)
+        companias_cfg.append({
+            "id": ident,
+            "nombre": nombre_c,
+            "url": url_c,
+            "visible": bool(item.get("visible", True)),
+        })
+
     config["nombre_oficina"]=nombre
     config["notificaciones"]=bool(data.get("notificaciones",config["notificaciones"]))
     config["herramientas"]=herramientas
+    config["companias"]=companias_cfg
+    config["tips_visibles"]=bool(data.get("tips_visibles", config.get("tips_visibles", True)))
     config.pop("herramientas_visibles", None)
     config.pop("herramientas_urls", None)
     config["excel_visible"]=bool(data.get("excel_visible", config.get("excel_visible", True)))
@@ -5738,6 +5840,11 @@ try:
 except Exception as error:
     print('NEON POSTGRESQL: no se pudo verificar la tabla manuales al iniciar:', error)
 
+try:
+    estudio_ops.asegurar_tablas()
+    print('ESTUDIO: tablas verificadas.')
+except Exception as error:
+    print('ESTUDIO: no se pudieron verificar las tablas:', error)
 
 
 
@@ -6037,6 +6144,131 @@ def api_validar_excel_fila():
         "avisos": avisos,
         "campos": campos,
     })
+
+
+# ==========================================================
+# ESTUDIO — triage de siniestros (aislado de Seguros)
+# ==========================================================
+
+@app.route("/estudio")
+@requiere_login
+def estudio():
+    return render_template("estudio.html", usuario=session["usuario"])
+
+
+@app.route("/api/estudio/lotes", methods=["GET", "POST"])
+@requiere_login
+def estudio_lotes():
+    usuario = session["usuario"]
+    if request.method == "GET":
+        return jsonify(ok=True, lotes=estudio_ops.listar_lotes(usuario))
+    data = request.get_json(silent=True) or {}
+    lote_id = estudio_ops.crear_lote(usuario, str(data.get("titulo") or ""))
+    return jsonify(ok=True, id=lote_id)
+
+
+@app.route("/api/estudio/lotes/<lote_id>", methods=["GET"])
+@requiere_login
+def estudio_lote(lote_id):
+    usuario = session["usuario"]
+    lote = estudio_ops.obtener_lote(lote_id, usuario)
+    if not lote:
+        return jsonify(ok=False, error="El análisis no existe."), 404
+    return jsonify(ok=True, lote=lote, casos=estudio_ops.listar_casos(lote_id, usuario))
+
+
+@app.route("/api/estudio/analizar", methods=["POST"])
+@requiere_login
+def estudio_analizar():
+    usuario = session["usuario"]
+    lote_id = str(request.form.get("lote_id") or "").strip()
+    archivo = request.files.get("pdf")
+    if not lote_id or not estudio_ops.obtener_lote(lote_id, usuario):
+        return jsonify(ok=False, error="Falta un lote de análisis válido."), 400
+    if not archivo or not archivo.filename:
+        return jsonify(ok=False, error="Falta el PDF."), 400
+    nombre = secure_filename(archivo.filename) or "siniestro.pdf"
+    if not nombre.lower().endswith(".pdf"):
+        return jsonify(ok=False, error="Estudio acepta únicamente archivos PDF."), 400
+    datos = archivo.read()
+    try:
+        caso = estudio_ops.analizar_pdf(usuario, lote_id, nombre, datos)
+        return jsonify(ok=True, caso=caso)
+    except ValueError as error:
+        return jsonify(ok=False, error=str(error)), 400
+    except Exception as error:
+        logger.exception("ESTUDIO análisis fallido %s: %s", nombre, error)
+        return jsonify(ok=False, error="No pude analizar este PDF. Podés continuar con el resto del lote y reintentar este archivo."), 502
+
+
+@app.route("/api/estudio/casos/<caso_id>", methods=["PATCH"])
+@requiere_login
+def estudio_reclasificar(caso_id):
+    data = request.get_json(silent=True) or {}
+    caso = estudio_ops.reclasificar_caso(caso_id, session["usuario"], data.get("clasificacion"))
+    if not caso:
+        return jsonify(ok=False, error="Caso inexistente."), 404
+    return jsonify(ok=True, caso=caso)
+
+
+@app.route("/api/estudio/lotes/<lote_id>/descargar", methods=["GET"])
+@requiere_login
+def estudio_descargar_lote(lote_id):
+    usuario = session["usuario"]
+    if not estudio_ops.obtener_lote(lote_id, usuario):
+        return jsonify(ok=False, error="El análisis no existe."), 404
+    clasificacion = request.args.get("clasificacion")
+    try:
+        archivo = estudio_ops.generar_zip_lote(lote_id, usuario, clasificacion)
+    except Exception as error:
+        logger.exception("ESTUDIO no pudo generar ZIP: %s", error)
+        return jsonify(ok=False, error="No pude preparar la descarga."), 500
+    nombre = "ESTUDIO_ANALISIS.zip" if not clasificacion else f"ESTUDIO_{str(clasificacion).upper()}.zip"
+    response = send_file(archivo, as_attachment=True, download_name=nombre, mimetype="application/zip")
+    @response.call_on_close
+    def _limpiar_zip():
+        try:
+            archivo.unlink(missing_ok=True)
+        except Exception:
+            pass
+    return response
+
+
+@app.route("/api/estudio/ejemplos", methods=["GET", "POST"])
+@requiere_login
+def estudio_ejemplos():
+    usuario = session["usuario"]
+    if request.method == "GET":
+        return jsonify(ok=True, ejemplos=estudio_ops.listar_ejemplos(usuario))
+    nombre = str(request.form.get("nombre") or "").strip()
+    clasificacion = str(request.form.get("clasificacion") or "REVISAR")
+    fundamento = str(request.form.get("fundamento") or "").strip()
+    if not nombre or not fundamento:
+        return jsonify(ok=False, error="Nombre y fundamento son obligatorios."), 400
+    archivo = request.files.get("pdf")
+    pdf_bytes = None
+    nombre_archivo = ""
+    if archivo and archivo.filename:
+        nombre_archivo = secure_filename(archivo.filename) or "ejemplo.pdf"
+        if not nombre_archivo.lower().endswith(".pdf"):
+            return jsonify(ok=False, error="El ejemplo adjunto debe ser PDF."), 400
+        pdf_bytes = archivo.read()
+        if len(pdf_bytes) > 25 * 1024 * 1024:
+            return jsonify(ok=False, error="El PDF de ejemplo puede pesar hasta 25 MB."), 413
+    try:
+        ejemplo = estudio_ops.crear_ejemplo(usuario, nombre, clasificacion, fundamento, pdf_bytes, nombre_archivo)
+        return jsonify(ok=True, ejemplo=ejemplo)
+    except Exception as error:
+        logger.exception("ESTUDIO no pudo guardar ejemplo: %s", error)
+        return jsonify(ok=False, error="No pude guardar el ejemplo."), 500
+
+
+@app.route("/api/estudio/ejemplos/<ejemplo_id>", methods=["DELETE"])
+@requiere_login
+def estudio_eliminar_ejemplo(ejemplo_id):
+    if not estudio_ops.eliminar_ejemplo(ejemplo_id, session["usuario"]):
+        return jsonify(ok=False, error="Ejemplo inexistente."), 404
+    return jsonify(ok=True)
 
 
 @app.route("/pendientes")
