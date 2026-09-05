@@ -1,20 +1,21 @@
 {% extends 'base.html' %}
+{% from "_icons.html" import icon %}
 {% block title %}Manuales y pólizas · {{config_global.nombre_oficina}}{% endblock %}
 {% block content %}
 <div class="page">
   <header class="top">
-    <div><span>BIBLIOTECA DE CONOCIMIENTO</span><h1>Manuales y pólizas</h1><p>PDFs privados, pólizas y fichas de metadatos disponibles para la IA.</p></div>
+    <div><h1>Manuales y pólizas</h1></div>
     <strong class="count">{{ polizas|length }} pólizas · {{ manuales|sum(attribute='cantidad') }} manuales</strong>
   </header>
 
   <div class="library-tabs">
-    <button type="button" class="library-tab active" data-target="manualesPanel">📘 Manuales</button>
-    <button type="button" class="library-tab" data-target="polizasPanel">📄 Pólizas</button>
-    <button type="button" class="library-tab" data-target="metaPanel">🗂️ Metadatos</button>
+    <button type="button" class="library-tab active" data-target="manualesPanel">{{ icon('library') }} Manuales</button>
+    <button type="button" class="library-tab" data-target="polizasPanel">{{ icon('sheet') }} Pólizas</button>
+    <button type="button" class="library-tab" data-target="metaPanel">{{ icon('companies') }} Metadatos</button>
   </div>
 
   <section id="manualesPanel" class="panel library-panel">
-    <div class="section-head"><div><h2>Manuales por compañía</h2><small>Podés acumular varios PDFs por compañía. Se guardan de forma privada y permanente.</small></div></div>
+    <div class="section-head"><div><h2>Manuales por compañía</h2></div></div>
     <div class="manual-grid">
       {% for m in manuales %}
       <article>
@@ -42,7 +43,7 @@
   </section>
 
   <section id="polizasPanel" class="panel library-panel hidden">
-    <div class="section-head"><div><h2>Pólizas</h2><small>Biblioteca persistente de PDFs consultables por la IA.</small></div>{% if usuario_es_admin %}<label class="btn-primary file-btn">＋ Cargar póliza<input id="polizaUpload" type="file" accept="application/pdf,.pdf"></label>{% endif %}</div>
+    <div class="section-head"><div><h2>Pólizas</h2></div>{% if usuario_es_admin %}<label class="btn-primary file-btn">＋ Cargar póliza<input id="polizaUpload" type="file" accept="application/pdf,.pdf"></label>{% endif %}</div>
     <div id="polizaStatus" class="upload-status"></div>
     <div class="policy-list">
       {% for p in polizas %}<div class="policy-row"><a href="{{url_for('ver_poliza',nombre=p.archivo)}}" target="_blank" rel="noopener"><b>PDF</b><span><strong>{{p.nombre}}</strong><small>{{p.fecha}} · {{p.tamaño}} KB</small></span></a>{% if usuario_es_admin %}<button type="button" class="delete-policy" data-file="{{p.archivo}}">×</button>{% endif %}</div>
@@ -52,7 +53,7 @@
 
   <section id="metaPanel" class="panel library-panel hidden">
     <div class="workspace-head">
-      <div><b>Metadatos</b><small>Fichas de texto que la IA consulta con prioridad. Ideal para PDFs escaneados o datos operativos.</small></div>
+      <div><b>Metadatos</b></div>
       <div class="excel-actions"><button class="btn-primary" id="nuevoMetadato" type="button">+ Nueva ficha</button></div>
     </div>
     <div class="meta-layout">

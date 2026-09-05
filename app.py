@@ -73,6 +73,7 @@ from openpyxl.utils import get_column_letter
 from docx import Document
 from coti import procesar_comando_coti
 from servicios_ia import buscar_en_metadatos
+from companias import normalizar_compania, nombre_compania as _nombre_compania_canonico
 
 # ==========================================================
 # CONFIGURACIÓN
@@ -420,6 +421,38 @@ def requiere_admin(func):
         return func(*args, **kwargs)
     return wrapper
 
+def _herramientas_legacy_a_lista(visibles=None, urls=None):
+    """Migra la configuración vieja (diccionarios fijos) al modelo dinámico.
+
+    Se conserva para que una oficina existente no pierda sus accesos al
+    desplegar esta versión. A partir de ahora las herramientas se guardan como
+    una lista libre: nombre + URL + visible.
+    """
+    visibles = visibles if isinstance(visibles, dict) else {}
+    urls = urls if isinstance(urls, dict) else {}
+    catalogo = [
+        ("gmail", "Gmail", "https://mail.google.com/"),
+        ("whatsapp", "WhatsApp", "https://web.whatsapp.com/"),
+        ("datacar", "Datacar", "https://www.datacar.com.ar/"),
+        ("nosis", "Nosis", "https://www.nosis.com/es"),
+        ("chatgpt", "ChatGPT", "https://chatgpt.com/"),
+        ("drive", "Drive", "https://drive.google.com/"),
+        ("envios_ya", "Envíos Ya", ""),
+    ]
+    salida = []
+    for clave, nombre, url_default in catalogo:
+        url = str(urls.get(clave, url_default) or "").strip()
+        if not url:
+            continue
+        salida.append({
+            "id": clave,
+            "nombre": nombre,
+            "url": url,
+            "visible": bool(visibles.get(clave, True)),
+        })
+    return salida
+
+
 def cargar_configuracion():
     config = {
         "nombre_oficina": "Oficina Seguros",
@@ -429,29 +462,7 @@ def cargar_configuracion():
         "color_fondo": "#f7f9fb",
         "color_sidebar": "#ffffff",
         "color_botones": "#122033",
-        "herramientas_visibles": {
-            "gmail": True,
-            "whatsapp": True,
-            "datacar": True,
-            "nosis": True,
-            "chatgpt": True,
-            "drive": True,
-            "envios_ya": True,
-        },
-        # URLs de los accesos directos (Tanda 7). Se dejan cargadas las de
-        # los servicios con una dirección pública conocida; "envios_ya"
-        # queda vacía a propósito porque no hay una URL propia guardada en
-        # ningún lado del proyecto y no corresponde inventarla: se completa
-        # desde Configuración.
-        "herramientas_urls": {
-            "gmail": "https://mail.google.com/",
-            "whatsapp": "https://web.whatsapp.com/",
-            "datacar": "https://www.datacar.com.ar/",
-            "nosis": "https://www.nosis.com/es",
-            "chatgpt": "https://chatgpt.com/",
-            "drive": "https://drive.google.com/",
-            "envios_ya": "",
-        },
+        "herramientas": [],
         "excel_visible": True,
     }
     try:
@@ -467,32 +478,33 @@ def cargar_configuracion():
 
         if isinstance(datos, dict):
             config.update(datos)
-            visibles = config.get("herramientas_visibles", {})
-            if not isinstance(visibles, dict):
-                visibles = {}
-            defaults_visibles = {
-                "gmail": True, "whatsapp": True, "datacar": True,
-                "nosis": True, "chatgpt": True, "drive": True,
-                "envios_ya": True,
-            }
-            defaults_visibles.update(visibles)
-            config["herramientas_visibles"] = defaults_visibles
 
-            urls = config.get("herramientas_urls", {})
-            if not isinstance(urls, dict):
-                urls = {}
-            defaults_urls = {
-                "gmail": "https://mail.google.com/",
-                "whatsapp": "https://web.whatsapp.com/",
-                "datacar": "https://www.datacar.com.ar/",
-                "nosis": "https://www.nosis.com/es",
-                "chatgpt": "https://chatgpt.com/",
-                "drive": "https://drive.google.com/",
-                "envios_ya": "",
-            }
-            defaults_urls.update(urls)
-            config["herramientas_urls"] = defaults_urls
-
+            herramientas = config.get("herramientas")
+            if not isinstance(herramientas, list):
+                herramientas = _herramientas_legacy_a_lista(
+                    config.get("herramientas_visibles"),
+                    config.get("herramientas_urls"),
+                )
+            limpias = []
+            vistos = set()
+            for i, item in enumerate(herramientas):
+                if not isinstance(item, dict):
+                    continue
+                nombre = str(item.get("nombre", "") or "").strip()
+                url = str(item.get("url", "") or "").strip()
+                ident = re.sub(r"[^a-z0-9_-]+", "-", str(item.get("id", "") or "").lower()).strip("-")
+                if not ident:
+                    ident = f"herramienta-{i+1}"
+                base = ident
+                n = 2
+                while ident in vistos:
+                    ident = f"{base}-{n}"; n += 1
+                vistos.add(ident)
+                if nombre and url:
+                    limpias.append({"id": ident, "nombre": nombre, "url": url, "visible": bool(item.get("visible", True))})
+            config["herramientas"] = limpias
+            # Las claves viejas pueden seguir guardadas en Neon/JSON por
+            # compatibilidad, pero la interfaz nueva ya no depende de ellas.
             config["excel_visible"] = bool(config.get("excel_visible", True))
     except Exception:
         pass
@@ -539,84 +551,7 @@ def requiere_login(func):
 # ==========================================================
 
 def nombre_compania(nombre):
-
-    limpio = nombre.lower().strip()
-
-    equivalencias = {
-
-        "atm":
-            "ATM",
-
-        "federacion":
-            "Federación Patronal",
-
-        "rivadavia":
-            "Rivadavia",
-
-        "euroamerica":
-            "EuroAmérica",
-
-        "agrosalta":
-            "AgroSalta",
-
-        "triunfo":
-            "Triunfo",
-
-        "prof":
-            "PROF",
-
-        "mercantil":
-            "Mercantil Andina",
-
-        "mercantil_andina":
-            "Mercantil Andina",
-
-        "mercantilandina":
-            "Mercantil Andina",
-
-        "san_cristobal":
-            "San Cristóbal",
-
-        "sancristobal":
-            "San Cristóbal",
-
-        "federacion_patronal":
-            "Federación Patronal",
-
-        "federacionpatronal":
-            "Federación Patronal",
-
-        "la_segunda":
-            "La Segunda",
-
-        "lasegunda":
-            "La Segunda",
-
-        "rio_uruguay":
-            "Río Uruguay",
-
-        "riouruguay":
-            "Río Uruguay",
-
-        "sancor_seguros":
-            "Sancor Seguros",
-
-        "sancorseguros":
-            "Sancor Seguros",
-
-        "provincia":
-            "Provincia Seguros"
-
-    }
-
-    if limpio in equivalencias:
-
-        return equivalencias[limpio]
-
-    return nombre.replace(
-        "_",
-        " "
-    ).title()
+    return _nombre_compania_canonico(nombre)
 
 
 app.jinja_env.globals["nombre_compania"] = nombre_compania
@@ -1793,6 +1728,16 @@ def guardar_matriz_excel(filas, nombre_hoja="Datos", libro_id="1"):
             print(f"ERROR SINCRONIZANDO LIBRO {libro_id} CON R2:", error)
             raise
 
+    # Un único punto de invalidación cubre limpiar/importar/agregar/editar: todas
+    # las escrituras de la grilla pasan por guardar_matriz_excel. Sólo aplica al
+    # libro principal que consulta la IA.
+    if libro_id == "1":
+        try:
+            from servicios_ia import invalidar_cache_excel_interno
+            invalidar_cache_excel_interno()
+        except Exception as error:
+            print("AVISO INVALIDANDO CACHE EXCEL IA:", error)
+
 def asegurar_word_interno():
     if not WORD_FILE.exists():
         doc = Document()
@@ -2586,8 +2531,14 @@ def _construir_fila_excel(campos_fila, indices, cantidad_columnas, libro_id):
         normalizar("asegurado"): "asegurado",
         normalizar("domicilio"): "domicilio",
         normalizar("localidad"): "localidad",
-        normalizar("cp"): "cp",
-        normalizar("codigo postal"): "cp",
+        normalizar("cp"): "codigo postal",
+        normalizar("codigo postal"): "codigo postal",
+        normalizar("cia"): "compania",
+        normalizar("compania"): "compania",
+        normalizar("compañia"): "compania",
+        normalizar("aseguradora"): "compania",
+        normalizar("telefono"): "telefono",
+        normalizar("teléfono"): "telefono",
     }
     campos_canonicos = {}
     for clave, valor in campos_fila.items():
@@ -3937,7 +3888,7 @@ def _flota_procesar_turno(chat_id, mensaje, contexto_pdf_adjunto):
 
 _COLUMNAS_ALTA_ASEGURADO = (
     "ASEGURADO", "NUMERO", "VEHICULO", "PATENTE", "ENVIOS YA", "COMPAÑIA",
-    "MEDIO DE PAGO", "CODIGO POSTAL", "EMITIDO DÍA:", "IMPORTE APROX",
+    "MEDIO DE PAGO", "CODIGO POSTAL", "EMITIDO DÍA:", "IMPORTE APROX", "TELEFONO",
 )
 
 # Mensaje que arma solo el propio /api/chat cuando el usuario adjunta un PDF
@@ -3971,7 +3922,10 @@ def _pdf_parece_poliza_individual_para_alta(contexto_pdf_adjunto):
     if len(re.findall(r"(?:^|\n)\s*(?:ITEM|ÍTEM|N[°º]\s*\d+)\b", texto, re.IGNORECASE)) >= 2:
         return False  # listado numerado → parece flota
 
-    return bool(re.search(r"\b(P[ÓO]LIZA|ASEGURADO|PREMIO|PRIMA)\b", texto, re.IGNORECASE))
+    return bool(re.search(
+        r"\b(P[ÓO]LIZA|ASEGURADO|PREMIO|PRIMA|COBERTURA|VIGENCIA|CERTIFICADO)\b",
+        texto, re.IGNORECASE,
+    ))
 
 # Mismas compañías que ya tiene el sistema en los accesos directos
 # (Sección /flota-adyacente): se reutilizan los nombres, no se inventan
@@ -4031,6 +3985,7 @@ Devolvé ÚNICAMENTE JSON válido, sin markdown ni texto fuera del JSON, con
 esta estructura exacta:
 {
   "asegurado": "",
+  "telefono": "",
   "numero": "",
   "vehiculo": "",
   "patente": "",
@@ -4045,21 +4000,22 @@ REGLAS ESTRICTAS (no las rompas aunque el texto sea ambiguo):
 
 1. "asegurado": el nombre de la persona o razón social asegurada, tal como
    figura en la póliza. Si no está claro, dejalo vacío.
-2. "numero": el número de póliza.
-3. "vehiculo": marca/modelo o descripción del vehículo tal como figura.
-4. "patente": la patente, si figura.
-5. "compania": la compañía de seguros que emitió la póliza.
-6. "medio_pago": SOLO si el texto permite identificarlo con evidencia clara
+2. "telefono": el teléfono de contacto del asegurado, SOLO si figura explícitamente en la póliza. Si no aparece, dejalo vacío. NUNCA uses el DNI ni el número de póliza como teléfono.
+3. "numero": el número de póliza.
+4. "vehiculo": marca/modelo o descripción del vehículo tal como figura.
+5. "patente": la patente, si figura.
+6. "compania": la compañía de seguros que emitió la póliza.
+7. "medio_pago": SOLO si el texto permite identificarlo con evidencia clara
    (por ejemplo dice explícitamente "cuponera", "CBU", "tarjeta de crédito").
    NUNCA lo asumas a partir de qué compañía es. Si no hay evidencia clara,
    dejalo vacío. No adivines.
-7. "codigo_postal": SOLO si aparece explícito en el texto o se puede
+8. "codigo_postal": SOLO si aparece explícito en el texto o se puede
    identificar sin ambigüedad a partir de los propios datos de la póliza.
    Si no aparece, dejalo vacío. No lo inventes ni lo busques externamente.
-8. "emitido": la FECHA DE EMISIÓN de la póliza (no la fecha de hoy, no la
+9. "emitido": la FECHA DE EMISIÓN de la póliza (no la fecha de hoy, no la
    fecha de vigencia, no el vencimiento). Formato DD/MM/AAAA. Si no hay una
    fecha de emisión confiable, dejalo vacío.
-9. "premio": el importe del PREMIO (el precio final del seguro), tal como
+10. "premio": el importe del PREMIO (el precio final del seguro), tal como
    figura. Si la póliza usa otra palabra que equivale claramente al premio
    final, usá ese valor. NUNCA sumes conceptos, ni calcules un precio
    nuevo, ni estimes en base a la cobertura. Si no hay un premio
@@ -4095,10 +4051,11 @@ queda vacío ("") — nunca "N/D", "no informado" ni similares.
 
             return {
                 "asegurado": limpio("asegurado"),
+                "telefono": limpio("telefono"),
                 "numero": limpio("numero"),
                 "vehiculo": limpio("vehiculo"),
                 "patente": limpio("patente"),
-                "compania": limpio("compania") or _detectar_compania_poliza(texto),
+                "compania": normalizar_compania(limpio("compania") or _detectar_compania_poliza(texto)),
                 "medio_pago": limpio("medio_pago"),
                 "codigo_postal": limpio("codigo_postal"),
                 "emitido": limpio("emitido"),
@@ -4124,6 +4081,7 @@ def _propuesta_alta_a_columnas(propuesta):
         "CODIGO POSTAL": propuesta.get("codigo_postal", ""),
         "EMITIDO DÍA:": propuesta.get("emitido", ""),
         "IMPORTE APROX": propuesta.get("premio", ""),
+        "TELEFONO": propuesta.get("telefono", ""),
     }
 
 
@@ -4257,10 +4215,11 @@ def _alta_a_campos_guardar_asegurado(columnas):
         "VEHICULO": columnas.get("VEHICULO", ""),
         "PATENTE": columnas.get("PATENTE", ""),
         "ENVIOS YA": "",
-        "CIA": columnas.get("COMPAÑIA", ""),
+        "CIA": normalizar_compania(columnas.get("COMPAÑIA", "")),
         "MEDIO DE PAGO": columnas.get("MEDIO DE PAGO", ""),
         "CP": columnas.get("CODIGO POSTAL", ""),
         "MAIL": "",
+        "TELEFONO": columnas.get("TELEFONO", ""),
     }
 
 
@@ -4289,18 +4248,8 @@ def _normalizar_texto_pago(valor):
 
 
 def _normalizar_compania_pago(compania):
-    """Reduce el nombre de la compañía a una de las claves conocidas por
-    las reglas de pago (por ahora ATM y AGS). Si no coincide con ninguna
-    conocida, devuelve el texto normalizado tal cual: simplemente no va a
-    matchear ninguna regla, en vez de forzar un valor incorrecto."""
-    texto = _normalizar_texto_pago(compania)
-    if not texto:
-        return ""
-    if "ATM" in texto:
-        return "ATM"
-    if "AGS" in texto:
-        return "AGS"
-    return texto
+    """Usa la misma normalización maestra que el resto de OficinaIA."""
+    return normalizar_compania(compania)
 
 
 def _normalizar_medio_pago(medio_pago):
@@ -4431,7 +4380,7 @@ def _armar_texto_envios_ya(datos_asegurado):
         return ""
 
     nombre = obtener("ASEGURADO", "nombre asegurado")
-    telefono = _normalizar_telefono(obtener("NUMERO"))
+    telefono = _normalizar_telefono(obtener("TELEFONO"))
     vehiculo = obtener("VEHICULO", "marca_modelo", "marca/modelo")
     patente = obtener("PATENTE", "dominio", "chapa").upper()
     cia = obtener("CIA", "compañia", "compania")
@@ -4472,7 +4421,7 @@ def _parsear_comando_guardar_asegurado(mensaje):
 
     Formato principal:
       /guardar asegurado (asegurado) (numero) (vehiculo) (patente) (cia)
-      (medio de pago) (cp) (mail) [1|2]
+      (medio de pago) (cp) (mail) (telefono opcional) [1|2]
 
     También acepta los mismos campos separados por comas. ENVIOS YA no forma
     parte del comando corto; puede completarse luego en la propuesta.
@@ -4492,6 +4441,7 @@ def _parsear_comando_guardar_asegurado(mensaje):
         "MEDIO DE PAGO",
         "CP",
         "MAIL",
+        "TELEFONO",
     )
 
     libro_id = "1"
@@ -4513,7 +4463,8 @@ def _parsear_comando_guardar_asegurado(mensaje):
         return {
             "error": (
                 "Usá el formato /guardar asegurado (asegurado) (numero) "
-                "(vehiculo) (patente) (cia) (medio de pago) (cp) (mail)."
+                "(vehiculo) (patente) (cia) (medio de pago) (cp) (mail) "
+                "(telefono opcional)."
             )
         }
 
@@ -4531,11 +4482,13 @@ def _parsear_comando_guardar_asegurado(mensaje):
         "MEDIO DE PAGO": "medio de pago",
         "CP": "cp",
         "MAIL": "mail",
+        "TELEFONO": "telefono",
     }
     for campo, placeholder in placeholders.items():
         if propuesta[campo].strip().lower() == placeholder:
             propuesta[campo] = ""
 
+    propuesta["CIA"] = normalizar_compania(propuesta.get("CIA", ""))
     propuesta["ENVIOS YA"] = ""
 
     return {
@@ -4563,6 +4516,18 @@ def _consulta_requiere_metadatos(pregunta):
         "cantidad de vehiculos", "cantidad de vehículos",
     )
     if any(t in texto for t in terminos_estructurados):
+        return False
+
+    # Una frase como "cuántos remolques tiene ATM" puede hablar del inventario
+    # de pólizas/vehículos, no de la cantidad de servicios de grúa de una
+    # cobertura. Los conteos de entidades registradas deben ir al Excel.
+    es_conteo = bool(re.search(r"\b(cuantos|cuantas|cantidad|total)\b", texto))
+    entidades_excel = (
+        "asegurado", "asegurados", "poliza", "polizas", "vehiculo", "vehiculos",
+        "remolque", "remolques", "trailer", "trailers", "acoplado", "acoplados",
+        "moto", "motos", "auto", "autos", "camion", "camiones",
+    )
+    if es_conteo and any(t in texto for t in entidades_excel):
         return False
 
     terminos_documentales = (
@@ -5257,29 +5222,42 @@ def guardar_configuracion():
             return jsonify(ok=False,error=f"El color {clave} no es válido."),400
         colores[clave] = valor.upper()
 
-    herramientas_actuales = config.get("herramientas_visibles", {})
-    herramientas_recibidas = data.get("herramientas_visibles", herramientas_actuales)
-    if not isinstance(herramientas_recibidas, dict):
+    herramientas_recibidas = data.get("herramientas", config.get("herramientas", []))
+    if not isinstance(herramientas_recibidas, list):
         return jsonify(ok=False,error="La configuración de herramientas no es válida."),400
-    herramientas = {}
-    for clave in ("gmail", "whatsapp", "datacar", "nosis", "chatgpt", "drive", "envios_ya"):
-        herramientas[clave] = bool(herramientas_recibidas.get(clave, herramientas_actuales.get(clave, True)))
 
-    # URLs de los accesos directos (Tanda 7): se guardan tal cual las
-    # escribió el usuario en Configuración, sin completar ni adivinar
-    # ninguna que venga vacía.
-    urls_actuales = config.get("herramientas_urls", {})
-    urls_recibidas = data.get("herramientas_urls", urls_actuales)
-    if not isinstance(urls_recibidas, dict):
-        return jsonify(ok=False,error="La configuración de accesos directos no es válida."),400
-    urls = {}
-    for clave in ("gmail", "whatsapp", "datacar", "nosis", "chatgpt", "drive", "envios_ya"):
-        urls[clave] = str(urls_recibidas.get(clave, urls_actuales.get(clave, "")) or "").strip()
+    herramientas = []
+    ids = set()
+    for i, item in enumerate(herramientas_recibidas):
+        if not isinstance(item, dict):
+            return jsonify(ok=False,error="Hay una herramienta inválida."),400
+        nombre_h = str(item.get("nombre", "") or "").strip()
+        url_h = str(item.get("url", "") or "").strip()
+        if not nombre_h or not url_h:
+            return jsonify(ok=False,error="Cada herramienta necesita nombre y URL."),400
+        if len(nombre_h) > 60 or len(url_h) > 1000:
+            return jsonify(ok=False,error="Nombre o URL de herramienta demasiado largo."),400
+        if not re.match(r"^https?://", url_h, re.IGNORECASE):
+            return jsonify(ok=False,error=f"La URL de {nombre_h} debe comenzar con http:// o https://"),400
+        ident = re.sub(r"[^a-z0-9_-]+", "-", str(item.get("id", "") or "").lower()).strip("-")
+        if not ident:
+            ident = f"herramienta-{i+1}"
+        base = ident; n = 2
+        while ident in ids:
+            ident = f"{base}-{n}"; n += 1
+        ids.add(ident)
+        herramientas.append({
+            "id": ident,
+            "nombre": nombre_h,
+            "url": url_h,
+            "visible": bool(item.get("visible", True)),
+        })
 
     config["nombre_oficina"]=nombre
     config["notificaciones"]=bool(data.get("notificaciones",config["notificaciones"]))
-    config["herramientas_visibles"]=herramientas
-    config["herramientas_urls"]=urls
+    config["herramientas"]=herramientas
+    config.pop("herramientas_visibles", None)
+    config.pop("herramientas_urls", None)
     config["excel_visible"]=bool(data.get("excel_visible", config.get("excel_visible", True)))
     config.update(colores)
     try:

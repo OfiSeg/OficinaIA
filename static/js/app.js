@@ -1450,121 +1450,62 @@ function inicializarFechaGlobal(){const e=document.getElementById('fechaHoy');if
 document.addEventListener('DOMContentLoaded',inicializarFechaGlobal);
 
 /* ==========================================================
-   TANDA 1 — Preferencias de apariencia + feedback toast
+   Apariencia — tema + tamaño general
    ========================================================== */
 (function(){
-  const FONT_STEPS = ['sm','md','lg','xl'];
-  const FONT_LABELS = {sm:'Pequeño',md:'Normal',lg:'Grande',xl:'Muy grande'};
   const THEME_KEY = 'oficinaia_theme';
-  const FONT_KEY = 'oficinaia_font';
+  const FONT_KEY = 'oficinaia_font_general_px';
+  const MIN_FONT = 12, MAX_FONT = 18;
 
   function getTheme(){
-    const t = localStorage.getItem(THEME_KEY);
-    if(t === 'light' || t === 'dark') return t;
-    if(window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches) return 'dark';
-    return 'light';
+    const t=localStorage.getItem(THEME_KEY);
+    if(t==='light'||t==='dark')return t;
+    return window.matchMedia&&window.matchMedia('(prefers-color-scheme: dark)').matches?'dark':'light';
   }
-
-  /* Tanda D — tema SOLO por data-theme (tokens en CSS). Sin body.style. */
-  const THEME_PROPS = ['--navy','--teal','--bg','--sidebar-bg','--button-bg','--ink','--muted','--soft','--line','--tealbg','--surface','--surface-2','--surface-3','--hover','--card','--panel'];
 
   function applyTheme(theme){
-    document.documentElement.setAttribute('data-theme', theme);
-    document.documentElement.style.colorScheme = theme === 'dark' ? 'dark' : 'light';
-    // Limpiar residuos legacy de body.style (tandas anteriores)
-    const body = document.body;
-    if(body){
-      THEME_PROPS.forEach(p => body.style.removeProperty(p));
-    }
-    const btn = document.getElementById('themeToggle');
+    document.documentElement.setAttribute('data-theme',theme);
+    document.documentElement.style.colorScheme=theme==='dark'?'dark':'light';
+    const btn=document.getElementById('themeToggle');
     if(btn){
-      btn.textContent = theme === 'dark' ? '☀' : '☾';
-      btn.title = theme === 'dark' ? 'Cambiar a modo claro' : 'Cambiar a modo oscuro';
-      btn.setAttribute('aria-label', btn.title);
+      btn.dataset.theme=theme;
+      btn.title=theme==='dark'?'Cambiar a modo claro':'Cambiar a modo oscuro';
+      btn.setAttribute('aria-label',btn.title);
     }
   }
-
-  function setTheme(theme){
-    localStorage.setItem(THEME_KEY, theme);
-    applyTheme(theme);
-  }
-
-  function toggleTheme(){
-    const next = getTheme() === 'dark' ? 'light' : 'dark';
-    setTheme(next);
-  }
+  function setTheme(theme){localStorage.setItem(THEME_KEY,theme);applyTheme(theme)}
+  function toggleTheme(){setTheme(getTheme()==='dark'?'light':'dark')}
 
   function getFont(){
-    const f = localStorage.getItem(FONT_KEY) || 'md';
-    return FONT_STEPS.includes(f) ? f : 'md';
+    const n=parseInt(localStorage.getItem(FONT_KEY)||'14',10);
+    return Number.isFinite(n)?Math.max(MIN_FONT,Math.min(MAX_FONT,n)):14;
   }
-
-  function applyFont(size){
-    document.documentElement.setAttribute('data-font-size', size);
-    // Controles solo − / + (sin etiqueta de tamaño)
-    const dec = document.getElementById('fontDec');
-    const inc = document.getElementById('fontInc');
-    if(dec) dec.disabled = size === FONT_STEPS[0];
-    if(inc) inc.disabled = size === FONT_STEPS[FONT_STEPS.length - 1];
+  function applyFont(px){
+    document.documentElement.style.setProperty('--ui-font-size',px+'px');
+    const dec=document.getElementById('fontDec'),inc=document.getElementById('fontInc');
+    if(dec)dec.disabled=px<=MIN_FONT;if(inc)inc.disabled=px>=MAX_FONT;
   }
+  function setFont(px){px=Math.max(MIN_FONT,Math.min(MAX_FONT,px));localStorage.setItem(FONT_KEY,String(px));applyFont(px)}
 
-  function setFont(size){
-    if(!FONT_STEPS.includes(size)) return;
-    localStorage.setItem(FONT_KEY, size);
-    applyFont(size);
-  }
-
-  function changeFont(delta){
-    const cur = getFont();
-    const i = FONT_STEPS.indexOf(cur);
-    const next = FONT_STEPS[Math.max(0, Math.min(FONT_STEPS.length - 1, i + delta))];
-    setFont(next);
-  }
-
-  window.showToast = function(message, type){
-    const host = document.getElementById('toastHost');
-    if(!host) return;
-    const el = document.createElement('div');
-    el.className = 'toast ' + (type || 'info');
-    el.setAttribute('role', 'status');
-    el.textContent = message;
-    host.appendChild(el);
-    const hide = () => {
-      el.classList.add('leaving');
-      setTimeout(() => el.remove(), 200);
-    };
-    setTimeout(hide, type === 'error' ? 4500 : 2800);
-    el.addEventListener('click', hide);
+  window.showToast=function(message,type){
+    const host=document.getElementById('toastHost');if(!host)return;
+    const el=document.createElement('div');el.className='toast '+(type||'info');el.setAttribute('role','status');el.textContent=message;host.appendChild(el);
+    const hide=()=>{el.classList.add('leaving');setTimeout(()=>el.remove(),200)};
+    setTimeout(hide,type==='error'?4500:2800);el.addEventListener('click',hide);
   };
 
   function initAppearance(){
-    applyTheme(getTheme());
-    applyFont(getFont());
-    const themeBtn = document.getElementById('themeToggle');
-    if(themeBtn) themeBtn.addEventListener('click', toggleTheme);
-    const dec = document.getElementById('fontDec');
-    const inc = document.getElementById('fontInc');
-    if(dec) dec.addEventListener('click', () => changeFont(-1));
-    if(inc) inc.addEventListener('click', () => changeFont(1));
-
-    // Si el usuario no eligió tema manualmente, seguir cambios del sistema
+    applyTheme(getTheme());applyFont(getFont());
+    document.getElementById('themeToggle')?.addEventListener('click',toggleTheme);
+    document.getElementById('fontDec')?.addEventListener('click',()=>setFont(getFont()-1));
+    document.getElementById('fontInc')?.addEventListener('click',()=>setFont(getFont()+1));
     if(window.matchMedia){
-      const mq = window.matchMedia('(prefers-color-scheme: dark)');
-      const onChange = () => {
-        if(localStorage.getItem(THEME_KEY) === null){
-          applyTheme(mq.matches ? 'dark' : 'light');
-        }
-      };
-      if(mq.addEventListener) mq.addEventListener('change', onChange);
-      else if(mq.addListener) mq.addListener(onChange);
+      const mq=window.matchMedia('(prefers-color-scheme: dark)');
+      const onChange=()=>{if(localStorage.getItem(THEME_KEY)===null)applyTheme(mq.matches?'dark':'light')};
+      if(mq.addEventListener)mq.addEventListener('change',onChange);else if(mq.addListener)mq.addListener(onChange);
     }
   }
-
-  if(document.readyState === 'loading'){
-    document.addEventListener('DOMContentLoaded', initAppearance);
-  } else {
-    initAppearance();
-  }
+  if(document.readyState==='loading')document.addEventListener('DOMContentLoaded',initAppearance);else initAppearance();
 })();
 
 

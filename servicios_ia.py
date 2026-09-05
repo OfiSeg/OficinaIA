@@ -1,9 +1,12 @@
 import re
 import os
+import time
+from datetime import datetime, date
 from pathlib import Path
 from google import genai
 from google.genai import types
 from openpyxl import load_workbook
+from companias import normalizar_compania, aliases_companias
 
 try:
     from storage_r2 import descargar_excel_interno, EXCEL_INTERNO_R2_KEY
@@ -19,10 +22,14 @@ except Exception:
 
 
 MODELOS_GEMINI = [
-    "gemini-flash-latest",
-    "gemini-3.5-flash",
-    "gemini-3.1-flash-lite",
+    "gemini-3.8-flash",
+    "gemini-3.5-flash-lite",
 ]
+
+# Cache por proceso. OficinaIA mantiene 1 worker mientras el Excel/R2 sea la
+# fuente de verdad; con múltiples workers este cache NO sería compartido.
+_CACHE_EXCEL = {"datos": None, "cargado_en": 0.0}
+TTL_CACHE_EXCEL_SEGUNDOS = 10
 
 BASE_DIR = Path(__file__).resolve().parent
 EXCEL_INTERNO = BASE_DIR / "excel_interno.xlsx"
@@ -40,7 +47,10 @@ def obtener_cliente_gemini():
         return None
 
     return genai.Client(
-        api_key=api_key
+        api_key=api_key,
+        # El timeout del SDK está expresado en milisegundos. Evita que una
+        # llamada lenta consuma por sí sola gran parte del timeout de Gunicorn.
+        http_options=types.HttpOptions(timeout=30000),
     )
 
 
@@ -76,7 +86,18 @@ def _asegurar_excel_local_para_ia():
         return EXCEL_INTERNO.exists()
 
 
+def invalidar_cache_excel_interno():
+    """Invalida la copia en memoria después de una escritura confirmada."""
+    _CACHE_EXCEL["datos"] = None
+    _CACHE_EXCEL["cargado_en"] = 0.0
+
+
 def _cargar_excel_interno():
+    ahora = time.monotonic()
+    cache = _CACHE_EXCEL.get("datos")
+    if cache is not None and (ahora - _CACHE_EXCEL["cargado_en"]) < TTL_CACHE_EXCEL_SEGUNDOS:
+        return cache
+
     if not _asegurar_excel_local_para_ia():
         return []
     try:
@@ -85,6 +106,8 @@ def _cargar_excel_interno():
         rows = list(ws.iter_rows(values_only=True))
         if not rows:
             wb.close()
+            _CACHE_EXCEL["datos"] = []
+            _CACHE_EXCEL["cargado_en"] = ahora
             return []
         headers = [str(x or "").strip().upper() for x in rows[0]]
         datos = []
@@ -97,6 +120,8 @@ def _cargar_excel_interno():
             if any(fila.values()):
                 datos.append(fila)
         wb.close()
+        _CACHE_EXCEL["datos"] = datos
+        _CACHE_EXCEL["cargado_en"] = time.monotonic()
         print("EXCEL INTERNO IA:", len(datos), "registros cargados.")
         return datos
     except Exception as error:
@@ -159,21 +184,10 @@ def _buscar_en_registros(pregunta, datos, etiqueta):
 # ==========================================================
 
 _ALIAS_CIAS = {
-    "ags": "ags",
-    "agrosalta": "agrosalta",
-    "atm": "atm",
-    "prof": "prof",
-    "rivadavia": "rivadavia",
-    "triunfo": "triunfo",
-    "san cristobal": "san cristobal",
-    "sancristobal": "sancristobal",
-    "mercantil andina": "mercantil andina",
-    "mercantilandina": "mercantilandina",
-    "euroamerica": "euroamerica",
-    "euro america": "euro america",
-    "federacion patronal": "federacion patronal",
-    "federacion": "federacion",
+    alias: codigo_display[0]
+    for alias, codigo_display in aliases_companias().items()
 }
+
 
 
 def _identidad_unica(fila):
@@ -238,7 +252,7 @@ def _companias_mencionadas(pregunta, datos):
     mencionadas = set()
     for alias, canon in _ALIAS_CIAS.items():
         if re.search(rf"\b{re.escape(_normalizar_texto(alias))}\b", q):
-            mencionadas.add(_normalizar_texto(canon))
+            mencionadas.add(_normalizar_texto(normalizar_compania(canon)))
     return mencionadas
 
 
@@ -433,11 +447,26 @@ TOOL_DEFINITIONS = [
         types.FunctionDeclaration(
             name="contar_registros",
             description=(
-                "Realiza conteos exactos sobre TODAS las filas del dataset estructurado. "
-                "Puede filtrar por compañía, campo y valor. Para personas, deduplica usando "
-                "la lógica validada de OficinaIA. Nunca recorta a top-N."
+                "ÚNICA herramienta autorizada para cantidades sobre el Excel interno. "
+                "Cuenta de forma exacta sobre TODO el dataset, nunca sobre una muestra. "
+                "Filtra opcionalmente por compañía, campo/valor, tipo de vehículo y rango "
+                "de fecha de emisión. Usá tipo_conteo='unicos' sólo cuando el usuario pida "
+                "personas/asegurados únicos; para pólizas, vehículos, remolques o registros "
+                "usá 'filas'."
             ),
-            parameters_json_schema={"type": "object", "properties": {"compania": {"type": "string"}, "campo": {"type": "string"}, "valor": {"type": "string"}}},
+            parameters_json_schema={
+                "type": "object",
+                "properties": {
+                    "compania": {"type": "string"},
+                    "campo": {"type": "string"},
+                    "valor": {"type": "string"},
+                    "tipo_vehiculo": {"type": "string", "description": "Substring del campo VEHICULO, ej. remolque, trailer, moto."},
+                    "desde": {"type": "string", "description": "Fecha desde inclusive, DD/MM/AAAA."},
+                    "hasta": {"type": "string", "description": "Fecha hasta inclusive, DD/MM/AAAA."},
+                    "campo_fecha": {"type": "string", "description": "Opcional; por defecto usa EMITIDO DÍA:."},
+                    "tipo_conteo": {"type": "string", "enum": ["filas", "unicos"]},
+                },
+            },
         ),
         types.FunctionDeclaration(
             name="buscar_en_manuales",
@@ -467,7 +496,7 @@ TOOL_DEFINITIONS = [
             description=(
                 "Cuando el usuario pide guardar o agregar un asegurado a la planilla, "
                 "proponé un registro usando EXACTAMENTE estas claves: ASEGURADO, NUMERO, "
-                "VEHICULO, PATENTE, ENVIOS YA, CIA, MEDIO DE PAGO, CP, MAIL. "
+                "VEHICULO, PATENTE, ENVIOS YA, CIA, MEDIO DE PAGO, CP, MAIL, TELEFONO. "
                 "NUMERO acepta DNI o número de póliza según el caso. Nunca inventes un "
                 "dato: si falta, dejalo como cadena vacía para que el usuario lo confirme. "
                 "Intentá completar siempre todos los campos que estén presentes en el "
@@ -495,6 +524,7 @@ TOOL_DEFINITIONS = [
                             "MEDIO DE PAGO": {"type": "string", "description": "Medio de pago."},
                             "CP": {"type": "string", "description": "Código postal."},
                             "MAIL": {"type": "string", "description": "Correo electrónico."},
+                            "TELEFONO": {"type": "string", "description": "Teléfono de contacto. Nunca uses DNI ni número de póliza como teléfono."},
                         },
                         "additionalProperties": False,
                     }
@@ -561,21 +591,99 @@ def _valor_campo(fila, campo):
     return fila.get(clave, "") if clave else None
 
 
-def _filtrar_filas(filas, compania=None, campo=None, valor=None):
+def _parsear_fecha_excel(valor):
+    if isinstance(valor, datetime):
+        return valor.date()
+    if isinstance(valor, date):
+        return valor
+    texto = str(valor or '').strip()
+    if not texto:
+        return None
+    # Cubre fecha real serializada por openpyxl y los formatos históricos.
+    for fmt in (
+        '%d/%m/%Y', '%d-%m-%Y', '%Y-%m-%d',
+        '%Y-%m-%d %H:%M:%S', '%d/%m/%Y %H:%M:%S',
+    ):
+        try:
+            return datetime.strptime(texto, fmt).date()
+        except ValueError:
+            pass
+    return None
+
+
+def _filtrar_filas(
+    filas, compania=None, campo=None, valor=None,
+    tipo_vehiculo=None, desde=None, hasta=None, campo_fecha=None,
+):
     salida = list(filas)
+    filtros = {}
+
     if compania:
-        objetivo = _normalizar_texto(compania)
+        objetivo = _normalizar_texto(normalizar_compania(compania))
         campos = []
         for f in salida[:20]:
-            for alias in ("CIA", "COMPAÑIA", "COMPANIA", "COMPAÑÍA", "ASEGURADORA", "COMPANIA DE SEGUROS"):
+            for alias in ('CIA', 'COMPAÑIA', 'COMPANIA', 'COMPAÑÍA', 'ASEGURADORA', 'COMPANIA DE SEGUROS'):
                 c = _campo_por_alias(f, (alias,))
                 if c and c not in campos:
                     campos.append(c)
-        salida = [f for f in salida if _normalizar_texto(next((f.get(c, "") for c in campos), "")) == objetivo]
+        salida = [
+            f for f in salida
+            if any(_normalizar_texto(normalizar_compania(f.get(c, ''))) == objetivo for c in campos)
+        ]
+        filtros['compania'] = normalizar_compania(compania)
+
+    if tipo_vehiculo:
+        objetivo = _normalizar_texto(tipo_vehiculo)
+        equivalencias_tipo = {
+            'remolque': {'remolque', 'trailer'},
+            'remolques': {'remolque', 'trailer'},
+            'trailer': {'remolque', 'trailer'},
+            'trailers': {'remolque', 'trailer'},
+        }
+        objetivos = equivalencias_tipo.get(objetivo, {objetivo})
+        aliases_vehiculo = ('VEHICULO', 'VEHÍCULO', 'TIPO VEHICULO', 'TIPO DE VEHICULO', 'MARCA MODELO')
+        def coincide_tipo(fila):
+            clave = _campo_por_alias(fila, aliases_vehiculo)
+            texto_vehiculo = _normalizar_texto(fila.get(clave, '') if clave else '')
+            return any(token in texto_vehiculo for token in objetivos)
+        salida = [f for f in salida if coincide_tipo(f)]
+        filtros['tipo_vehiculo'] = str(tipo_vehiculo).strip()
+        if len(objetivos) > 1:
+            filtros['sinonimos_tipo_vehiculo'] = sorted(objetivos)
+
     if campo and valor is not None:
         objetivo = _normalizar_texto(valor)
-        salida = [f for f in salida if objetivo in _normalizar_texto(_valor_campo(f, campo) or "")]
-    return salida
+        salida = [f for f in salida if objetivo in _normalizar_texto(_valor_campo(f, campo) or '')]
+        filtros['campo'] = str(campo).strip()
+        filtros['valor'] = str(valor).strip()
+
+    if desde or hasta:
+        desde_fecha = _parsear_fecha_excel(desde) if desde else None
+        hasta_fecha = _parsear_fecha_excel(hasta) if hasta else None
+        if desde and desde_fecha is None:
+            raise ValueError('Fecha desde inválida. Usá DD/MM/AAAA.')
+        if hasta and hasta_fecha is None:
+            raise ValueError('Fecha hasta inválida. Usá DD/MM/AAAA.')
+        aliases_fecha = (campo_fecha,) if campo_fecha else ('EMITIDO DÍA:', 'EMITIDO DIA', 'EMITIDO', 'FECHA EMISION', 'FECHA DE EMISION')
+        filtradas = []
+        for f in salida:
+            clave_fecha = _campo_por_alias(f, aliases_fecha)
+            fecha = _parsear_fecha_excel(f.get(clave_fecha, '') if clave_fecha else '')
+            if fecha is None:
+                continue
+            if desde_fecha and fecha < desde_fecha:
+                continue
+            if hasta_fecha and fecha > hasta_fecha:
+                continue
+            filtradas.append(f)
+        salida = filtradas
+        if desde_fecha:
+            filtros['desde'] = desde_fecha.strftime('%d/%m/%Y')
+        if hasta_fecha:
+            filtros['hasta'] = hasta_fecha.strftime('%d/%m/%Y')
+        filtros['campo_fecha'] = campo_fecha or 'EMITIDO DÍA:'
+
+    return salida, filtros
 
 
 def consultar_excel(pregunta_o_filtro):
@@ -607,19 +715,29 @@ def consultar_excel(pregunta_o_filtro):
     }
 
 
-def contar_registros(compania=None, campo=None, valor=None):
+def contar_registros(
+    compania=None, campo=None, valor=None, tipo_vehiculo=None,
+    desde=None, hasta=None, campo_fecha=None, tipo_conteo='filas',
+):
+    """Conteo determinístico sobre el dataset COMPLETO, nunca sobre previews."""
     datos, fuente = _dataset_estructurado()
-    filas = _filtrar_filas(datos, compania=compania, campo=campo, valor=valor)
+    filas, filtros = _filtrar_filas(
+        datos, compania=compania, campo=campo, valor=valor,
+        tipo_vehiculo=tipo_vehiculo, desde=desde, hasta=hasta, campo_fecha=campo_fecha,
+    )
     campo_identidad = _campo_identidad_principal(filas)
-    if campo_identidad:
-        filas_contadas = _deduplicar_personas(filas)
-    else:
-        filas_contadas = filas
+    filas_unicas = _deduplicar_personas(filas) if campo_identidad else filas
+    tipo = _normalizar_texto(tipo_conteo or 'filas')
+    cantidad = len(filas_unicas) if tipo in {'unicos', 'unico', 'personas', 'asegurados'} else len(filas)
     return {
-        "fuente": fuente,
-        "total_filas": len(filas),
-        "campo_identidad": campo_identidad,
-        "total_unicos": len(filas_contadas),
+        'fuente': fuente,
+        'cantidad': cantidad,
+        'tipo_conteo': 'unicos' if tipo in {'unicos', 'unico', 'personas', 'asegurados'} else 'filas',
+        'total_filas': len(filas),
+        'total_unicos': len(filas_unicas),
+        'campo_identidad': campo_identidad,
+        'filtros_aplicados': filtros,
+        'dataset_total_filas': len(datos),
     }
 
 
@@ -641,6 +759,7 @@ def proponer_registro_excel(campos):
         "MEDIO DE PAGO",
         "CP",
         "MAIL",
+        "TELEFONO",
     )
     if not isinstance(campos, dict):
         return {"propuesta": {}, "valida": False}
@@ -657,6 +776,8 @@ def proponer_registro_excel(campos):
             if _normalizar_texto(campo) == clave_norm:
                 propuesta[campo] = str(valor or "").strip()
                 break
+
+    propuesta["CIA"] = normalizar_compania(propuesta.get("CIA", ""))
 
     tiene_asegurado = bool(propuesta["ASEGURADO"])
     tiene_identificador = bool(propuesta["NUMERO"] or propuesta["PATENTE"])
@@ -1049,9 +1170,11 @@ def consultar_gemini(pregunta, contexto="", historial=None):
         if str(turno.get('contenido', '')).strip()
     ) or "Sin historial relevante."
 
+    fecha_hoy = datetime.now().strftime("%d/%m/%Y")
     prompt = f"""
 Sos el asistente interno de OficinaIA, una oficina de seguros de Argentina.
 Respondé la pregunta completa y no inventes datos.
+FECHA ACTUAL DEL SISTEMA: {fecha_hoy}
 
 REGLAS:
 - OficinaIA puede haber recuperado METADATOS INTERNOS PRIORITARIOS antes de esta llamada. Si aparecen dentro del contexto, utilizalos directamente como fuente prioritaria; no afirmes que el dato no está disponible si está allí.
@@ -1073,18 +1196,22 @@ REGLAS:
 - No afirmes que la información no existe solo porque la primera búsqueda dio 0;
   probá una reformulación de la MISMA búsqueda en metadatos (sinónimos:
   remolque/grúa/asistencia/auxilio/traslado, singular/plural) antes de descartar.
-- Para conteos, usá contar_registros y confiá en su total; nunca cuentes manualmente un subconjunto.
+- REGLA CRÍTICA DE EXACTITUD NUMÉRICA: cualquier cantidad, total, suma, promedio o porcentaje sobre datos internos debe provenir literalmente del resultado de una herramienta determinística. Nunca lo estimes, redondees, extrapoles ni lo calcules mirando filas visibles.
+- Para TODO conteo del Excel interno usá contar_registros. consultar_excel devuelve una muestra para inspección y NUNCA es una fuente válida para contar. No cuentes visualmente registros, previews ni resultados truncados.
+- Desambiguación importante: "¿cuántos remolques/trailers tiene ATM?" o "¿cuántos tenemos asegurados?" significa contar vehículos/registros del Excel; usá contar_registros. En cambio, "¿cuántos servicios de remolque/grúa cubre ATM?" es una consulta de cobertura y va a metadatos. Mirá palabras como "tenemos", "asegurados", "vehículos" versus "cubre", "asistencia", "servicios".
+- En contar_registros usá tipo_conteo="unicos" sólo para personas/asegurados únicos. Para pólizas, vehículos, remolques, trailers y registros usá tipo_conteo="filas".
+- Para preguntas temporales calculá el rango desde/hasta a partir de la fecha actual indicada abajo y pasalo a contar_registros en DD/MM/AAAA.
 - Para vehículos/patentes, usá buscar_vehiculos.
 - Para datos estructurados generales (asegurados, pólizas en planilla), usá consultar_excel.
 - Si el usuario pide guardar o agregar un asegurado/registro a la planilla, usá
   proponer_registro_excel. Las columnas reales y únicas son:
-  ASEGURADO, NUMERO, VEHICULO, PATENTE, ENVIOS YA, CIA, MEDIO DE PAGO, CP, MAIL.
+  ASEGURADO, NUMERO, VEHICULO, PATENTE, ENVIOS YA, CIA, MEDIO DE PAGO, CP, MAIL, TELEFONO.
   NUMERO puede ser DNI o número de póliza. Intentá completar todos los campos presentes.
   Si falta un campo, dejalo vacío; nunca inventes ni omitas silenciosamente un campo
   que el usuario haya dado. La propuesta siempre requiere confirmación.
-- Si el usuario usa el comando /guardar asegurado, respetá exactamente el orden:
-  ASEGURADO, NUMERO, VEHICULO, PATENTE, CIA, MEDIO DE PAGO, CP, MAIL.
-  ENVIOS YA es opcional. No reinterpretes ese orden.
+- Si el usuario usa el comando /guardar asegurado, respetá el orden histórico:
+  ASEGURADO, NUMERO, VEHICULO, PATENTE, CIA, MEDIO DE PAGO, CP, MAIL, y TELEFONO como noveno campo opcional.
+  ENVIOS YA sigue siendo opcional y no forma parte del comando corto. No reinterpretes ese orden.
 - Si necesitás información pública actualizada, usá buscar_en_internet (también
   es una herramienta de uso puntual, no automático).
 - Podés llamar varias herramientas en la misma consulta y combinar sus resultados.
