@@ -387,7 +387,7 @@ def _mapear_con_gemini(rows: list[list[Any]], mapping_actual: dict[int, str]) ->
     if any(v == "celular" for v in mapping_actual.values()) and any(v in {"nombre", "nombre_completo"} for v in mapping_actual.values()):
         return mapping_actual
     try:
-        from servicios_ia import obtener_cliente_gemini, MODELOS_GEMINI
+        from ai_gateway import begin_request, generate_with_fallback, obtener_cliente_gemini, DEFAULT_MODELS
         from google.genai import types
         cliente = obtener_cliente_gemini()
         if not cliente:
@@ -399,26 +399,28 @@ def _mapear_con_gemini(rows: list[list[Any]], mapping_actual: dict[int, str]) ->
             "Respondé SOLO JSON con claves que sean índices de columna base 0 y valores campos canónicos. "
             "No inventes: si una columna es ambigua, omitila. Muestra:\n" + json.dumps(muestra, ensure_ascii=False)
         )
-        for modelo in MODELOS_GEMINI[:2]:
-            try:
-                r = cliente.models.generate_content(
-                    model=modelo,
-                    contents=prompt,
-                    config=types.GenerateContentConfig(response_mime_type="application/json", temperature=0),
-                )
-                data = json.loads(r.text or "{}")
-                out = dict(mapping_actual)
-                validos = set(ALIASES_CAMPOS)
-                for k, v in data.items():
-                    try:
-                        i = int(k)
-                    except Exception:
-                        continue
-                    if str(v) in validos and i not in out:
-                        out[i] = str(v)
-                return out
-            except Exception:
-                continue
+        begin_request()
+        try:
+            r, _modelo_usado = generate_with_fallback(
+                client=cliente,
+                models=DEFAULT_MODELS[:2],
+                contents=prompt,
+                config=types.GenerateContentConfig(response_mime_type="application/json", temperature=0),
+                log_prefix="GEMINI /ENVIOS",
+            )
+            data = json.loads(r.text or "{}")
+            out = dict(mapping_actual)
+            validos = set(ALIASES_CAMPOS)
+            for k, v in data.items():
+                try:
+                    i = int(k)
+                except Exception:
+                    continue
+                if str(v) in validos and i not in out:
+                    out[i] = str(v)
+            return out
+        except Exception:
+            pass
     except Exception:
         pass
     return mapping_actual

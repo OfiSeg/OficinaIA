@@ -2,13 +2,11 @@
 {% block title %}Pendientes · {{config_global.nombre_oficina}}{% endblock %}
 {% block content %}
 <div class="page">
-  <header class="top">
-    <div><h1>Pendientes</h1></div>
-    <div style="display:flex;align-items:center;gap:10px">
-      <strong class="count" id="pendientesCount">—</strong>
-      <button type="button" class="primary" id="btnNuevoPendiente">+ Nuevo pendiente</button>
-    </div>
+  <header class="top pendientes-head">
+    <div><h1>Pendientes</h1><p>Seguimiento de tareas y gestiones que todavía requieren una acción.</p></div>
+    <strong class="count" id="pendientesCount">—</strong>
   </header>
+  <div class="pend-toolbar"><button type="button" class="primary" id="btnNuevoPendiente">+ Nuevo pendiente</button></div>
 
   <div class="pend-filters">
     <button type="button" class="pend-filter active" data-estado="pendiente">Pendientes</button>
@@ -42,7 +40,7 @@
         </select>
       </label>
       <label>Notas / contenido (opcional)
-        <textarea id="pendContenido" rows="4" style="width:100%;margin-top:5px;padding:9px 11px;border:1px solid var(--line);border-radius:8px;font-size:11px;resize:vertical"></textarea>
+        <textarea id="pendContenido" rows="4" style="width:100%;margin-top:5px;padding:9px 11px;border:1px solid var(--line);border-radius:8px;font-size:calc(11px * var(--font-scale,1));resize:vertical"></textarea>
       </label>
       <p id="pendModalError"></p>
       <button type="submit" class="primary" style="width:100%;height:40px;margin-top:6px">Guardar</button>

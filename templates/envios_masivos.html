@@ -2,20 +2,20 @@
 {% block title %}Envíos Masivos · {{config_global.nombre_oficina}}{% endblock %}
 {% block content %}
 <div class="page envios-page">
-  <header class="top clean-page-head envios-head"><div><h1>Envíos Masivos</h1><p>Prepará contactos y notificaciones para EnvíosYA desde cualquier base.</p></div></header>
+  <header class="top clean-page-head envios-head"><div><h1>Envíos Masivos</h1></div></header>
 
   <section class="envios-card envios-upload-card">
-    <div class="envios-card-head"><div><h2>Importar bases</h2><p>OficinaIA identifica los campos, normaliza celulares y conserva la información útil aunque el formato de importación de EnvíosYA no la incluya.</p></div></div>
+    <div class="envios-card-head"><div><h2>Cargar bases</h2><p>Subí Excel o CSV. OficinaIA detecta las columnas y prepara los archivos de salida.</p></div></div>
     <label class="envios-drop" id="enviosDrop"><input id="enviosFiles" type="file" accept=".xlsx,.xlsm,.csv" multiple hidden><span class="envios-file-mark" aria-hidden="true">XLS</span><b>Arrastrá las bases acá</b><span>o hacé clic para seleccionarlas</span><small>Excel .xlsx / .xlsm · CSV · hasta 12 archivos por lote</small></label>
     <div class="envios-selected" id="enviosSelected"><div class="envios-empty">Todavía no seleccionaste archivos.</div></div>
 
-    <div class="envios-options">
-      <div class="envios-option"><label for="enviosFechaModo">Si aparece una fecha genérica</label><select id="enviosFechaModo"><option value="conservar">Conservarla como fecha de origen</option><option value="vencimiento">Usarla como vencimiento</option></select><small>No se adivina: elegí vencimiento sólo cuando conozcas qué significa esa fecha.</small></div>
-      <label class="envios-check"><input type="checkbox" id="enviosCompaniaFuente"><span><b>Usar compañía detectada por nombre del archivo</b><small>Ej.: una base llamada ALLIANZ completa “Compañía” con ALLIANZ. Dejalo apagado si sólo indica la fuente de la base.</small></span></label>
+    <div class="envios-toolbar">
+      <div class="envios-options-inline" aria-label="Opciones de importación">
+        <label class="envios-inline-check" title="Activá esta opción sólo si sabés que la fecha genérica de la base corresponde al vencimiento."><input type="checkbox" id="enviosFechaVencimiento"><span>Fecha genérica = vencimiento</span></label>
+        <label class="envios-inline-check" title="Completa Compañía usando el nombre del archivo cuando éste identifica realmente a la compañía."><input type="checkbox" id="enviosCompaniaFuente"><span>Usar compañía del nombre del archivo</span></label>
+      </div>
+      <div class="envios-actions"><button class="primary" id="enviosProcess" type="button" disabled>Procesar bases</button><button class="secondary" id="enviosClear" type="button">Limpiar</button></div>
     </div>
-
-    <div class="envios-rule-note"><b>Regla EnvíosYA</b><span>Celular: 10 dígitos exactos, sin +54, 9 internacional, 0, 15 histórico, espacios ni guiones.</span><code>011 15 4149-2756 → 1141492756</code></div>
-    <div class="envios-actions"><button class="primary" id="enviosProcess" type="button" disabled>Procesar bases</button><button class="secondary" id="enviosClear" type="button">Limpiar</button></div>
     <div class="envios-progress" id="enviosProgress" hidden><div><span id="enviosProgressBar"></span></div><p id="enviosProgressText"></p></div>
   </section>
 
@@ -30,11 +30,11 @@
       <div class="envios-export-card"><div><span class="envios-export-tag">OFICINAIA</span><h3>Base completa</h3><p>Conserva email, CP, dirección, tipo, fuente, originales, reparaciones y todos los campos que EnvíosYA no incluye en esos formatos.</p></div><a class="secondary envios-download alt" id="enviosMasterDownload" href="#">Descargar base</a></div>
     </div>
 
-    <div class="envios-mail-note"><div class="envios-mail-icon" aria-hidden="true">@</div><div><b>Email no se descarta</b><p>EnvíosYA permite guardar email en la ficha del contacto y enviar avisos por mail, pero la pantalla de <b>Importar notificaciones</b> que mostraste exige un CSV de 10 posiciones y no incluye Email. Por eso OficinaIA conserva todos los correos y los muestra acá, pero no altera ese CSV ni el Excel original inventando una columna que EnvíosYA no pidió.</p></div></div>
+    <p class="envios-inline-note">Los emails se conservan en la base completa. El CSV de notificaciones mantiene el formato de EnvíosYA y no agrega columnas.</p>
 
     <div class="envios-source-card"><div class="envios-source-head"><div><h3>Qué entendió OficinaIA</h3><p>La detección se hace por contenido y encabezados; no depende de posiciones fijas.</p></div></div><div class="envios-source-list" id="enviosSources"></div></div>
     <div class="envios-preview-card"><div class="envios-preview-head"><div><h3>Vista previa</h3><p>Los registros para revisar no entran al Excel de contactos.</p></div><div class="envios-filters" role="group"><button type="button" class="active" data-envios-filter="TODOS">Todos</button><button type="button" data-envios-filter="VALIDO">Válidos</button><button type="button" data-envios-filter="REVISAR">Revisar</button></div></div><div class="envios-table-wrap"><table class="envios-table"><thead><tr><th>Estado</th><th>Apellido</th><th>Nombre</th><th>Celular</th><th>Email</th><th>Localidad</th><th>CP</th><th>Compañía</th><th>Patente</th><th>Tipo</th><th>Origen</th></tr></thead><tbody id="enviosPreview"></tbody></table></div></div>
   </section>
 </div>
 {% endblock %}
-{% block scripts %}<script src="{{url_for('static',filename='js/envios_masivos.js', v='20260905-v19')}}"></script>{% endblock %}
+{% block scripts %}<script src="{{url_for('static',filename='js/envios_masivos.js', v='20260905-v20-stage9')}}"></script>{% endblock %}

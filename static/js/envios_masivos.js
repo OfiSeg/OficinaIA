@@ -49,7 +49,7 @@
   processBtn?.addEventListener('click',async()=>{
     if(!files.length)return;
     processBtn.disabled=true; clearBtn.disabled=true; progress.hidden=false; bar.style.width='16%';progressText.textContent='Leyendo y entendiendo las bases…';
-    const fd=new FormData(); files.forEach(f=>fd.append('bases',f,f.name)); fd.append('fecha_modo',qs('#enviosFechaModo')?.value||'conservar'); fd.append('usar_compania_fuente',qs('#enviosCompaniaFuente')?.checked?'1':'0');
+    const fd=new FormData(); files.forEach(f=>fd.append('bases',f,f.name)); fd.append('fecha_modo',qs('#enviosFechaVencimiento')?.checked?'vencimiento':'conservar'); fd.append('usar_compania_fuente',qs('#enviosCompaniaFuente')?.checked?'1':'0');
     try{
       const r=await fetch('/api/envios-masivos/procesar',{method:'POST',body:fd});
       bar.style.width='76%'; progressText.textContent='Limpiando teléfonos y eliminando duplicados…';

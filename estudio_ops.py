@@ -15,7 +15,7 @@ from pathlib import Path
 import fitz
 from google.genai import types
 
-from servicios_ia import obtener_cliente_gemini, MODELOS_GEMINI
+from ai_gateway import begin_request, generate_with_fallback, obtener_cliente_gemini, DEFAULT_MODELS
 from storage_r2 import subir_pdf as r2_subir_pdf, eliminar_pdf as r2_eliminar_pdf, descargar_pdf_temporal
 
 BASE_DIR = Path(__file__).resolve().parent
@@ -370,17 +370,20 @@ Mantené hechos_documentados, inferencias, puntos_favorables, puntos_desfavorabl
 """
 
     partes = [types.Part.from_text(text=prompt), types.Part.from_bytes(data=datos_pdf, mime_type="application/pdf")]
+    # Cada caso de Estudio es una operación independiente: comparte la misma
+    # infraestructura de Gemini, pero no estado de ejecución con otro caso.
+    begin_request()
     ultimo = None; respuesta = None
-    for modelo in MODELOS_GEMINI:
-        try:
-            respuesta = cliente.models.generate_content(
-                model=modelo,
-                contents=partes,
-                config=types.GenerateContentConfig(temperature=0.05, max_output_tokens=6000, response_mime_type="application/json"),
-            )
-            break
-        except Exception as e:
-            ultimo = e
+    try:
+        respuesta, _modelo_usado = generate_with_fallback(
+            client=cliente,
+            models=DEFAULT_MODELS,
+            contents=partes,
+            config=types.GenerateContentConfig(temperature=0.05, max_output_tokens=6000, response_mime_type="application/json"),
+            log_prefix="GEMINI /ESTUDIO",
+        )
+    except Exception as e:
+        ultimo = e
     if respuesta is None:
         return _caso_incompleto_por_error(usuario, lote_id, nombre_archivo, storage_key, len(datos_pdf), "Gemini no estuvo disponible para completar el análisis. Reintentar este caso.")
 

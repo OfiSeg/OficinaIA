@@ -2,9 +2,9 @@
    Deliberadamente acotado: no rediseña el chat que ya funciona bien. */
 
 :root{
-  --ui-font-size:14px;
-  --sidebar-font-size:14px;
-  --chat-font-size:15px;
+  --ui-font-size:calc(14px * var(--font-scale,1));
+  --sidebar-font-size:calc(14px * var(--font-scale,1));
+  --chat-font-size:calc(15px * var(--font-scale,1));
   --sidebar-open:246px;
   --sidebar-closed:64px;
   --ui-radius:10px;
@@ -36,7 +36,7 @@ body .sidebar .brand .logo{
   border:0 !important;border-radius:8px !important;
 }
 body .sidebar .brand .logo .app-icon{width:18px;height:18px}
-body .sidebar .brand-text b{font-size:14px !important;font-weight:650 !important;letter-spacing:0 !important}
+body .sidebar .brand-text b{font-size:calc(14px * var(--font-scale,1)) !important;font-weight:650 !important;letter-spacing:0 !important}
 body .sidebar .brand-text small{display:none !important}
 body .sidebar .main-nav{display:flex !important;flex-direction:column !important;gap:3px !important;min-height:0}
 body .sidebar .nav-label, body .sidebar .tools-label, body .sidebar .quickaccess-label{display:none !important}
@@ -64,7 +64,7 @@ body .sidebar .nav-chevron{margin-left:auto;width:16px;height:16px;display:grid;
 body .sidebar .nav-chevron .app-icon{width:15px;height:15px;transition:transform .15s ease}
 body .sidebar .nav-toggle[aria-expanded="true"] .nav-chevron .app-icon{transform:rotate(90deg)}
 body .sidebar .nav-submenu{padding:3px 0 5px 32px !important;gap:1px !important}
-body .sidebar .nav-subitem{min-height:31px !important;padding:5px 8px !important;font-size:12px !important;font-weight:500 !important;border-radius:7px !important}
+body .sidebar .nav-subitem{min-height:31px !important;padding:5px 8px !important;font-size:calc(12px * var(--font-scale,1)) !important;font-weight:500 !important;border-radius:7px !important}
 
 body .sidebar .quickaccess{
   margin-top:auto !important;
@@ -119,14 +119,14 @@ html[data-sidebar="collapsed"] body .sidebar .quickaccess-item img{width:23px !i
 .settings-nav{display:flex;flex-direction:column;gap:3px;position:sticky;top:76px}
 .settings-nav button{
   border:0;background:transparent;color:var(--soft);text-align:left;
-  min-height:38px;padding:8px 11px;border-radius:8px;font-size:14px;font-weight:500;cursor:pointer;
+  min-height:38px;padding:8px 11px;border-radius:8px;font-size:calc(14px * var(--font-scale,1));font-weight:500;cursor:pointer;
 }
 .settings-nav button:hover{background:var(--hover);color:var(--ink)}
 .settings-nav button.active{background:var(--tealbg);color:var(--teal);font-weight:600}
 .settings-content{min-width:0}
 .settings-section{display:none}
 .settings-section.active{display:block}
-.settings-section>h2,.settings-title-row h2{margin:0 0 18px;font-size:20px;line-height:1.2;font-weight:650;color:var(--ink)}
+.settings-section>h2,.settings-title-row h2{margin:0 0 18px;font-size:calc(20px * var(--font-scale,1));line-height:1.2;font-weight:650;color:var(--ink)}
 .settings-title-row{display:flex;align-items:center;justify-content:space-between;gap:12px;margin-bottom:18px}
 .settings-title-row h2{margin:0}
 .settings-card{
@@ -138,17 +138,17 @@ html[data-sidebar="collapsed"] body .sidebar .quickaccess-item img{width:23px !i
   display:flex;align-items:center;justify-content:space-between;gap:20px;
 }
 .setting-row:last-of-type{border-bottom:0}
-.setting-row b{font-size:14px;font-weight:600;color:var(--ink)}
+.setting-row b{font-size:calc(14px * var(--font-scale,1));font-weight:600;color:var(--ink)}
 .field-row input,.setting-row select{
   width:min(360px,60%);height:36px;border:1px solid var(--line);border-radius:8px;
-  background:var(--panel);color:var(--ink);padding:0 10px;font-size:14px;
+  background:var(--panel);color:var(--ink);padding:0 10px;font-size:calc(14px * var(--font-scale,1));
 }
 .range-row{display:grid;grid-template-columns:180px 1fr;align-items:center}
 .range-row label{display:flex;justify-content:space-between;gap:10px}
-.range-row output{font-size:12px;color:var(--soft);font-variant-numeric:tabular-nums}
+.range-row output{font-size:calc(12px * var(--font-scale,1));color:var(--soft);font-variant-numeric:tabular-nums}
 .range-row input[type="range"]{width:100%;accent-color:var(--teal)}
 .settings-save{margin-top:14px}
-.save-state{display:inline-block;margin-left:10px;font-size:12px;color:var(--soft)}
+.save-state{display:inline-block;margin-left:10px;font-size:calc(12px * var(--font-scale,1));color:var(--soft)}
 
 .switch{position:relative;width:40px;height:22px;display:inline-block;flex:0 0 auto}
 .switch input{position:absolute;opacity:0;pointer-events:none}
@@ -164,7 +164,7 @@ html[data-sidebar="collapsed"] body .sidebar .quickaccess-item img{width:23px !i
 }
 .tool-favicon{width:26px;height:26px;object-fit:contain;border-radius:5px;justify-self:center}
 .tool-editor-row input[type="text"],.tool-editor-row input[type="url"],.tool-name,.tool-url{
-  height:36px;border:1px solid transparent;border-radius:7px;background:transparent;color:var(--ink);padding:0 8px;font-size:14px;min-width:0;
+  height:36px;border:1px solid transparent;border-radius:7px;background:transparent;color:var(--ink);padding:0 8px;font-size:calc(14px * var(--font-scale,1));min-width:0;
 }
 .tool-editor-row input:hover,.tool-editor-row input:focus{border-color:var(--line);background:var(--bg);outline:0}
 .icon-button{width:32px;height:32px;border:0;border-radius:7px;background:transparent;color:var(--soft);display:grid;place-items:center;cursor:pointer}
@@ -179,9 +179,9 @@ html[data-sidebar="collapsed"] body .sidebar .quickaccess-item img{width:23px !i
 /* Modales de usuarios: forma de diálogo normal */
 .modal>div{border-radius:14px !important;max-width:460px !important;padding:22px !important}
 .modal form{display:grid;gap:12px}
-.modal form label{display:grid;gap:5px;font-size:13px;font-weight:600;color:var(--ink)}
+.modal form label{display:grid;gap:5px;font-size:calc(13px * var(--font-scale,1));font-weight:600;color:var(--ink)}
 .modal form input,.modal form select{height:38px;border:1px solid var(--line);border-radius:8px;background:var(--panel);color:var(--ink);padding:0 10px}
-.modal-close{float:right;border:0;background:transparent;font-size:22px;cursor:pointer;color:var(--soft)}
+.modal-close{float:right;border:0;background:transparent;font-size:calc(22px * var(--font-scale,1));cursor:pointer;color:var(--soft)}
 
 /* Dark: conserva variables existentes, solo corrige controles nuevos. */
 html[data-theme="dark"] .switch span{background:#354153}
@@ -238,9 +238,9 @@ body .sidebar .nav-icon-excel{
    base y mantiene la estructura existente de OficinaIA.
    ========================================================== */
 :root{
-  --ui-font-size:16px;
-  --sidebar-font-size:15px;
-  --chat-font-size:16px;
+  --ui-font-size:calc(16px * var(--font-scale,1));
+  --sidebar-font-size:calc(15px * var(--font-scale,1));
+  --chat-font-size:calc(16px * var(--font-scale,1));
   --sidebar-open:252px;
 }
 
@@ -256,20 +256,20 @@ body{font-size:var(--ui-font-size) !important;line-height:1.5 !important}
 /* Marca interna: no usa favicon ni SVG para Ofi/Sofia. */
 body .sidebar .brand .internal-brand-mark{
   font-family:Arial,sans-serif !important;
-  font-size:17px !important;
+  font-size:calc(17px * var(--font-scale,1)) !important;
   font-weight:800 !important;
   color:var(--teal) !important;
   background:var(--tealbg) !important;
   letter-spacing:-.03em;
 }
 body .sidebar .internal-chat-mark{
-  font-size:18px !important;
+  font-size:calc(18px * var(--font-scale,1)) !important;
   font-weight:700 !important;
   color:currentColor !important;
 }
 body .sidebar .brand-text b{
   font-family:Arial,sans-serif !important;
-  font-size:16px !important;
+  font-size:calc(16px * var(--font-scale,1)) !important;
   font-weight:700 !important;
 }
 
@@ -294,7 +294,7 @@ body .sidebar .company-favicon{
 
 /* Acciones superiores: +/- visibles y realmente utilizables. */
 .global-actions{gap:7px !important}
-.global-date{font-size:12px !important}
+.global-date{font-size:calc(12px * var(--font-scale,1)) !important}
 .font-controls{
   height:34px !important;
   display:inline-flex !important;
@@ -308,7 +308,7 @@ body .sidebar .company-favicon{
   width:34px !important;height:34px !important;
   border:0 !important;border-radius:0 !important;
   background:transparent !important;color:var(--ink) !important;
-  font:700 17px/1 Arial,sans-serif !important;
+  font:700 calc(17px * var(--font-scale,1))/1 Arial,sans-serif !important;
   cursor:pointer !important;
 }
 .font-controls button+button{border-left:1px solid var(--line) !important}
@@ -321,7 +321,7 @@ body .sidebar .company-favicon{
 .top{margin-bottom:12px !important}
 .top h1{
   font-family:Arial,sans-serif !important;
-  font-size:26px !important;
+  font-size:calc(26px * var(--font-scale,1)) !important;
   font-weight:700 !important;
   letter-spacing:-.02em !important;
 }
@@ -329,18 +329,18 @@ body .sidebar .company-favicon{
 /* Chat: más presencia, más ancho útil y tipografía consistente. */
 .chat-shell{min-height:0 !important}
 .chat-list{width:205px !important;min-width:205px !important}
-.chat-list-head b{font-size:14px !important;font-weight:700 !important}
-.chat-list-head button{width:34px !important;height:34px !important;font-size:18px !important}
+.chat-list-head b{font-size:calc(14px * var(--font-scale,1)) !important;font-weight:700 !important}
+.chat-list-head button{width:34px !important;height:34px !important;font-size:calc(18px * var(--font-scale,1)) !important}
 .chat-item{padding:10px 10px !important;min-height:54px !important}
-.chat-item span{font-size:14px !important;font-weight:600 !important;line-height:1.25 !important}
-.chat-item small{font-size:11px !important;line-height:1.25 !important;margin-top:3px !important}
+.chat-item span{font-size:calc(14px * var(--font-scale,1)) !important;font-weight:600 !important;line-height:1.25 !important}
+.chat-item small{font-size:calc(11px * var(--font-scale,1)) !important;line-height:1.25 !important;margin-top:3px !important}
 .chat>header{min-height:62px !important;padding:11px 16px !important}
-.chat>header b{font-size:15px !important;font-weight:700 !important}
-.chat>header>strong{width:36px !important;height:36px !important;font-size:17px !important}
-.clear-chat{font-size:12px !important;padding:7px 9px !important}
-.chat-tip{font-size:13px !important;line-height:1.45 !important}
-.chat-tip-title{font-size:13px !important}
-.chat-tip-body p{font-size:13px !important}
+.chat>header b{font-size:calc(15px * var(--font-scale,1)) !important;font-weight:700 !important}
+.chat>header>strong{width:36px !important;height:36px !important;font-size:calc(17px * var(--font-scale,1)) !important}
+.clear-chat{font-size:calc(12px * var(--font-scale,1)) !important;padding:7px 9px !important}
+.chat-tip{font-size:calc(13px * var(--font-scale,1)) !important;line-height:1.45 !important}
+.chat-tip-title{font-size:calc(13px * var(--font-scale,1)) !important}
+.chat-tip-body p{font-size:calc(13px * var(--font-scale,1)) !important}
 .history{padding:22px 24px !important}
 .msg{max-width:min(78%,820px) !important;margin-bottom:13px !important}
 .bubble{
@@ -350,15 +350,15 @@ body .sidebar .company-favicon{
   padding:11px 14px !important;
 }
 .bubble p,.bubble li,.bubble td,.bubble th{font-size:inherit !important}
-.welcome h2{font-family:Arial,sans-serif !important;font-size:22px !important;font-weight:700 !important}
-.welcome p{font-size:14px !important}
+.welcome h2{font-family:Arial,sans-serif !important;font-size:calc(22px * var(--font-scale,1)) !important;font-weight:700 !important}
+.welcome p{font-size:calc(14px * var(--font-scale,1)) !important}
 
 /* Tarjetas que Sofia agrega al chat. */
 .excel-proposal,.tabulado-flota,.metadata-proposal{font-size:var(--chat-font-size) !important}
-.excel-proposal-title,.tabulado-flota-title,.metadata-proposal-title{font-size:15px !important;font-weight:700 !important}
-.excel-proposal-help,.tabulado-flota-help,.metadata-proposal-help{font-size:13px !important;line-height:1.45 !important}
-.tabulado-flota-pre{font-size:13px !important;line-height:1.45 !important}
-.excel-proposal button,.tabulado-flota button,.metadata-proposal button{font-size:13px !important}
+.excel-proposal-title,.tabulado-flota-title,.metadata-proposal-title{font-size:calc(15px * var(--font-scale,1)) !important;font-weight:700 !important}
+.excel-proposal-help,.tabulado-flota-help,.metadata-proposal-help{font-size:calc(13px * var(--font-scale,1)) !important;line-height:1.45 !important}
+.tabulado-flota-pre{font-size:calc(13px * var(--font-scale,1)) !important;line-height:1.45 !important}
+.excel-proposal button,.tabulado-flota button,.metadata-proposal button{font-size:calc(13px * var(--font-scale,1)) !important}
 
 .composer-wrap{padding:12px 18px 14px !important}
 .composer{width:min(940px,100%) !important;min-height:48px !important;padding:5px 6px 5px 12px !important}
@@ -370,15 +370,15 @@ body .sidebar .company-favicon{
   line-height:1.4 !important;
 }
 .attach-pdf,.slash-btn,.send{width:38px !important;height:38px !important;min-width:38px !important}
-.composer-wrap>small{width:min(940px,100%) !important;font-size:11px !important;line-height:1.35 !important}
-.pdf-attached{width:min(940px,100%) !important;font-size:13px !important}
+.composer-wrap>small{width:min(940px,100%) !important;font-size:calc(11px * var(--font-scale,1)) !important;line-height:1.35 !important}
+.pdf-attached{width:min(940px,100%) !important;font-size:calc(13px * var(--font-scale,1)) !important}
 
 /* Configuración mantiene lo bueno del editor dinámico de herramientas, pero
    con tamaño coherente con el resto. */
-.settings-nav button{font-size:15px !important}
-.settings-section>h2,.settings-title-row h2{font-family:Arial,sans-serif !important;font-size:21px !important}
-.setting-row b{font-size:15px !important}
-.field-row input,.setting-row select,.tool-editor-row input[type="text"],.tool-editor-row input[type="url"]{font-size:15px !important}
+.settings-nav button{font-size:calc(15px * var(--font-scale,1)) !important}
+.settings-section>h2,.settings-title-row h2{font-family:Arial,sans-serif !important;font-size:calc(21px * var(--font-scale,1)) !important}
+.setting-row b{font-size:calc(15px * var(--font-scale,1)) !important}
+.field-row input,.setting-row select,.tool-editor-row input[type="text"],.tool-editor-row input[type="url"]{font-size:calc(15px * var(--font-scale,1)) !important}
 
 /* Dark mode para los controles superiores nuevos. */
 html[data-theme="dark"] .font-controls{background:var(--surface,#1a222d) !important}
@@ -403,16 +403,16 @@ html[data-theme="dark"] .font-controls{background:var(--surface,#1a222d) !import
   position:static;top:auto;margin:0;padding:18px 12px;border-right:1px solid var(--line);
   background:color-mix(in srgb,var(--panel) 96%,var(--teal) 4%);border-radius:16px 0 0 16px;
 }
-.settings-shell .settings-nav button{min-height:42px;padding:9px 12px;font-size:15px !important;border-radius:9px}
+.settings-shell .settings-nav button{min-height:42px;padding:9px 12px;font-size:calc(15px * var(--font-scale,1)) !important;border-radius:9px}
 .settings-shell .settings-content{padding:26px 28px 30px;min-width:0}
 .settings-section-head{display:flex;align-items:flex-start;justify-content:space-between;gap:18px;margin-bottom:18px}
-.settings-section-head h2,.settings-title-row h2{margin:0 !important;font-size:22px !important;line-height:1.2}
-.settings-section-head p{margin:5px 0 0;color:var(--soft);font-size:13px;line-height:1.45}
+.settings-section-head h2,.settings-title-row h2{margin:0 !important;font-size:calc(22px * var(--font-scale,1)) !important;line-height:1.2}
+.settings-section-head p{margin:5px 0 0;color:var(--soft);font-size:calc(13px * var(--font-scale,1));line-height:1.45}
 .settings-card-spaced{overflow:visible}
 .settings-card-spaced .setting-row:first-child{border-radius:12px 12px 0 0}
 .settings-card-spaced .setting-row:last-child{border-radius:0 0 12px 12px}
 .setting-row>label,.setting-row>span{display:grid;gap:3px}
-.setting-row small{font-size:12px;font-weight:400;color:var(--soft);line-height:1.35}
+.setting-row small{font-size:calc(12px * var(--font-scale,1));font-weight:400;color:var(--soft);line-height:1.35}
 .field-row input,.setting-row select{width:min(390px,58%)}
 .settings-footer{display:flex;align-items:center;gap:10px;margin-top:16px}
 .settings-footer .settings-save{margin-top:0}
@@ -425,21 +425,21 @@ html[data-theme="dark"] .font-controls{background:var(--surface,#1a222d) !import
 .user-row{display:grid;grid-template-columns:42px minmax(0,1fr) 130px auto 34px;align-items:center;gap:12px;min-height:72px;padding:11px 14px;border-bottom:1px solid var(--line);position:relative}
 .user-row:last-child{border-bottom:0}
 .user-row:hover{background:var(--hover)}
-.user-avatar{width:38px;height:38px;border-radius:11px;display:grid;place-items:center;background:var(--tealbg);color:var(--teal);font-size:15px;font-weight:800}
+.user-avatar{width:38px;height:38px;border-radius:11px;display:grid;place-items:center;background:var(--tealbg);color:var(--teal);font-size:calc(15px * var(--font-scale,1));font-weight:800}
 .user-main{min-width:0}
 .user-name-line{display:flex;align-items:center;gap:8px;min-width:0}
-.user-name-line b{font-size:15px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-.user-main small{display:block;margin-top:4px;color:var(--soft);font-size:12px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-.user-principal,.user-role{display:inline-flex;align-items:center;width:max-content;max-width:100%;border-radius:999px;padding:4px 8px;font-size:11px;font-weight:700;line-height:1;background:var(--hover);color:var(--soft)}
+.user-name-line b{font-size:calc(15px * var(--font-scale,1));white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.user-main small{display:block;margin-top:4px;color:var(--soft);font-size:calc(12px * var(--font-scale,1));white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.user-principal,.user-role{display:inline-flex;align-items:center;width:max-content;max-width:100%;border-radius:999px;padding:4px 8px;font-size:calc(11px * var(--font-scale,1));font-weight:700;line-height:1;background:var(--hover);color:var(--soft)}
 .user-principal{background:var(--tealbg);color:var(--teal)}
-.user-role{justify-self:start;font-size:12px;padding:5px 9px}
+.user-role{justify-self:start;font-size:calc(12px * var(--font-scale,1));padding:5px 9px}
 .user-edit{justify-self:end}
 .user-more{position:relative;justify-self:end}
 .user-more summary{list-style:none;width:32px;height:32px;border-radius:8px;display:grid;place-items:center;cursor:pointer;color:var(--soft);font-weight:800;letter-spacing:1px;user-select:none}
 .user-more summary::-webkit-details-marker{display:none}
 .user-more summary:hover,.user-more[open] summary{background:var(--hover);color:var(--ink)}
 .user-menu-pop{position:absolute;right:0;top:36px;z-index:20;min-width:150px;padding:6px;border:1px solid var(--line);border-radius:10px;background:var(--panel);box-shadow:0 12px 30px rgba(18,32,51,.14)}
-.user-menu-pop button{width:100%;border:0;border-radius:7px;background:transparent;padding:9px 10px;text-align:left;cursor:pointer;font:inherit;font-size:13px}
+.user-menu-pop button{width:100%;border:0;border-radius:7px;background:transparent;padding:9px 10px;text-align:left;cursor:pointer;font:inherit;font-size:calc(13px * var(--font-scale,1))}
 .user-menu-pop button:hover{background:var(--hover)}
 .danger-text{color:#b42318 !important}
 .user-more-spacer{width:32px;height:32px}
@@ -447,36 +447,36 @@ html[data-theme="dark"] .font-controls{background:var(--surface,#1a222d) !import
 /* Estudio: identidad propia y controles de carga consistentes */
 .estudio-page{padding-top:34px !important}
 .estudio-head{padding-bottom:4px !important}
-.estudio-head h1{font-size:28px !important}
+.estudio-head h1{font-size:calc(28px * var(--font-scale,1)) !important}
 .estudio-tabs{margin-top:16px}
 .estudio-card{box-shadow:0 4px 18px rgba(18,32,51,.045)}
-.drop-pdf-mark{display:grid;place-items:center;min-width:42px;height:30px;padding:0 7px;border-radius:7px;background:var(--tealbg);color:var(--teal);font-size:11px !important;font-weight:800;letter-spacing:.04em}
+.drop-pdf-mark{display:grid;place-items:center;min-width:42px;height:30px;padding:0 7px;border-radius:7px;background:var(--tealbg);color:var(--teal);font-size:calc(11px * var(--font-scale,1)) !important;font-weight:800;letter-spacing:.04em}
 .estudio-drop .drop-pdf-mark{margin-bottom:5px}
 .estudio-learning-note{display:flex;align-items:flex-start;gap:12px;margin-bottom:16px;padding:14px 16px;border:1px solid color-mix(in srgb,var(--line) 74%,var(--teal) 26%);border-radius:12px;background:color-mix(in srgb,var(--panel) 95%,var(--teal) 5%)}
-.estudio-learning-note b{flex:0 0 auto;font-size:13px;color:var(--ink)}
-.estudio-learning-note span{font-size:13px;line-height:1.45;color:var(--soft)}
+.estudio-learning-note b{flex:0 0 auto;font-size:calc(13px * var(--font-scale,1));color:var(--ink)}
+.estudio-learning-note span{font-size:calc(13px * var(--font-scale,1));line-height:1.45;color:var(--soft)}
 .estudio-example-form{grid-template-columns:minmax(0,1.45fr) minmax(180px,.55fr);gap:14px 16px}
-.estudio-example-form label{font-size:13px}
-.estudio-example-form input,.estudio-example-form select,.estudio-example-form textarea{border:1px solid var(--line);border-radius:9px;background:var(--panel);color:var(--ink);font:inherit;font-size:14px;padding:9px 10px;outline:0;box-sizing:border-box}
+.estudio-example-form label{font-size:calc(13px * var(--font-scale,1))}
+.estudio-example-form input,.estudio-example-form select,.estudio-example-form textarea{border:1px solid var(--line);border-radius:9px;background:var(--panel);color:var(--ink);font:inherit;font-size:calc(14px * var(--font-scale,1));padding:9px 10px;outline:0;box-sizing:border-box}
 .estudio-example-form input,.estudio-example-form select{height:40px}
 .estudio-example-form textarea{resize:vertical;min-height:84px;line-height:1.45}
 .estudio-example-form input:focus,.estudio-example-form select:focus,.estudio-example-form textarea:focus{border-color:color-mix(in srgb,var(--teal) 70%,var(--line) 30%);box-shadow:0 0 0 3px color-mix(in srgb,var(--tealbg) 80%,transparent 20%)}
 .example-foundation,.example-pdf-field,.example-form-footer{grid-column:1/-1}
 .example-pdf-field{display:grid;gap:8px}
-.example-label{font-size:13px;font-weight:650;color:var(--ink)}
+.example-label{font-size:calc(13px * var(--font-scale,1));font-weight:650;color:var(--ink)}
 .example-label small{font-weight:400;color:var(--soft)}
 .example-pdf-drop{min-height:92px;border:1.5px dashed var(--line);border-radius:11px;display:flex !important;grid-template-columns:none !important;align-items:center;justify-content:center;gap:12px;padding:14px;background:color-mix(in srgb,var(--panel) 97%,var(--teal) 3%);cursor:pointer;transition:.15s ease}
 .example-pdf-drop:hover,.example-pdf-drop.drag{border-color:var(--teal);background:color-mix(in srgb,var(--panel) 93%,var(--teal) 7%)}
 .example-pdf-drop>span:last-child{display:grid;gap:3px;font-weight:400}
-.example-pdf-drop b{font-size:14px;color:var(--ink)}
-.example-pdf-drop small{font-size:12px;color:var(--soft)}
+.example-pdf-drop b{font-size:calc(14px * var(--font-scale,1));color:var(--ink)}
+.example-pdf-drop small{font-size:calc(12px * var(--font-scale,1));color:var(--soft)}
 .example-pdf-selected{min-height:56px;border:1px solid var(--line);border-radius:10px;background:var(--panel);padding:10px 12px;display:flex;align-items:center;justify-content:space-between;gap:12px}
 .example-pdf-selected[hidden]{display:none !important}
 .example-pdf-selected>div{min-width:0;display:grid;gap:3px}
-.example-pdf-selected b{font-size:13px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-.example-pdf-selected small{font-size:11px;color:var(--soft)}
+.example-pdf-selected b{font-size:calc(13px * var(--font-scale,1));white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.example-pdf-selected small{font-size:calc(11px * var(--font-scale,1));color:var(--soft)}
 .example-form-footer{display:flex;align-items:center;gap:10px;margin-top:2px}
-#ejemploEstado{font-size:12px;color:var(--soft)}
+#ejemploEstado{font-size:calc(12px * var(--font-scale,1));color:var(--soft)}
 .estudio-examples-list{gap:10px}
 .estudio-example-row{min-height:64px;padding:13px 14px;border-radius:11px}
 .estudio-example-row .danger{border:0;background:transparent;color:#b42318;border-radius:8px;padding:7px 9px;cursor:pointer}
@@ -522,12 +522,12 @@ html[data-theme="dark"] .user-menu-pop{box-shadow:0 12px 30px rgba(0,0,0,.28)}
   border-bottom:0 !important;
 }
 .chat-list-head b{
-  font-size:13px !important;
+  font-size:calc(13px * var(--font-scale,1)) !important;
   letter-spacing:0 !important;
 }
 .chat-list-head button{
   width:30px !important;height:30px !important;
-  border-radius:9px !important;font-size:17px !important;
+  border-radius:9px !important;font-size:calc(17px * var(--font-scale,1)) !important;
   box-shadow:none !important;
 }
 .chat-search-wrap{
@@ -538,7 +538,7 @@ html[data-theme="dark"] .user-menu-pop{box-shadow:0 12px 30px rgba(0,0,0,.28)}
   height:36px !important;
   border-radius:9px !important;
   padding:0 11px !important;
-  font-size:12px !important;
+  font-size:calc(12px * var(--font-scale,1)) !important;
 }
 .chat-list-items{padding:8px !important}
 .chat-item-row{
@@ -554,12 +554,12 @@ html[data-theme="dark"] .user-menu-pop{box-shadow:0 12px 30px rgba(0,0,0,.28)}
   border-radius:10px !important;
 }
 .chat-item-title,.chat-item span{
-  font-size:12.5px !important;
+  font-size:calc(12.5px * var(--font-scale,1)) !important;
   font-weight:650 !important;
   line-height:1.3 !important;
 }
 .chat-item-meta,.chat-item small{
-  font-size:10px !important;
+  font-size:calc(10px * var(--font-scale,1)) !important;
   line-height:1.25 !important;
   margin-top:5px !important;
 }
@@ -578,7 +578,7 @@ html[data-theme="dark"] .user-menu-pop{box-shadow:0 12px 30px rgba(0,0,0,.28)}
 }
 .chat-rename,.chat-delete{
   width:25px !important;height:23px !important;
-  border-radius:6px !important;font-size:11px !important;
+  border-radius:6px !important;font-size:calc(11px * var(--font-scale,1)) !important;
 }
 
 /* La conversación usa el espacio disponible: sin columnas artificialmente angostas. */
@@ -591,10 +591,10 @@ html[data-theme="dark"] .user-menu-pop{box-shadow:0 12px 30px rgba(0,0,0,.28)}
   width:32px !important;height:32px !important;
   border-radius:9px !important;
 }
-.chat>header b{font-size:14px !important}
+.chat>header b{font-size:calc(14px * var(--font-scale,1)) !important}
 .clear-chat{
   border-radius:8px !important;
-  font-size:11px !important;
+  font-size:calc(11px * var(--font-scale,1)) !important;
   opacity:.8;
 }
 .history{
@@ -738,7 +738,7 @@ html[data-theme="dark"] .global-logout{
 /* =========================================================
    Envíos Masivos — bases → formato EnvíosYA
    ========================================================= */
-.envios-nav-mark{font-size:18px;line-height:1;color:var(--accent,#315A72)}
+.envios-nav-mark{font-size:calc(18px * var(--font-scale,1));line-height:1;color:var(--accent,#315A72)}
 .envios-page{max-width:1180px;margin:0 auto;padding-bottom:48px}
 .envios-head{display:flex;align-items:end;justify-content:space-between;gap:20px}
 .envios-head h1{margin-bottom:4px}
@@ -751,12 +751,12 @@ html[data-theme="dark"] .global-logout{
 .envios-drop:hover,.envios-drop.drag{border-color:#315A72;background:#eef4f7;box-shadow:inset 0 0 0 1px rgba(49,90,114,.08)}
 .envios-drop b{font-size:1.08em}.envios-drop span,.envios-drop small{color:#667085}.envios-drop small{margin-top:4px}
 .envios-file-mark,.envios-file-icon{font-family:"Segoe UI",Arial,sans-serif;font-weight:800;letter-spacing:.04em;color:#315A72;background:#eaf1f5;border:1px solid #cfdce3;border-radius:7px}
-.envios-file-mark{font-size:13px;padding:8px 9px;margin-bottom:5px}
+.envios-file-mark{font-size:calc(13px * var(--font-scale,1));padding:8px 9px;margin-bottom:5px}
 .envios-selected{margin-top:14px;display:grid;gap:8px}
 .envios-empty{padding:12px 14px;border:1px dashed var(--line,#d9e0e5);border-radius:10px;color:var(--muted,#667085);background:var(--surface-soft,#fafbfc)}
 .envios-file-row{display:grid;grid-template-columns:auto 1fr auto;gap:11px;align-items:center;padding:10px 12px;border:1px solid var(--line,#d9e0e5);border-radius:10px;background:var(--surface-soft,#fafbfc)}
-.envios-file-icon{display:grid;place-items:center;width:36px;height:32px;font-size:10px}.envios-file-row b{display:block}.envios-file-row small{display:block;color:var(--muted,#667085);margin-top:2px}
-.envios-file-row button{border:0;background:transparent;color:#77808a;font-size:21px;cursor:pointer;padding:2px 7px;border-radius:6px}.envios-file-row button:hover{background:rgba(0,0,0,.06);color:#20262d}
+.envios-file-icon{display:grid;place-items:center;width:36px;height:32px;font-size:calc(10px * var(--font-scale,1))}.envios-file-row b{display:block}.envios-file-row small{display:block;color:var(--muted,#667085);margin-top:2px}
+.envios-file-row button{border:0;background:transparent;color:#77808a;font-size:calc(21px * var(--font-scale,1));cursor:pointer;padding:2px 7px;border-radius:6px}.envios-file-row button:hover{background:rgba(0,0,0,.06);color:#20262d}
 .envios-rule-note{margin-top:16px;display:grid;grid-template-columns:auto 1fr auto;gap:12px;align-items:center;padding:12px 14px;background:#eaf1f5;border:1px solid #cfdce3;border-radius:10px;color:#294f64}
 .envios-rule-note b{white-space:nowrap}.envios-rule-note span{font-size:.94em}.envios-rule-note code{white-space:nowrap;background:rgba(255,255,255,.72);border:1px solid rgba(49,90,114,.16);border-radius:7px;padding:6px 8px;font-size:.9em}
 .envios-actions{display:flex;gap:9px;margin-top:16px}.envios-actions .primary,.envios-download{background:#315A72;color:#fff!important;border:1px solid #315A72}.envios-actions .primary:hover,.envios-download:hover{background:#294F64;border-color:#294F64}.envios-download{text-decoration:none;display:inline-flex;align-items:center;justify-content:center;padding:9px 14px;border-radius:9px;font-weight:650}
@@ -774,6 +774,251 @@ html[data-theme="dark"] .envios-option,html[data-theme="dark"] .envios-check,htm
 /* V19 · EnvíosYA: identidad, email visible y control de calidad */
 .envios-quality-note,.envios-mail-note{margin:12px 0 14px;padding:13px 15px;border:1px solid var(--line,#d9e0e5);border-radius:11px;background:var(--surface-soft,#fafbfc);line-height:1.45}
 .envios-quality-note{border-color:#d7c28a;background:#fffaf0;color:#5f4b18}.envios-quality-note code{font-family:Consolas,"Courier New",monospace;background:rgba(255,255,255,.7);padding:1px 4px;border-radius:4px}
-.envios-mail-note{display:grid;grid-template-columns:34px 1fr;gap:11px;align-items:start}.envios-mail-note p{margin:4px 0 0;color:var(--muted,#667085)}.envios-mail-icon{width:32px;height:32px;border-radius:9px;display:grid;place-items:center;background:#eaf1f5;color:#294f64;font-weight:800;font-size:18px}
+.envios-mail-note{display:grid;grid-template-columns:34px 1fr;gap:11px;align-items:start}.envios-mail-note p{margin:4px 0 0;color:var(--muted,#667085)}.envios-mail-icon{width:32px;height:32px;border-radius:9px;display:grid;place-items:center;background:#eaf1f5;color:#294f64;font-weight:800;font-size:calc(18px * var(--font-scale,1))}
 html[data-theme="dark"] .envios-quality-note{background:#2b2518;border-color:#695529;color:#e8d8ab}html[data-theme="dark"] .envios-mail-note{background:#111a20}html[data-theme="dark"] .envios-mail-icon{background:#203e4f;color:#b9d2df}
 .envios-table{min-width:1250px}
+
+/* ===== V20 Etapa 8 · coherencia visual global ===== */
+/* Los iconos oscuros de módulos mantienen su forma pero ganan contraste real. */
+html[data-theme="dark"] body .sidebar .theme-sensitive-nav-icon{
+  filter:brightness(0) invert(1) opacity(.88);
+}
+/* Envíos: ningún archivo seleccionado debe convertirse en una tarjeta blanca en dark. */
+html[data-theme="dark"] .envios-file-row,
+html[data-theme="dark"] .envios-empty,
+html[data-theme="dark"] .envios-source-row,
+html[data-theme="dark"] .envios-quality-note,
+html[data-theme="dark"] .envios-mail-note{
+  background:#111a20;
+  border-color:#34444e;
+  color:#e5eaed;
+}
+html[data-theme="dark"] .envios-file-icon{background:#203e4f;border-color:#315a72;color:#dbe7ed}
+html[data-theme="dark"] .envios-file-row button{color:#aebbc3}
+html[data-theme="dark"] .envios-file-row button:hover{background:#20303a;color:#fff}
+
+/* Pendientes: el alta es una acción de la página, no un bloque flotando junto al contador. */
+.pendientes-head{margin-bottom:10px}
+.pendientes-head p{margin:5px 0 0;color:var(--soft)}
+.pend-toolbar{display:flex;justify-content:flex-start;margin:0 0 14px}
+.pend-toolbar .primary{min-width:150px}
+
+/* Atajos del chat: más legibles y subordinados al chat, no una grilla protagonista. */
+.workflow-grid{max-width:680px!important;gap:10px!important}
+.workflow-card{padding:13px 15px!important}
+.workflow-card b{font-size:calc(13px * var(--font-scale,1))!important}
+.workflow-card small{font-size:calc(10.5px * var(--font-scale,1))!important;line-height:1.45!important}
+
+/* V20 Etapa 9 — Envíos Masivos: interfaz compacta y operativa */
+.envios-head{margin-bottom:14px}
+.envios-head h1{margin:0}
+.envios-upload-card{padding:18px}
+.envios-card-head p{max-width:720px}
+.envios-drop{margin-top:14px;min-height:132px;border-radius:12px;gap:4px}
+.envios-file-mark{padding:6px 8px;margin-bottom:3px}
+.envios-selected{margin-top:10px;gap:6px}
+.envios-file-row{padding:8px 10px}
+.envios-toolbar{display:flex;align-items:center;justify-content:space-between;gap:14px;margin-top:12px;padding-top:12px;border-top:1px solid var(--line,#d9e0e5)}
+.envios-options-inline{display:flex;align-items:center;flex-wrap:wrap;gap:8px 18px;min-width:0}
+.envios-inline-check{display:inline-flex;align-items:center;gap:7px;cursor:pointer;color:inherit;white-space:nowrap;font-size:calc(10px * var(--font-scale,1));font-weight:650}
+.envios-inline-check input{margin:0;accent-color:#315A72}
+.envios-actions{margin-top:0;flex:0 0 auto}
+.envios-results{margin-top:18px}
+.envios-exports{gap:9px;margin:12px 0 8px}
+.envios-export-card{min-height:152px;padding:14px;gap:12px}
+.envios-export-card h3{margin:5px 0 4px}
+.envios-export-card p{font-size:calc(9px * var(--font-scale,1));line-height:1.35}
+.envios-inline-note{margin:8px 2px 12px;color:var(--muted,#667085);font-size:calc(9px * var(--font-scale,1));line-height:1.4}
+.envios-source-card,.envios-preview-card{padding:15px;margin-top:11px}
+html[data-theme="dark"] .envios-toolbar{border-color:#2b3942}
+html[data-theme="dark"] .envios-inline-check{color:#dce4e9}
+@media(max-width:820px){.envios-toolbar{align-items:stretch;flex-direction:column}.envios-actions{width:100%}.envios-actions .primary,.envios-actions .secondary{flex:1}.envios-options-inline{gap:9px 14px}.envios-inline-check{white-space:normal}}
+
+/* =========================================================
+   V20 ETAPA 11 — tipografía humana + barra superior estable
+   ========================================================= */
+:root{
+  --oficina-font:"Aptos","Segoe UI Variable Text","Segoe UI","Trebuchet MS",Arial,sans-serif;
+}
+
+/* Una sola familia real para toda la aplicación. Se eliminan visualmente
+   las mezclas históricas Sora/Inter/Consolas/Arial que daban sensación de
+   distintas apps pegadas entre sí. */
+html,body,body *,button,input,select,textarea,pre,code,kbd,samp{
+  font-family:var(--oficina-font) !important;
+  -webkit-font-smoothing:antialiased;
+  -moz-osx-font-smoothing:grayscale;
+  text-rendering:optimizeLegibility;
+}
+
+/* Los dos iconos conservan sus colores originales. En oscuro sólo reciben
+   un borde luminoso alrededor de la silueta; NO se invierte el PNG entero. */
+html[data-theme="dark"] body .sidebar .theme-sensitive-nav-icon{
+  filter:
+    drop-shadow(1px 0 0 rgba(255,255,255,.92))
+    drop-shadow(-1px 0 0 rgba(255,255,255,.92))
+    drop-shadow(0 1px 0 rgba(255,255,255,.92))
+    drop-shadow(0 -1px 0 rgba(255,255,255,.92)) !important;
+}
+
+/* La barra de acciones tiene su propio renglón. Aumentar el texto nunca
+   debe empujar, tapar o montarse sobre el encabezado/chat. */
+body .main{
+  padding-top:48px !important;
+}
+.global-actions{
+  position:fixed !important;
+  top:9px !important;
+  right:12px !important;
+  z-index:100 !important;
+  min-height:32px !important;
+  display:flex !important;
+  align-items:center !important;
+  gap:5px !important;
+  flex-wrap:nowrap !important;
+}
+.global-date{
+  font-size:calc(10.5px * var(--font-scale,1)) !important;
+  line-height:1.15 !important;
+  margin-right:3px !important;
+}
+.global-action,.theme-toggle,.font-controls,
+.font-controls button{
+  flex:0 0 auto !important;
+}
+.global-action,.theme-toggle,.font-controls button{
+  width:32px !important;
+  height:32px !important;
+}
+.font-controls{
+  height:32px !important;
+}
+.font-controls button{
+  /* + y − son controles, no contenido: su caja no crece con la lectura. */
+  font-size:16px !important;
+  line-height:1 !important;
+}
+.global-action .app-icon,.theme-toggle .app-icon,.global-logout .app-icon{
+  width:17px !important;
+  height:17px !important;
+}
+
+@media(max-width:760px){
+  body .main{padding-top:44px !important}
+  .global-actions{top:6px !important;right:8px !important;gap:4px !important}
+  .global-date{display:none !important}
+  .global-action,.theme-toggle,.font-controls button{width:30px !important;height:30px !important}
+  .font-controls{height:30px !important}
+}
+
+/* ==========================================================
+   V20 ETAPA 21 — densidad adaptativa de escritorio
+   No intenta detectar el zoom del navegador (eso no es fiable).
+   Usa el viewport CSS efectivo: a 80% en un monitor 1366 suele haber
+   ~1700px y se conserva la escala actual; a 100/110% el viewport baja
+   y la interfaz compacta geometría + tipografía de forma gradual.
+   ========================================================== */
+@media (min-width:1050px) and (max-width:1539px){
+  :root{
+    --sb-w:184px;
+    --sb-collapsed:54px;
+    --fixed-brand-title-size:11px;
+    --fixed-page-title-size:18px;
+    --fixed-clock-size:9px;
+  }
+  .sidebar{padding:8px 7px 10px!important}
+  .main{margin-left:var(--sb-w)!important}
+  .page{width:min(1120px,100%)!important;padding:10px 14px 18px!important}
+  .brand{padding:2px 4px 8px!important;gap:7px!important}
+  .brand .logo{width:23px!important;height:23px!important;border-radius:7px!important}
+  .nav-item{min-height:28px!important;padding:0 7px!important;gap:5px!important}
+  .nav-ico{width:19px!important;height:19px!important}
+  .nav-icon-img{max-width:18px!important;max-height:18px!important}
+  .nav-subitem{min-height:25px!important;padding:3px 7px!important}
+  .quickaccess{margin-top:8px!important;padding:0!important}
+  .quickaccess-grid{gap:6px!important;padding:0 4px!important}
+  .quickaccess-item{width:34px!important;height:34px!important;border-radius:8px!important}
+  .quickaccess-item img,
+  .quickaccess-item img[src*="gmail.png"],
+  .quickaccess-item img[src*="datacar.png"],
+  .quickaccess-item img[src*="drive.png"],
+  .quickaccess-item img[src*="envios_ya.png"]{width:29px!important;height:29px!important}
+  .sidebar-toggle{width:24px!important;height:24px!important;left:calc(var(--sb-w) - 12px)!important;top:15px!important}
+  html[data-sidebar="collapsed"] .sidebar-toggle{left:calc(var(--sb-collapsed) - 12px)!important}
+  html[data-sidebar="collapsed"] .sidebar{width:var(--sb-collapsed)!important;padding:9px 6px!important}
+  html[data-sidebar="collapsed"] .main{margin-left:var(--sb-collapsed)!important}
+  html[data-sidebar="collapsed"] .quickaccess-item{width:36px!important;height:36px!important;flex-basis:36px!important}
+  html[data-sidebar="collapsed"] .quickaccess-item img{width:31px!important;height:31px!important}
+  .global-actions{top:8px!important;right:10px!important;gap:3px!important;min-height:28px!important}
+  .global-action,.theme-toggle,.font-controls button{width:28px!important;height:28px!important;border-radius:7px!important;flex-basis:28px!important}
+  .top{margin-bottom:14px!important}
+  .top p{max-width:48em!important}
+  .envios-page{max-width:960px!important;padding-bottom:30px!important}
+  .envios-head{margin-bottom:10px!important}
+  .envios-upload-card{padding:14px!important}
+  .envios-card-head h2{margin-bottom:3px!important}
+  .envios-drop{margin-top:11px!important;min-height:106px!important;border-radius:10px!important;gap:3px!important}
+  .envios-file-mark{padding:5px 7px!important;margin-bottom:2px!important}
+  .envios-selected{margin-top:8px!important}
+  .envios-empty{padding:9px 11px!important}
+  .envios-toolbar{margin-top:9px!important;padding-top:9px!important;gap:10px!important}
+  .envios-options-inline{gap:6px 13px!important}
+  .envios-actions{gap:6px!important}
+  .envios-actions .primary,.envios-actions .secondary{padding:7px 10px!important}
+}
+
+@media (min-width:1050px) and (max-width:1279px){
+  :root{
+    --sb-w:168px;
+    --sb-collapsed:50px;
+    --fixed-brand-title-size:10.5px;
+    --fixed-page-title-size:17px;
+    --fixed-clock-size:8.5px;
+  }
+  .page{width:min(1000px,100%)!important;padding:9px 11px 16px!important}
+  .brand .logo{width:21px!important;height:21px!important}
+  .nav-item{min-height:26px!important;padding:0 6px!important}
+  .nav-ico{width:18px!important;height:18px!important}
+  .nav-icon-img{max-width:17px!important;max-height:17px!important}
+  .quickaccess-grid{gap:5px!important;padding:0 2px!important}
+  .quickaccess-item{width:31px!important;height:31px!important}
+  .quickaccess-item img,
+  .quickaccess-item img[src*="gmail.png"],
+  .quickaccess-item img[src*="datacar.png"],
+  .quickaccess-item img[src*="drive.png"],
+  .quickaccess-item img[src*="envios_ya.png"]{width:27px!important;height:27px!important}
+  .global-action,.theme-toggle,.font-controls button{width:27px!important;height:27px!important;flex-basis:27px!important}
+  .global-actions{right:8px!important}
+  .envios-page{max-width:880px!important}
+  .envios-upload-card{padding:13px!important}
+  .envios-drop{min-height:96px!important;margin-top:9px!important}
+  .envios-toolbar{gap:8px!important}
+}
+
+/* ==========================================================
+   Ajuste final sidebar — Chat IA
+   El símbolo ✦ es tipográfico, a diferencia del resto de iconos raster.
+   No debe crecer con +/-: al escalar dentro de una caja de icono fija
+   su métrica de fuente se desplazaba visualmente hacia abajo.
+   Mantenerlo a tamaño de icono y centrar su line-box evita ese salto.
+   ========================================================== */
+:root{--sidebar-chat-mark-size:18px}
+body .sidebar .internal-chat-mark{
+  font-size:var(--sidebar-chat-mark-size) !important;
+  line-height:1 !important;
+  display:grid !important;
+  place-items:center !important;
+  align-self:center !important;
+  padding:0 !important;
+  margin:0 !important;
+}
+body .sidebar .nav-item::first-letter,
+body .sidebar .nav-toggle::first-letter{
+  font-size:inherit !important;
+}
+@media (min-width:1050px) and (max-width:1539px){
+  :root{--sidebar-chat-mark-size:16px}
+}
+@media (min-width:1050px) and (max-width:1279px){
+  :root{--sidebar-chat-mark-size:15px}
+}

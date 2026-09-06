@@ -1,12 +1,19 @@
 import re
 import os
 import time
+import json
 from datetime import datetime, date
 from pathlib import Path
-from google import genai
 from google.genai import types
+from ai_gateway import obtener_cliente_gemini, generate_with_fallback, DEFAULT_MODELS
 from openpyxl import load_workbook
 from companias import normalizar_compania, aliases_companias
+from context_router import construir_plan_base, es_consulta_comparativa
+from sofia_prompt import build_sofia_prompt
+from sofia_tools import TOOL_DEFINITIONS
+from document_search import buscar_en_documentos
+from metadata_store import cargar_metadatos
+from excel_analytics import analizar as analizar_dataset_excel
 
 try:
     from storage_r2 import descargar_excel_interno, EXCEL_INTERNO_R2_KEY
@@ -21,10 +28,6 @@ except Exception:
 
 
 
-MODELOS_GEMINI = [
-    "gemini-3.8-flash",
-    "gemini-3.5-flash-lite",
-]
 
 # Cache por proceso. OficinaIA mantiene 1 worker mientras el Excel/R2 sea la
 # fuente de verdad; con múltiples workers este cache NO sería compartido.
@@ -38,21 +41,6 @@ EXCEL_INTERNO = BASE_DIR / "excel_interno.xlsx"
 # ==========================================================
 # GEMINI
 # ==========================================================
-
-def obtener_cliente_gemini():
-
-    api_key = os.getenv("GEMINI_API_KEY")
-
-    if not api_key:
-        return None
-
-    return genai.Client(
-        api_key=api_key,
-        # El timeout del SDK está expresado en milisegundos. Evita que una
-        # llamada lenta consuma por sí sola gran parte del timeout de Gunicorn.
-        http_options=types.HttpOptions(timeout=30000),
-    )
-
 
 
 def _texto_fila(fila):
@@ -432,172 +420,8 @@ def _agregar_fuentes(respuesta, fuentes, uso_web=False):
 # ==========================================================
 # FUNCTION CALLING DE GEMINI
 # ==========================================================
-
-TOOL_DEFINITIONS = [
-    types.Tool(function_declarations=[
-        types.FunctionDeclaration(
-            name="consultar_excel",
-            description=(
-                "Busca filas relevantes en los datos estructurados de OficinaIA. "
-                "Busca únicamente en el Excel interno de OficinaIA. "
-                "Devuelve filas relevantes y la fuente."
-            ),
-            parameters_json_schema={"type": "object", "properties": {"pregunta_o_filtro": {"type": "string"}}, "required": ["pregunta_o_filtro"]},
-        ),
-        types.FunctionDeclaration(
-            name="contar_registros",
-            description=(
-                "ÚNICA herramienta autorizada para cantidades sobre el Excel interno. "
-                "Cuenta de forma exacta sobre TODO el dataset, nunca sobre una muestra. "
-                "Filtra opcionalmente por compañía, campo/valor, tipo de vehículo y rango "
-                "de fecha de emisión. Usá tipo_conteo='unicos' sólo cuando el usuario pida "
-                "personas/asegurados únicos; para pólizas, vehículos, remolques o registros "
-                "usá 'filas'."
-            ),
-            parameters_json_schema={
-                "type": "object",
-                "properties": {
-                    "compania": {"type": "string"},
-                    "campo": {"type": "string"},
-                    "valor": {"type": "string"},
-                    "tipo_vehiculo": {"type": "string", "description": "Substring del campo VEHICULO, ej. remolque, trailer, moto."},
-                    "desde": {"type": "string", "description": "Fecha desde inclusive, DD/MM/AAAA."},
-                    "hasta": {"type": "string", "description": "Fecha hasta inclusive, DD/MM/AAAA."},
-                    "campo_fecha": {"type": "string", "description": "Opcional; por defecto usa EMITIDO DÍA:."},
-                    "tipo_conteo": {"type": "string", "enum": ["filas", "unicos"]},
-                },
-            },
-        ),
-        types.FunctionDeclaration(
-            name="buscar_en_manuales",
-            description=(
-                "Busca fragmentos relevantes en los manuales y PDFs de OficinaIA. "
-                "Fuente SECUNDARIA respecto a buscar_en_metadatos. Usar después de "
-                "metadatos, o cuando metadatos devolvió 0 resultados y la consulta "
-                "requiere documentación formal de la compañía (coberturas, "
-                "asistencia, remolque, procedimientos)."
-            ),
-            parameters_json_schema={"type": "object", "properties": {"consulta": {"type": "string"}}, "required": ["consulta"]},
-        ),
-        types.FunctionDeclaration(
-            name="buscar_en_metadatos",
-            description=(
-                "FUENTE PRIORITARIA. Busca en fichas de texto cargadas manualmente "
-                "por la oficina (contenido copiado de PDFs escaneados, no legibles "
-                "o resúmenes operativos). Debe usarse ANTES que buscar_en_manuales "
-                "en cualquier consulta sobre coberturas, asistencia, remolque, "
-                "grúas, límites, condiciones, procedimientos o datos de compañías. "
-                "Si devuelve resultados útiles, se puede responder con ellos."
-            ),
-            parameters_json_schema={"type": "object", "properties": {"consulta": {"type": "string"}}, "required": ["consulta"]},
-        ),
-        types.FunctionDeclaration(
-            name="comparar_companias",
-            description=(
-                "Busca de forma transversal en las fichas internas de TODAS las compañías soportadas. "
-                "Usala para preguntas del tipo '¿en qué compañía puedo emitir...?', '¿quién toma...?', "
-                "'¿qué compañía acepta...?', '¿dónde aseguro...?' o comparaciones entre compañías. "
-                "Devuelve evidencia por compañía y distingue entre información encontrada y compañía sin evidencia. "
-                "Nunca debe interpretarse ausencia de evidencia como rechazo de la compañía."
-            ),
-            parameters_json_schema={
-                "type": "object",
-                "properties": {
-                    "consulta": {
-                        "type": "string",
-                        "description": "Riesgo o condición a comparar, por ejemplo: auto modelo 1956, moto 1994, uso Uber, pickup comercial."
-                    }
-                },
-                "required": ["consulta"],
-            },
-        ),
-        types.FunctionDeclaration(
-            name="proponer_registro_excel",
-            description=(
-                "Cuando el usuario pide guardar o agregar un asegurado a la planilla, "
-                "proponé un registro usando EXACTAMENTE estas claves: ASEGURADO, NUMERO, "
-                "VEHICULO, PATENTE, ENVIOS YA, CIA, MEDIO DE PAGO, CP, MAIL, TELEFONO. "
-                "NUMERO acepta DNI o número de póliza según el caso. Nunca inventes un "
-                "dato: si falta, dejalo como cadena vacía para que el usuario lo confirme. "
-                "Intentá completar siempre todos los campos que estén presentes en el "
-                "mensaje, aunque el texto libre no tenga comas. Ejemplo: "
-                "'ramiro herrera, 1141492756, Brava Nevada 125, AC123BC, ATM' se mapea "
-                "a ASEGURADO=ramiro herrera, NUMERO=1141492756, VEHICULO=Brava Nevada 125, "
-                "PATENTE=AC123BC, CIA=ATM. Si el usuario usa sólo espacios como separadores "
-                "y la frase es ambigua, no adivines silenciosamente: completá lo seguro y "
-                "dejá el resto vacío. Otro ejemplo: 'Juan Perez 123456 ATM' permite "
-                "ASEGURADO=Juan Perez, NUMERO=123456, CIA=ATM si no hay datos suficientes "
-                "para inferir vehículo o patente. La tool sólo propone; no guarda nada."
-            ),
-            parameters_json_schema={
-                "type": "object",
-                "properties": {
-                    "campos": {
-                        "type": "object",
-                        "properties": {
-                            "ASEGURADO": {"type": "string", "description": "Nombre completo del asegurado."},
-                            "NUMERO": {"type": "string", "description": "DNI o número de póliza, según el caso."},
-                            "VEHICULO": {"type": "string", "description": "Marca/modelo/tipo del vehículo."},
-                            "PATENTE": {"type": "string", "description": "Patente del vehículo."},
-                            "ENVIOS YA": {"type": "string", "description": "Dato de Envíos Ya, si corresponde."},
-                            "CIA": {"type": "string", "description": "Compañía aseguradora."},
-                            "MEDIO DE PAGO": {"type": "string", "description": "Medio de pago."},
-                            "CP": {"type": "string", "description": "Código postal."},
-                            "MAIL": {"type": "string", "description": "Correo electrónico."},
-                            "TELEFONO": {"type": "string", "description": "Teléfono de contacto. Nunca uses DNI ni número de póliza como teléfono."},
-                        },
-                        "additionalProperties": False,
-                    }
-                },
-                "required": ["campos"],
-            },
-        ),
-        types.FunctionDeclaration(
-            name="guardar_metadato_relevante",
-            description=(
-                "Propone una ficha de metadato reutilizable cuando la respuesta contiene "
-                "un dato objetivo, estable y útil para consultas futuras: por ejemplo una "
-                "cantidad de grúas de una compañía, un límite de cobertura, una condición "
-                "puntual o un requisito específico. NO guardes conversaciones completas, "
-                "opiniones, explicaciones generales, preguntas ni datos temporales. "
-                "Usá sólo información respaldada por los resultados de las herramientas "
-                "consultadas en esta misma conversación. La propuesta requiere confirmación "
-                "del usuario antes de escribirse en la base. Si ya existe un metadato igual "
-                "o muy similar, no propongas otro."
-            ),
-            parameters_json_schema={
-                "type": "object",
-                "properties": {
-                    "titulo": {
-                        "type": "string",
-                        "description": "Título corto y descriptivo, idealmente incluyendo compañía y tema."
-                    },
-                    "contenido": {
-                        "type": "string",
-                        "description": "El dato puntual reutilizable, en 1-4 frases, sin copiar la conversación completa."
-                    },
-                },
-                "required": ["titulo", "contenido"],
-            },
-        ),
-        types.FunctionDeclaration(
-            name="buscar_vehiculos",
-            description="Busca vehículos y patentes en los registros estructurados, filtrando opcionalmente por compañía, tipo o cliente.",
-            parameters_json_schema={"type": "object", "properties": {"compania": {"type": "string"}, "tipo": {"type": "string"}, "cliente": {"type": "string"}}},
-        ),
-        types.FunctionDeclaration(
-            name="buscar_en_internet",
-            description="Busca información pública actualizada en Internet cuando sea necesaria para responder la pregunta.",
-            parameters=types.Schema(
-                type="OBJECT",
-                properties={
-                    "consulta": types.Schema(type="STRING", description="Consulta de búsqueda web."),
-                },
-                required=["consulta"],
-            ),
-        ),
-    ])
-]
+# V20 Etapa 3: los contratos de herramientas viven en sofia_tools.py.
+# Este módulo conserva únicamente su ejecución y la lógica de dominio.
 
 
 def _dataset_estructurado():
@@ -761,6 +585,26 @@ def contar_registros(
     }
 
 
+def analizar_excel(consulta=None, operacion=None, campo=None, agrupar_por=None, compania=None, valor=None, excluir_valor=None, limite=None):
+    """Analítica determinística sobre TODO el Excel interno.
+
+    Resuelve agrupaciones, rankings, porcentajes, duplicados, vacíos y
+    clasificación auto/moto sin contar previews ni pedirle a Gemini que haga
+    cálculos sobre muestras.
+    """
+    datos, fuente = _dataset_estructurado()
+    resultado = analizar_dataset_excel(
+        datos, consulta=consulta, operacion=operacion, campo=campo,
+        agrupar_por=agrupar_por, compania=compania, valor=valor,
+        excluir_valor=excluir_valor, limite=limite,
+    )
+    if isinstance(resultado, dict):
+        resultado = dict(resultado)
+        resultado.setdefault("fuente", fuente)
+        resultado.setdefault("dataset_total_filas", len(datos))
+    return resultado
+
+
 def proponer_registro_excel(campos):
     """
     Prepara una propuesta de alta; nunca escribe directamente en el Excel.
@@ -818,10 +662,11 @@ def guardar_metadato_relevante(titulo, contenido):
     """
     Prepara una propuesta de metadato reutilizable; nunca escribe directamente.
 
-    Sólo se aceptan datos objetivos y relativamente estables que puedan
-    responder consultas futuras: cifras, cantidades, límites o condiciones
-    puntuales de una compañía. Se reutiliza la misma recuperación existente
-    para evitar proponer duplicados obvios.
+    Sólo se aceptan datos objetivos, relativamente estables y reutilizables
+    en consultas futuras: definiciones operativas, procedimientos, cifras,
+    cantidades, límites o condiciones de seguros. No hace falta que el dato
+    pertenezca a una compañía concreta. Se reutiliza la misma recuperación
+    existente para evitar proponer duplicados obvios.
     """
     titulo = str(titulo or "").strip()
     contenido = str(contenido or "").strip()
@@ -833,7 +678,8 @@ def guardar_metadato_relevante(titulo, contenido):
         titulo = titulo[:200]
 
     # No guardar conversaciones, opiniones, instrucciones temporales ni
-    # texto demasiado largo. El metadato debe ser una ficha puntual.
+    # texto demasiado largo. El metadato debe ser una ficha puntual y
+    # reutilizable, aunque sea una definición general del trabajo de seguros.
     if len(contenido) > 1200:
         contenido = contenido[:1200].rsplit(" ", 1)[0].strip()
 
@@ -872,9 +718,8 @@ def guardar_metadato_relevante(titulo, contenido):
 
 
 def buscar_en_manuales(consulta):
-    """Reutiliza buscar_en_documentos de app.py sin alterar su lógica."""
+    """Consulta Manuales/Pólizas sin depender de Flask ni de app.py."""
     try:
-        from app import buscar_en_documentos
         resultados = buscar_en_documentos(consulta)
         return {
             "cantidad": len(resultados),
@@ -887,36 +732,8 @@ def buscar_en_manuales(consulta):
 
 
 def _cargar_metadatos():
-    """Carga las fichas de texto compartidas por toda la oficina.
-
-    Intenta primero Neon/Postgres (persistente entre redeploys). Si no está
-    disponible, cae a SQLite local para desarrollo.
-    """
-    # 1) Neon (persistente)
-    try:
-        from database_pg import listar_metadatos as listar_metadatos_pg
-        filas = listar_metadatos_pg()
-        if filas is not None:
-            print("METADATOS PG:", len(filas), "fichas cargadas.")
-            return filas
-    except Exception as error:
-        print("METADATOS PG no disponible, intento SQLite:", error)
-
-    # 2) SQLite (local / fallback)
-    try:
-        from app import conectar_db
-        with conectar_db() as db:
-            rows = db.execute(
-                "SELECT id, titulo, contenido, actualizado_en FROM metadatos "
-                "ORDER BY actualizado_en DESC, id DESC"
-            ).fetchall()
-            filas = [dict(row) for row in rows]
-            print("METADATOS SQLite:", len(filas), "fichas cargadas.")
-            return filas
-    except Exception as error:
-        print("ERROR CARGANDO METADATOS (SQLite):", error)
-        return []
-
+    """Compatibilidad interna: la persistencia vive en metadata_store.py."""
+    return cargar_metadatos()
 
 def _chunks_metadato(contenido, chunk_chars=1400, overlap=220):
     """Divide fichas largas en fragmentos manejables para la recuperación."""
@@ -983,11 +800,46 @@ def _puntuar_metadato(consulta, texto):
     return puntuacion
 
 
-def buscar_en_metadatos(consulta):
-    """
-    Busca información en fichas de texto cargadas manualmente por la oficina.
-    Las fichas son compartidas entre usuarios y se recuperan por relevancia.
-    Fuente prioritaria frente a manuales/PDFs.
+def _companias_mencionadas_en_consulta(consulta):
+    """Devuelve compañías visibles mencionadas de forma explícita en la consulta."""
+    texto = _normalizar_texto(consulta)
+    if not texto:
+        return []
+    encontradas = []
+    for alias, (_codigo, display) in aliases_companias().items():
+        alias_norm = _normalizar_texto(alias)
+        display_norm = _normalizar_texto(display)
+        if not alias_norm and not display_norm:
+            continue
+        candidatos = {x for x in (alias_norm, display_norm) if x}
+        if any(re.search(rf"(?<![a-z0-9]){re.escape(x)}(?![a-z0-9])", texto) for x in candidatos):
+            if display and display not in encontradas:
+                encontradas.append(display)
+    return encontradas
+
+
+def _ficha_pertenece_a_companias(ficha, companias):
+    if not companias:
+        return True
+    texto = _normalizar_texto(
+        f"{ficha.get('titulo', '')}\n{ficha.get('contenido', '')}"
+    )
+    grupos = _aliases_por_compania_visible()
+    for compania in companias:
+        aliases = grupos.get(compania, set()) | {_normalizar_texto(compania)}
+        if _texto_menciona_compania(texto, aliases):
+            return True
+    return False
+
+
+def buscar_en_metadatos(consulta, alcance="puntual"):
+    """Busca en las fichas internas con alcance explícito.
+
+    ``puntual`` mantiene un top acotado por relevancia.
+    ``exhaustivo`` recorre todas las fichas del universo documental aplicable
+    (por compañía cuando puede inferirse) y devuelve evidencia distribuida por
+    ficha. La completitud se refiere SIEMPRE a las fichas internas cargadas,
+    nunca al universo real de productos de una compañía.
     """
     try:
         fichas = _cargar_metadatos()
@@ -997,43 +849,104 @@ def buscar_en_metadatos(consulta):
             "cantidad": 0,
             "fichas": [],
             "fuente": "Metadatos internos",
+            "alcance": alcance,
+            "evidencia_estado": "SIN_INFORMACION_SUFICIENTE",
             "error": "No se pudieron cargar los metadatos.",
         }
 
+    alcance = "exhaustivo" if str(alcance or "").lower() == "exhaustivo" else "puntual"
+    companias = _companias_mencionadas_en_consulta(consulta)
+
+    # En alcance exhaustivo el universo se restringe a la/s compañía/s explícitas
+    # cuando existen; si no, se consideran todas las fichas cargadas.
+    universo = [f for f in fichas if _ficha_pertenece_a_companias(f, companias)]
+    if not universo and companias:
+        # No fingimos exhaustividad sobre un universo vacío por una detección de alias.
+        universo = fichas
+
     resultados = []
-    for ficha in fichas:
+    fichas_con_evidencia = set()
+    for ficha in universo:
         titulo = str(ficha.get("titulo") or "")
+        candidatos_ficha = []
         for fragmento in _chunks_metadato(ficha.get("contenido", "")):
             puntuacion = _puntuar_metadato(consulta, f"{titulo}\n{fragmento}")
             if puntuacion <= 0:
                 continue
-            resultados.append({
+            candidatos_ficha.append({
                 "id": ficha.get("id"),
                 "titulo": titulo,
                 "contenido": fragmento,
                 "actualizado_en": ficha.get("actualizado_en"),
                 "puntuacion": puntuacion,
             })
+        candidatos_ficha.sort(key=lambda x: x["puntuacion"], reverse=True)
+        if candidatos_ficha:
+            fichas_con_evidencia.add(ficha.get("id"))
+            # Punto: después ordenamos globalmente. Exhaustivo: preservamos
+            # representación de cada ficha relevante sin volcar documentos enteros.
+            limite_por_ficha = 3 if alcance == "exhaustivo" else len(candidatos_ficha)
+            resultados.extend(candidatos_ficha[:limite_por_ficha])
+
     resultados.sort(key=lambda x: x["puntuacion"], reverse=True)
-    # Mantener un contexto acotado, priorizando fichas distintas.
+
     salida = []
     vistos = set()
+    max_fragmentos = 36 if alcance == "exhaustivo" else 12
+    max_chars = 30000 if alcance == "exhaustivo" else 16000
+    usados = 0
     for resultado in resultados:
         clave = (resultado["id"], resultado["contenido"])
         if clave in vistos:
             continue
+        contenido = str(resultado.get("contenido") or "")
+        costo = len(contenido) + len(str(resultado.get("titulo") or "")) + 40
+        if salida and usados + costo > max_chars:
+            break
         vistos.add(clave)
         salida.append(resultado)
-        if len(salida) >= 12:
+        usados += costo
+        if len(salida) >= max_fragmentos:
             break
+
+    if not salida:
+        evidencia_estado = "SIN_INFORMACION_SUFICIENTE"
+    elif alcance == "exhaustivo" and len(fichas_con_evidencia) < len(universo):
+        evidencia_estado = "PARCIAL"
+    else:
+        evidencia_estado = "CONFIRMADO"
+
+    completitud = {
+        "solicitada": alcance == "exhaustivo",
+        "universo_fichas_cargadas": len(universo),
+        "fichas_revisadas": len(universo),
+        "fichas_con_evidencia": len(fichas_con_evidencia),
+        "estado": (
+            "COMPLETA_SOBRE_FICHAS_CARGADAS"
+            if alcance == "exhaustivo"
+            else "NO_APLICA"
+        ),
+        "advertencia": (
+            "La completitud describe las fichas internas actualmente cargadas; "
+            "no demuestra por sí sola que el catálogo real de la compañía esté completo."
+            if alcance == "exhaustivo"
+            else ""
+        ),
+    }
+
     print(
-        f"RETRIEVAL METADATOS: consulta={consulta!r} "
-        f"fichas_cargadas={len(fichas)} fragmentos={len(salida)}"
+        f"RETRIEVAL METADATOS: consulta={consulta!r} alcance={alcance} "
+        f"fichas_cargadas={len(fichas)} universo={len(universo)} "
+        f"fichas_evidencia={len(fichas_con_evidencia)} fragmentos={len(salida)}"
     )
     return {
         "cantidad": len(salida),
         "fichas": salida,
         "fuente": "Metadatos internos",
+        "alcance": alcance,
+        "companias_detectadas": companias,
+        "evidencia_estado": evidencia_estado,
+        "completitud": completitud,
     }
 
 
@@ -1484,10 +1397,12 @@ def buscar_en_internet(consulta):
             max_output_tokens=2048,
             tools=[types.Tool(google_search=types.GoogleSearch())],
         )
-        respuesta = cliente.models.generate_content(
-            model=MODELOS_GEMINI[0],
+        respuesta, _modelo = generate_with_fallback(
+            client=cliente,
+            models=DEFAULT_MODELS[:1],
             contents=consulta,
             config=config,
+            log_prefix="BUSQUEDA INTERNET",
         )
         return {"resultado": getattr(respuesta, "text", "") or "No encontré resultados públicos suficientes."}
     except Exception as error:
@@ -1498,6 +1413,7 @@ def buscar_en_internet(consulta):
 _TOOL_HANDLERS = {
     "consultar_excel": consultar_excel,
     "contar_registros": contar_registros,
+    "analizar_excel": analizar_excel,
     "buscar_en_manuales": buscar_en_manuales,
     "buscar_en_metadatos": buscar_en_metadatos,
     "comparar_companias": comparar_companias,
@@ -1525,6 +1441,7 @@ def _ejecutar_tool(nombre, argumentos, cache=None):
         "buscar_en_metadatos",
         "comparar_companias",
         "consultar_excel",
+        "analizar_excel",
         "buscar_vehiculos",
         "buscar_en_internet",
     }
@@ -1533,6 +1450,7 @@ def _ejecutar_tool(nombre, argumentos, cache=None):
         "buscar_en_metadatos",
         "comparar_companias",
         "consultar_excel",
+        "analizar_excel",
         "buscar_vehiculos",
     }
 
@@ -1639,6 +1557,210 @@ def _compactar_historial_para_modelo(historial, max_chars=8000, max_por_turno=18
     return "\n".join(seleccionados) or "Sin historial relevante."
 
 
+
+def _es_followup_breve(pregunta):
+    t = _normalizar_texto(pregunta)
+    if not t or len(t.split()) > 10:
+        return False
+    patrones = (
+        r"^y\b", r"^y (?:en|para|con)\b", r"^que (?:hay|pasa) con\b",
+        r"^y (?:atm|federacion|fed pat|agrosalta|mercantil|rivadavia|san cristobal)\b",
+        r"^(?:otra|otras|alguna otra|alguna mas|lo mismo)\b",
+    )
+    return any(re.search(p, t) for p in patrones)
+
+
+def _resolver_referente_compania(pregunta, historial=None):
+    """Resuelve referencias breves como "esa compañía" sin heredar ejecución.
+
+    Devuelve sólo un nombre/código de compañía; nunca resultados ni herramientas
+    del turno anterior. Esto permite cambiar de metadata a Excel conservando el
+    referente lingüístico.
+    """
+    texto = str(pregunta or "").strip()
+    n = _normalizar_texto(texto)
+    referencias = (
+        "esa compania", "esa aseguradora", "de esa compania",
+        "esa misma compania", "de esa", "la misma compania",
+    )
+    if not any(r in n for r in referencias):
+        return None
+
+    aliases = aliases_companias()
+    # Primero mensajes del usuario, porque suelen fijar el referente más limpio
+    # (ej.: "¿Y Federación?"). Luego asistente como fallback.
+    turnos = list((historial or [])[-10:])
+    for rol in ("user", "assistant"):
+        for turno in reversed(turnos):
+            if turno.get("rol") != rol:
+                continue
+            contenido = str(turno.get("contenido") or "")
+            contenido_n = _normalizar_texto(contenido)
+            mejores = []
+            for alias, info in aliases.items():
+                alias_n = _normalizar_texto(alias)
+                if not alias_n:
+                    continue
+                m = re.search(rf"(?<![a-z0-9]){re.escape(alias_n)}(?![a-z0-9])", contenido_n)
+                if m:
+                    codigo, display = info
+                    mejores.append((m.start(), len(alias_n), display or codigo))
+            if mejores:
+                # La última mención específica dentro del turno gana.
+                mejores.sort(key=lambda x: (x[0], x[1]))
+                return mejores[-1][2]
+    return None
+
+
+def _formatear_contexto_estructurado(resultado):
+    if not isinstance(resultado, dict):
+        return ""
+    if not resultado.get("ok"):
+        return "ANÁLISIS ESTRUCTURADO: no se pudo resolver de forma determinística."
+    return (
+        "===== RESULTADO ESTRUCTURADO EXACTO =====\n"
+        + json.dumps(resultado, ensure_ascii=False, indent=2, default=str)
+        + "\n===== FIN RESULTADO ESTRUCTURADO ====="
+    )
+
+
+def _construir_plan_ejecucion(pregunta, historial=None):
+    """Plan único del turno para fuentes precargadas.
+
+    No ejecuta nada. Sólo decide intención, alcance y consulta documental mínima.
+    El historial puede completar follow-ups inequívocos, nunca reactivar ejecuciones.
+    """
+    historial = historial or []
+    referente_compania = _resolver_referente_compania(pregunta, historial)
+    pregunta_resuelta = str(pregunta or "").strip()
+    if referente_compania:
+        pregunta_resuelta = f"{pregunta_resuelta}\n[REFERENTE RESUELTO: {referente_compania}]"
+
+    base = construir_plan_base(pregunta_resuelta).to_dict()
+    base["consulta_fuente"] = pregunta_resuelta
+    base["contexto_heredado"] = bool(referente_compania)
+    if referente_compania:
+        base["referente_compania"] = referente_compania
+
+    # La lógica comparativa histórica existente es más rica que el router base.
+    pregunta_comparativa = _consulta_comparativa_con_historial(pregunta_resuelta, historial)
+    if (
+        _es_consulta_comparativa_companias(pregunta_comparativa)
+        or pregunta_comparativa != pregunta_resuelta
+    ):
+        base.update({
+            "intencion": "comparacion_companias",
+            "alcance": "comparativo",
+            "fuentes": ["comparar_companias"],
+            "requiere_completitud": True,
+            "requiere_metadatos": False,
+            "motivo": "consulta transversal de colocación/comparación",
+            "consulta_fuente": pregunta_comparativa,
+            "contexto_heredado": pregunta_comparativa != str(pregunta or "").strip(),
+        })
+        return base
+
+    # Follow-up documental corto: heredamos sólo la consulta mínima de la última
+    # pregunta documental. No heredamos PDF, /flota, resultados ni herramientas.
+    if base.get("intencion") == "general" and _es_followup_breve(pregunta):
+        for turno in reversed(historial[-8:]):
+            if turno.get("rol") != "user":
+                continue
+            anterior = str(turno.get("contenido") or "").strip()
+            if not anterior or anterior == str(pregunta or "").strip():
+                continue
+            anterior_plan = construir_plan_base(anterior).to_dict()
+            if anterior_plan.get("intencion") == "consulta_documental":
+                consulta = f"{anterior}\nSEGUIMIENTO DEL USUARIO: {pregunta}"
+                alcance_actual = construir_plan_base(pregunta).to_dict().get("alcance")
+                alcance = "exhaustivo" if alcance_actual == "exhaustivo" else anterior_plan.get("alcance", "puntual")
+                base.update({
+                    "intencion": "consulta_documental",
+                    "alcance": alcance,
+                    "fuentes": ["buscar_en_metadatos"],
+                    "requiere_completitud": alcance == "exhaustivo",
+                    "requiere_metadatos": True,
+                    "motivo": "seguimiento inequívoco de consulta documental anterior",
+                    "consulta_fuente": consulta,
+                    "contexto_heredado": True,
+                })
+                break
+    return base
+
+
+def _formatear_contexto_metadatos(resultado):
+    if not isinstance(resultado, dict):
+        return ""
+    fichas = resultado.get("fichas") or []
+    alcance = resultado.get("alcance") or "puntual"
+    evidencia = resultado.get("evidencia_estado") or "SIN_INFORMACION_SUFICIENTE"
+    completitud = resultado.get("completitud") or {}
+
+    partes = [
+        "===== EVIDENCIA DOCUMENTAL INTERNA =====",
+        f"ALCANCE DE RECUPERACIÓN: {alcance}",
+        f"ESTADO DE EVIDENCIA: {evidencia}",
+    ]
+    if alcance == "exhaustivo":
+        partes.extend([
+            "COMPLETITUD SOBRE FICHAS CARGADAS:",
+            f"- fichas del universo revisado: {completitud.get('universo_fichas_cargadas', 0)}",
+            f"- fichas con evidencia temática: {completitud.get('fichas_con_evidencia', 0)}",
+            f"- estado del barrido: {completitud.get('estado', 'DESCONOCIDO')}",
+            "IMPORTANTE: un barrido completo de las fichas cargadas NO demuestra que el catálogo real de la compañía esté completo.",
+        ])
+    if not fichas:
+        partes.extend([
+            "No se encontró evidencia documental suficiente en las fichas internas cargadas.",
+            "===== FIN EVIDENCIA DOCUMENTAL INTERNA =====",
+        ])
+        return "\n".join(partes)
+
+    partes.append("")
+    for ficha in fichas:
+        titulo = str(ficha.get("titulo") or "Metadato").strip()
+        contenido = str(ficha.get("contenido") or "").strip()
+        if not contenido:
+            continue
+        partes.append(f"[Ficha: {titulo}]")
+        partes.append(contenido)
+        partes.append("")
+    partes.append("===== FIN EVIDENCIA DOCUMENTAL INTERNA =====")
+    return "\n".join(partes)
+
+
+def _plan_para_prompt(plan):
+    fuentes = ", ".join(plan.get("fuentes") or []) or "ninguna precargada"
+    return (
+        f"INTENCIÓN: {plan.get('intencion', 'general')}\n"
+        f"ALCANCE: {plan.get('alcance', 'puntual')}\n"
+        f"FUENTES PLANIFICADAS: {fuentes}\n"
+        f"REQUIERE COMPLETITUD: {'sí' if plan.get('requiere_completitud') else 'no'}\n"
+        f"CONTEXTO HEREDADO: {'sí' if plan.get('contexto_heredado') else 'no'}\n"
+        f"REFERENTE DE COMPAÑÍA: {plan.get('referente_compania') or 'ninguno'}\n"
+        f"MOTIVO: {plan.get('motivo', '')}"
+    )
+
+def _tools_para_plan(plan):
+    """Evita ofrecer de nuevo a Gemini una fuente que el plan ya ejecutó.
+
+    Sofia conserva las demás herramientas para operaciones determinísticas o
+    ampliaciones excepcionales. Esto elimina el doble owner precontexto/tool.
+    """
+    ejecutadas = set(plan.get("fuentes") or [])
+    excluir = ejecutadas & {"buscar_en_metadatos", "comparar_companias", "analizar_excel"}
+    if not excluir:
+        return TOOL_DEFINITIONS
+
+    salida = []
+    for tool in TOOL_DEFINITIONS:
+        declaraciones = list(getattr(tool, "function_declarations", None) or [])
+        filtradas = [d for d in declaraciones if getattr(d, "name", "") not in excluir]
+        if filtradas:
+            salida.append(types.Tool(function_declarations=filtradas))
+    return salida or TOOL_DEFINITIONS
+
+
 def consultar_gemini(pregunta, contexto="", historial=None):
     cliente = obtener_cliente_gemini()
     if cliente is None:
@@ -1649,126 +1771,87 @@ def consultar_gemini(pregunta, contexto="", historial=None):
     # Cache estrictamente efímero: nace y muere dentro de este turno.
     tool_cache = {}
 
+    # V20 Etapa 2: un único plan decide qué contexto precargar antes de Gemini.
+    # app.py ya no hace pre-routing documental por su cuenta.
+    plan = _construir_plan_ejecucion(pregunta, historial)
+    print(
+        "EXECUTION PLAN:",
+        {k: plan.get(k) for k in (
+            "intencion", "alcance", "fuentes", "requiere_completitud",
+            "contexto_heredado", "motivo"
+        )}
+    )
+
     contexto_comparativo = ""
-    pregunta_comparativa = _consulta_comparativa_con_historial(pregunta, historial)
-    if (
-        _es_consulta_comparativa_companias(pregunta_comparativa)
-        or pregunta_comparativa != str(pregunta or "").strip()
-    ):
+    contexto_documental_plan = ""
+    contexto_estructurado = ""
+    consulta_fuente = plan.get("consulta_fuente") or str(pregunta or "").strip()
+
+    if "comparar_companias" in (plan.get("fuentes") or []):
         try:
             resultado_comparativo = _ejecutar_tool(
-                "comparar_companias", {"consulta": pregunta_comparativa}, cache=tool_cache
+                "comparar_companias", {"consulta": consulta_fuente}, cache=tool_cache
             )
             contexto_comparativo = _formatear_contexto_comparativo(resultado_comparativo)
         except Exception as error:
             print("ERROR PRECONTEXTO COMPARATIVO:", error)
-            contexto_comparativo = ""
+
+    if "analizar_excel" in (plan.get("fuentes") or []):
+        try:
+            resultado_estructurado = _ejecutar_tool(
+                "analizar_excel", {"consulta": consulta_fuente}, cache=tool_cache
+            )
+            contexto_estructurado = _formatear_contexto_estructurado(resultado_estructurado)
+        except Exception as error:
+            print("ERROR PRECONTEXTO ANALITICO EXCEL:", error)
+
+    if "contar_registros" in (plan.get("fuentes") or []) and plan.get("referente_compania"):
+        try:
+            qn = _normalizar_texto(pregunta)
+            tipo_conteo = "unicos" if any(x in qn for x in ("asegurado", "persona", "cliente")) else "filas"
+            resultado_conteo = _ejecutar_tool(
+                "contar_registros",
+                {"compania": plan.get("referente_compania"), "tipo_conteo": tipo_conteo},
+                cache=tool_cache,
+            )
+            contexto_estructurado = _formatear_contexto_estructurado({
+                "ok": True,
+                "operacion": "conteo_con_referente",
+                "referente_compania": plan.get("referente_compania"),
+                **(resultado_conteo if isinstance(resultado_conteo, dict) else {"resultado": resultado_conteo}),
+            })
+        except Exception as error:
+            print("ERROR PRECONTEXTO CONTEO REFERENTE:", error)
+
+    if "buscar_en_metadatos" in (plan.get("fuentes") or []):
+        try:
+            alcance_busqueda = (
+                "exhaustivo" if plan.get("alcance") == "exhaustivo" else "puntual"
+            )
+            resultado_metadatos = _ejecutar_tool(
+                "buscar_en_metadatos",
+                {"consulta": consulta_fuente, "alcance": alcance_busqueda},
+                cache=tool_cache,
+            )
+            contexto_documental_plan = _formatear_contexto_metadatos(resultado_metadatos)
+        except Exception as error:
+            print("ERROR PRECONTEXTO METADATOS:", error)
+
+    contexto_documental = "\n\n".join(
+        parte for parte in (str(contexto or "").strip(), contexto_documental_plan.strip())
+        if parte
+    )
 
     fecha_hoy = datetime.now().strftime("%d/%m/%Y")
-    prompt = f"""
-Sos el asistente interno de OficinaIA, una oficina de seguros de Argentina.
-Respondé la pregunta completa y no inventes datos.
-FECHA ACTUAL DEL SISTEMA: {fecha_hoy}
-
-REGLAS:
-- Si el usuario saluda, agradece, comenta algo, escribe una frase coloquial o simplemente sigue una conversación, respondé de forma natural usando el historial. No fuerces una herramienta ni un flujo estructurado si no hace falta.
-- El HISTORIAL es memoria conversacional, no estado de ejecución. Una operación de PDF, /flota, Excel, manuales o herramientas terminó al responder el turno en que se ejecutó. Nunca reactives una operación anterior sólo porque aparece en el historial.
-- Si la pregunta actual es una continuación inequívoca (por ejemplo "¿alguna otra?" después de una consulta de colocación), podés usar el historial sólo para completar los datos mínimos que faltan.
-- Si falta un dato concreto para poder hacer lo pedido, pedí solamente ese dato.
-- Si ni con el historial se puede determinar razonablemente qué quiere el usuario, respondé exactamente: "Reformulame la pregunta."
-- Una entrada poco clara nunca es motivo para inventar datos ni para forzar una operación de Excel, PDF, flota o metadatos.
-- OficinaIA puede haber recuperado METADATOS INTERNOS PRIORITARIOS antes de esta llamada. Si aparecen dentro del contexto, utilizalos directamente como fuente prioritaria; no afirmes que el dato no está disponible si está allí.
-- Si el contexto ya contiene metadatos suficientes para responder, no vuelvas a llamar buscar_en_metadatos() innecesariamente. Podés usarla nuevamente únicamente si necesitás información adicional o una búsqueda más específica.
-- Elegí las herramientas necesarias según el significado de la pregunta.
-- CONSULTAS TRANSVERSALES / COLOCACIÓN: si el usuario pregunta "¿en qué compañía puedo emitir...?", "¿quién toma...?", "¿qué compañía acepta...?", "¿dónde puedo asegurar...?" o pide comparar compañías, NO busques una sola compañía. Usá el CONTEXTO COMPARATIVO ya recuperado si está presente. No vuelvas a llamar comparar_companias para repetir la misma búsqueda dentro del mismo turno.
-- En comparaciones, clasificá la evidencia con tres estados conceptuales: COMPATIBLE CONFIRMADO, NO COMPATIBLE CONFIRMADO y SIN INFORMACIÓN SUFICIENTE. Jamás conviertas "no encontré información" en "no lo toma".
-- Sólo presentes como alternativa real una compañía cuyo CONTEXTO COMPARATIVO marque COMPATIBILIDAD DOCUMENTAL: COMPATIBLE_CONFIRMADO. Tener una ficha relacionada, no encontrar una prohibición o quedar como SIN INFORMACIÓN SUFICIENTE NO habilita a recomendarla. Nunca inventes "consulta especial" ni excepciones no documentadas.
-- Si existe al menos una compañía con compatibilidad confirmada, respondé con esa opción aunque no puedas confirmar las demás.
-- Para frases abreviadas de oficina como "auto 56", interpretá el número como año/modelo del vehículo cuando el contexto lo haga razonable (por ejemplo, 1956). Si hubiera una ambigüedad real, indicá brevemente la interpretación usada en vez de bloquear la consulta.
-- VALIDACIÓN DE RESTRICCIONES: antes de recomendar una compañía, verificá que TODAS las restricciones numéricas recuperadas sean compatibles con el riesgo concreto. Si el vehículo es modelo 1956 y la fecha actual es 2026, tiene aproximadamente 70 años. Una ficha que diga "máximo 30 años" DESCARTA esa alternativa: nunca la presentes como opción.
-- Si el CONTEXTO COMPARATIVO incluye validacion.estado="NO_COMPATIBLE_POR_ANTIGUEDAD", esa compañía NO puede recomendarse para ese vehículo salvo que exista otra evidencia explícita y más específica que contradiga el límite general; si hay contradicción, marcala como REVISAR/confirmar y no inventes.
-- Si validacion.estado indica compatibilidad por antigüedad, eso sólo valida el requisito temporal: todavía respetá cualquier otra condición de la evidencia (uso, inspección, club de clásicos, cobertura, tipo de vehículo, etc.).
-- CONTINUIDAD: expresiones como "otras alternativas", "alguna otra", "¿y AgroSalta?" o "¿qué otra?" continúan el mismo riesgo de la pregunta anterior. No pierdas año/modelo/uso/cobertura ya establecidos y no reinicies la búsqueda como si fuera una consulta nueva.
-- En un seguimiento de "otras alternativas", evitá repetir como nuevas opciones las compañías ya mencionadas salvo que necesites corregir una respuesta anterior.
-- FUENTE PRINCIPAL Y AUTOSUFICIENTE: buscar_en_metadatos (fichas cargadas a
-  mano). Para coberturas, asistencia, remolque, grúas, límites, condiciones,
-  procedimientos y datos de compañías, buscá primero ahí y, si hay resultado
-  razonable, respondé con eso. NO hace falta abrir manuales en PDF además,
-  salvo que el propio resultado de metadatos sea insuficiente o contradictorio.
-- buscar_en_manuales (PDFs completos) es una herramienta PESADA y de uso
-  EXCEPCIONAL: implica descargar y procesar archivos grandes. Usala ÚNICAMENTE
-  cuando el usuario pida explícitamente un manual, documento o PDF por nombre,
-  o cuando metadatos haya dado 0 resultados Y el usuario insista en que la
-  información debería existir. EXCEPCIÓN: en una consulta transversal de colocación/comparación,
-  si el contexto comparativo no alcanza, podés hacer UNA búsqueda genérica en manuales para ampliar
-  la evidencia; no descargues manual por manual de todas las compañías.
-- Si metadatos da 0 resultados en un tema puntual, está bien responder que no
-  tenés esa ficha cargada y sugerir cargarla (guardar_metadato_relevante),
-  en lugar de encadenar automáticamente una búsqueda en PDFs.
-- No afirmes que la información no existe solo porque la primera búsqueda dio 0;
-  probá una reformulación de la MISMA búsqueda en metadatos (sinónimos:
-  remolque/grúa/asistencia/auxilio/traslado, singular/plural) antes de descartar.
-- REGLA CRÍTICA DE EXACTITUD NUMÉRICA: cualquier cantidad, total, suma, promedio o porcentaje sobre datos internos debe provenir literalmente del resultado de una herramienta determinística. Nunca lo estimes, redondees, extrapoles ni lo calcules mirando filas visibles.
-- ARITMÉTICA DE CONDICIONES: para validar años, edades, antigüedades y límites de aceptación, compará explícitamente los valores antes de concluir. No recomiendes una opción que contradiga matemáticamente el límite recuperado.
-- Para TODO conteo del Excel interno usá contar_registros. consultar_excel devuelve una muestra para inspección y NUNCA es una fuente válida para contar. No cuentes visualmente registros, previews ni resultados truncados.
-- Desambiguación importante: "¿cuántos remolques/trailers tiene ATM?" o "¿cuántos tenemos asegurados?" significa contar vehículos/registros del Excel; usá contar_registros. En cambio, "¿cuántos servicios de remolque/grúa cubre ATM?" es una consulta de cobertura y va a metadatos. Mirá palabras como "tenemos", "asegurados", "vehículos" versus "cubre", "asistencia", "servicios".
-- En contar_registros usá tipo_conteo="unicos" sólo para personas/asegurados únicos. Para pólizas, vehículos, remolques, trailers y registros usá tipo_conteo="filas".
-- Para preguntas temporales calculá el rango desde/hasta a partir de la fecha actual indicada abajo y pasalo a contar_registros en DD/MM/AAAA.
-- Para vehículos/patentes, usá buscar_vehiculos.
-- Para datos estructurados generales (asegurados, pólizas en planilla), usá consultar_excel.
-- Si el usuario pide guardar o agregar un asegurado/registro a la planilla, usá
-  proponer_registro_excel. Las columnas reales y únicas son:
-  ASEGURADO, NUMERO, VEHICULO, PATENTE, ENVIOS YA, CIA, MEDIO DE PAGO, CP, MAIL, TELEFONO.
-  NUMERO puede ser DNI o número de póliza. Intentá completar todos los campos presentes.
-  Si falta un campo, dejalo vacío; nunca inventes ni omitas silenciosamente un campo
-  que el usuario haya dado. La propuesta siempre requiere confirmación.
-- Si el usuario usa el comando /guardar asegurado, respetá el orden histórico:
-  ASEGURADO, NUMERO, VEHICULO, PATENTE, CIA, MEDIO DE PAGO, CP, MAIL, y TELEFONO como noveno campo opcional.
-  ENVIOS YA sigue siendo opcional y no forma parte del comando corto. No reinterpretes ese orden.
-- Si necesitás información pública actualizada, usá buscar_en_internet (también
-  es una herramienta de uso puntual, no automático).
-- Podés llamar varias herramientas en la misma consulta y combinar sus resultados.
-- Si un identificador concreto aparece en la pregunta, no mezcles registros de otros identificadores.
-- Contestá todos los puntos de una pregunta múltiple.
-- Si después de reformular la búsqueda en metadatos seguís sin evidencia y el
-  usuario no pidió explícitamente un manual/PDF, decilo claramente y ofrecé
-  cargar una ficha nueva con guardar_metadato_relevante.
-- Si la respuesta contiene un dato objetivo, estable y reutilizable para consultas futuras
-  (por ejemplo una cantidad de grúas, un límite de cobertura o una condición puntual
-  de una compañía), podés llamar guardar_metadato_relevante para PROPONER una ficha.
-  No propongas metadatos para conversación descartable, opiniones, saludos, preguntas,
-  explicaciones generales ni datos claramente temporales. Nunca guardes directamente.
-- Respondé en español argentino claro y profesional, como alguien de una oficina de seguros.
-- Cuando el mensaje sea para un cliente, usá la identidad de San José Seguros (cordial, cercana, sin frases robóticas).
-- FORMATO: escribí primero de forma natural. Usá formato solo si mejora la lectura.
-  Preferí viñetas con • y **negrita** puntual para datos importantes.
-  Evitá ###, ####, ***, --- y >>> como decoración. Un nivel de jerarquía alcanza en casi todos los casos.
-  Si piden un mensaje para WhatsApp, entregá únicamente el texto listo para copiar y enviar, sin notas ni explicaciones de formato.
-- No menciones el funcionamiento interno de las herramientas salvo que sea necesario.
-- CÓMO COMUNICAR (esto aplica siempre, incluso cuando la información de base sea
-  compleja): hablá como un asistente junior de seguros que le explica el resultado
-  a un compañero de oficina, no como un programa. Frases cortas, palabras comunes.
-  Contá primero qué pasó y después qué hay que hacer. Si hay varios problemas
-  distintos, separalos en oraciones simples en vez de amontonarlos en una sola
-  frase larga con paréntesis. Decí con claridad qué quedó completo y qué falta.
-  Nunca uses en la respuesta al usuario palabras como "estado", "payload",
-  "parser", "item", "null", "None", "fallback", "bloque" (salvo que te refieras
-  literalmente al texto para pegar en Excel), "filas afectadas" o cualquier
-  término que suene a log de sistema o jerga de programador. La información
-  interna puede ser compleja; la respuesta al usuario tiene que ser simple.
-
-HISTORIAL:
-{historial_texto}
-
-CONTEXTO COMPARATIVO AUTOMÁTICO:
-{contexto_comparativo or 'No aplica a esta consulta o no hubo evidencia transversal previa.'}
-
-CONTEXTO DOCUMENTAL YA DISPONIBLE:
-{contexto or 'No hay contexto documental previo.'}
-
-PREGUNTA:
-{pregunta}
-"""
+    prompt = build_sofia_prompt(
+        fecha_hoy=fecha_hoy,
+        plan_texto=_plan_para_prompt(plan),
+        historial_texto=historial_texto,
+        contexto_comparativo=contexto_comparativo,
+        contexto_documental=contexto_documental,
+        contexto_estructurado=contexto_estructurado,
+        pregunta=pregunta,
+    )
 
     contents = [prompt]
     propuesta_excel = None
@@ -1791,22 +1874,27 @@ PREGUNTA:
         ultimo_error = None
         respuesta = None
 
-        for modelo in MODELOS_GEMINI:
-            try:
-                config = types.GenerateContentConfig(
-                    temperature=0.05,
-                    max_output_tokens=4096,
-                    tools=TOOL_DEFINITIONS,
-                )
-                respuesta = cliente.models.generate_content(
-                    model=modelo,
-                    contents=contents,
-                    config=config,
-                )
-                break
-            except Exception as error:
-                ultimo_error = error
-                print("ERROR GEMINI", modelo, ":", error)
+        try:
+            config = types.GenerateContentConfig(
+                temperature=0.05,
+                max_output_tokens=4096,
+                tools=_tools_para_plan(plan),
+                # OficinaIA administra manualmente el ciclo Gemini -> tool -> Gemini.
+                # Desactivar AFC evita tener dos orquestadores superpuestos.
+                automatic_function_calling=types.AutomaticFunctionCallingConfig(
+                    disable=True
+                ),
+            )
+            respuesta, _modelo_usado = generate_with_fallback(
+                client=cliente,
+                models=DEFAULT_MODELS,
+                contents=contents,
+                config=config,
+                log_prefix="GEMINI",
+            )
+        except Exception as error:
+            ultimo_error = error
+            respuesta = None
 
         if respuesta is None:
             print("GEMINI TODOS LOS MODELOS FALLARON:", ultimo_error)

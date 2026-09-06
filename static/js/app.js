@@ -133,21 +133,18 @@ function add(role,content,raw=false){
 }
 
 function htmlWelcomeChat(variant){
-  /* variant: 'default' | 'vacio' — siempre con atajos de flujo */
   const sub = variant==='vacio'
-    ? 'Podés iniciar una nueva conversación cuando quieras. Usá los atajos o escribí abajo.'
-    : 'Preguntá por coberturas, flotas, pólizas o datos de la planilla. Usá los atajos para los flujos que más tiempo consumen.';
+    ? 'Empezá por una tarea concreta o escribí tu consulta abajo.'
+    : 'Accesos para operaciones frecuentes. Podés completar el dato que falta y enviar.';
   return `<div id="chatWelcome" class="welcome">
   <strong>✦</strong>
   <h2>¿Qué necesitás resolver?</h2>
   <p>${sub}</p>
   <div class="workflow-grid" id="workflowGrid">
-    <button type="button" class="workflow-card" data-fill="/guardar asegurado "><b>Alta asegurado</b><small>Cargar a Excel con campos en orden</small></button>
-    <button type="button" class="workflow-card" data-fill="/flota "><b>Armar flota</b><small>Propuesta de vehículos para la planilla</small></button>
-    <button type="button" class="workflow-card" data-fill="/coti "><b>Cotización</b><small>Comando /coti con datos del riesgo</small></button>
-    <button type="button" class="workflow-card" data-fill="¿Cuántos servicios de remolque tiene "><b>Remolque / asistencia</b><small>Consulta rápida por compañía y plan</small></button>
-    <button type="button" class="workflow-card" data-fill="Armame un mensaje de WhatsApp para el asegurado: "><b>WhatsApp al cliente</b><small>Texto listo para copiar y enviar</small></button>
-    <button type="button" class="workflow-card" data-fill="/envios ya "><b>Envíos Ya</b><small>Datos limpios para cargar el envío</small></button>
+    <button type="button" class="workflow-card" data-fill="/flota "><b>Procesar una flota</b><small>Iniciá una flota y cargá vehículos, coberturas y datos para el Excel.</small></button>
+    <button type="button" class="workflow-card" data-fill="¿En qué compañía puedo asegurar "><b>Buscar dónde emitir</b><small>Compará compañías según vehículo, año, uso o cobertura necesaria.</small></button>
+    <button type="button" class="workflow-card" data-fill="¿Cuántas pólizas emití "><b>Consultar mi cartera</b><small>Conteos, fechas, compañías, vehículos y datos reales del Excel interno.</small></button>
+    <button type="button" class="workflow-card" data-fill="Armame un mensaje de WhatsApp para el asegurado: "><b>Redactar para un asegurado</b><small>Prepará un mensaje claro y directo usando el contexto que le indiques.</small></button>
   </div>
 </div>`;
 }
@@ -1491,14 +1488,31 @@ document.addEventListener('DOMContentLoaded',inicializarFechaGlobal);
   function getFont(){
     return Math.max(MIN_FONT,Math.min(MAX_FONT,numeroGuardado(FONT_KEY,DEFAULT_FONT)));
   }
+  function viewportDensity(){
+    const w=window.innerWidth||document.documentElement.clientWidth||1600;
+    // Escritorio ancho (incluido el uso habitual al 80%): conservar la densidad actual.
+    if(w>=1540||w<1050)return 1;
+    // En un viewport efectivo típico de Chrome al 100%, compensar la ampliación
+    // geométrica del navegador sin intentar detectar el porcentaje de zoom.
+    if(w>=1360)return 0.84+((w-1360)/180)*0.16;
+    // Alrededor de 110% el viewport CSS se achica aún más: compactar gradualmente.
+    if(w>=1180)return 0.76+((w-1180)/180)*0.08;
+    return 0.74;
+  }
   function applyFont(px){
     const general=Math.max(MIN_FONT,Math.min(MAX_FONT,px));
-    // Sidebar apenas un punto menor; chat igual al general para lectura cómoda.
-    const sidebar=Math.max(14,Math.min(19,numeroGuardado(SIDEBAR_KEY,general-1)));
-    const chat=Math.max(15,Math.min(20,numeroGuardado(CHAT_KEY,general)));
+    // V20 Etapa 21: +/- sigue siendo una preferencia del usuario, mientras
+    // --viewport-density compensa la densidad visual en escritorios con viewport
+    // efectivo menor (por zoom del navegador o ventana más estrecha).
+    const density=viewportDensity();
+    const effective=(general/16)*density;
+    const sidebar=general;
+    const chat=general;
     document.documentElement.style.setProperty('--ui-font-size',general+'px');
-    document.documentElement.style.setProperty('--sidebar-font-size',sidebar+'px');
-    document.documentElement.style.setProperty('--chat-font-size',chat+'px');
+    document.documentElement.style.setProperty('--viewport-density',String(density));
+    document.documentElement.style.setProperty('--font-scale',String(effective));
+    document.documentElement.style.setProperty('--sidebar-font-size',general+'px');
+    document.documentElement.style.setProperty('--chat-font-size',general+'px');
     const dec=document.getElementById('fontDec'),inc=document.getElementById('fontInc');
     if(dec)dec.disabled=general<=MIN_FONT;
     if(inc)inc.disabled=general>=MAX_FONT;
@@ -1506,12 +1520,12 @@ document.addEventListener('DOMContentLoaded',inicializarFechaGlobal);
   function setFont(px){
     const general=Math.max(MIN_FONT,Math.min(MAX_FONT,px));
     localStorage.setItem(FONT_KEY,String(general));
-    localStorage.setItem(SIDEBAR_KEY,String(Math.max(14,general-1)));
+    localStorage.setItem(SIDEBAR_KEY,String(general));
     localStorage.setItem(CHAT_KEY,String(general));
     applyFont(general);
     // Configuración usa sliders propios: mantenerlos sincronizados si están visibles.
     const g=document.getElementById('fontGeneral'),s=document.getElementById('fontSidebar'),c=document.getElementById('fontChat');
-    if(g)g.value=String(general);if(s)s.value=String(Math.max(14,general-1));if(c)c.value=String(general);
+    if(g)g.value=String(general);if(s)s.value=String(general);if(c)c.value=String(general);
     g?.dispatchEvent(new Event('input'));s?.dispatchEvent(new Event('input'));c?.dispatchEvent(new Event('input'));
   }
 
@@ -1539,6 +1553,11 @@ document.addEventListener('DOMContentLoaded',inicializarFechaGlobal);
     document.getElementById('themeToggle')?.addEventListener('click',toggleTheme);
     document.getElementById('fontDec')?.addEventListener('click',()=>setFont(getFont()-1));
     document.getElementById('fontInc')?.addEventListener('click',()=>setFont(getFont()+1));
+    let resizeTimer=null;
+    window.addEventListener('resize',()=>{
+      clearTimeout(resizeTimer);
+      resizeTimer=setTimeout(()=>applyFont(getFont()),80);
+    },{passive:true});
     if(window.matchMedia){
       const mq=window.matchMedia('(prefers-color-scheme: dark)');
       const onChange=()=>{if(localStorage.getItem(THEME_KEY)===null)applyTheme(mq.matches?'dark':'light')};
