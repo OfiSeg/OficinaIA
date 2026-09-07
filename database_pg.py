@@ -132,6 +132,20 @@ CREATE INDEX IF NOT EXISTS idx_pendientes_usuario_estado
     ON pendientes (usuario, estado);
 """
 
+
+CREATE_TABLE_EVENTOS_SISTEMA_SQL = """
+CREATE TABLE IF NOT EXISTS eventos_sistema (
+    id SERIAL PRIMARY KEY,
+    timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    categoria TEXT NOT NULL,
+    nivel TEXT NOT NULL,
+    mensaje TEXT NOT NULL,
+    detalle_tecnico TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_eventos_sistema_fecha
+    ON eventos_sistema (timestamp DESC);
+"""
+
 USUARIO_ADMIN_PRINCIPAL = "admin"
 
 # Tipos/estados alineados con pendientes_ops.py
@@ -180,6 +194,7 @@ def inicializar_postgres():
             cursor.execute(CREATE_TABLE_MENSAJES_SQL)
             cursor.execute(CREATE_TABLE_FLOTAS_ACTIVAS_SQL)
             cursor.execute(CREATE_TABLE_PENDIENTES_SQL)
+            cursor.execute(CREATE_TABLE_EVENTOS_SISTEMA_SQL)
             cursor.execute(
                 """
                 ALTER TABLE metadatos

@@ -1,17 +1,24 @@
 {% extends 'base.html' %}
 {% block title %}Chat IA · {{config_global.nombre_oficina}}{% endblock %}
+{% block body_class %}chat-layout{% endblock %}
 {% block content %}
 <div class="page chat-page">
-<header class="top"><div><h1>{{config_global.nombre_oficina}}</h1></div></header>
+<div class="chat-window" id="chatWindow">
+  <div class="chat-window-bar" aria-label="Barra del chat">
+    <button type="button" class="chat-list-toggle" id="chatListToggle" aria-expanded="true" title="Ocultar conversaciones">
+      <span class="chat-list-toggle-icon" aria-hidden="true">‹</span>
+      <span class="chat-list-toggle-label">Conversaciones</span>
+    </button>
+  </div>
 <div class="chat-shell">
 <aside class="chat-list"><div class="chat-list-head"><div><b>Conversaciones</b></div><button onclick="nuevoChat()" title="Nueva conversación">＋</button></div><div id="chatList" class="chat-list-items"></div></aside>
 <section class="chat" id="chatDropZone">
 <div id="chatDropOverlay" class="chat-drop-overlay" hidden aria-hidden="true">
-  <div class="chat-drop-overlay-inner"><span>📎</span>Soltá la póliza en PDF acá</div>
+  <div class="chat-drop-overlay-inner"><span>📎</span>Soltá el archivo acá</div>
 </div>
 <header>
-  <strong>✦</strong>
-  <div><b>Chat</b></div>
+  <strong class="sofia-logo-shell" aria-hidden="true"><img class="sofia-logo-img" src="{{ url_for('static', filename='img/favicon.png', v='20260906-brand') }}" alt=""></strong>
+  <div><b>Sofia</b></div>
   <button type="button" class="chat-list-open" id="chatListOpen" title="Conversaciones" aria-label="Abrir lista de conversaciones">☰</button>
   <button class="clear-chat" onclick="borrarChatActual()">Eliminar chat</button>
 </header>
@@ -38,13 +45,13 @@
 </div>
 <div id="chat" class="history history-empty">
   <div id="chatWelcome" class="welcome">
-    <strong>✦</strong>
+    <strong class="sofia-welcome-logo" aria-hidden="true"><img class="sofia-logo-img" src="{{ url_for('static', filename='img/favicon.png', v='20260906-brand') }}" alt=""></strong>
     <h2>¿Qué necesitás resolver?</h2>
   </div>
 </div>
 <div class="composer-wrap">
   <div id="chatCommandMenu" class="chat-command-menu" hidden role="listbox" aria-label="Comandos del chat"></div>
-  <div id="pdfAdjunto" class="pdf-attached" hidden><span>📎</span><strong id="pdfNombre"></strong><button type="button" onclick="quitarPdf()" title="Quitar PDF">×</button></div>
+  <div id="archivoAdjunto" class="file-attached" hidden><span>📎</span><strong id="archivoNombre"></strong><button type="button" onclick="quitarAdjunto()" title="Quitar archivo">×</button></div>
   <div class="notas-toolbar">
     <button type="button" class="notas-btn" id="notasBtn" title="Notas rápidas" aria-label="Notas rápidas" aria-haspopup="true" aria-expanded="false">+</button>
     <div id="notasPanel" class="notas-panel" hidden role="dialog" aria-label="Notas rápidas">
@@ -52,8 +59,7 @@
       <div id="notasLista" class="notas-lista"></div>
     </div>
   </div>
-  <div class="composer"><label class="attach-pdf" title="Adjuntar PDF">📎<input id="pdfInput" type="file" accept="application/pdf,.pdf"></label><textarea id="mensaje" rows="1" maxlength="6000" placeholder="Escribí tu consulta o usá / para comandos…"></textarea><button type="button" class="slash-btn" id="slashBtn" title="Comandos" aria-label="Abrir menú de comandos">/</button><button class="send" onclick="enviarMensaje()">↑</button></div>
-  <small>PDF hasta 20 MB · Enter envía · Shift+Enter nueva línea · /comandos · Pendientes en el menú lateral</small>
+  <div class="composer"><label class="attach-file" title="Adjuntar archivo">📎<input id="archivoInput" type="file" accept="application/pdf,.pdf,text/plain,.txt,image/png,.png,image/jpeg,.jpg,.jpeg,image/webp,.webp"></label><textarea id="mensaje" rows="1" maxlength="6000" placeholder="Escribí tu consulta o usá / para comandos…"></textarea><button type="button" class="slash-btn" id="slashBtn" title="Comandos" aria-label="Abrir menú de comandos">/</button><button class="send" onclick="enviarMensaje()">↑</button></div>
 </div>
 
 <div class="modal" id="notaModal" hidden>
@@ -76,14 +82,14 @@
     </form>
   </div>
 </div>
-</section></div></div>
+</section></div></div></div>
 {% endblock %}
 {% block scripts %}<script>window.FORZAR_CHAT_NUEVO = {{ 'true' if forzar_chat_nuevo else 'false' }};</script>
 
 <script>
 (function(){
   // Bloc de notas rápidas del chat: personal, por navegador, igual que el
-  // resto de las preferencias de interfaz (tema, tamaño de fuente, sidebar)
+  // resto de las preferencias de interfaz (tema y sidebar)
   // que ya viven en localStorage. No toca la IA, el historial ni Excel.
   const CLAVE='oficinaia_notas_rapidas';
   const btn=document.getElementById('notasBtn');

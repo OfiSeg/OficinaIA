@@ -7,6 +7,7 @@ sesión, request, rutas HTTP ni base de datos concreta.
 
 import json
 import re
+import unicodedata
 
 from ai_gateway import generate_with_fallback, obtener_cliente_gemini, DEFAULT_MODELS
 from domain_prompts import FLOTA_SYSTEM_INSTRUCTION

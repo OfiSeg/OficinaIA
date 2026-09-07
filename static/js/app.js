@@ -226,7 +226,7 @@ function renderListaChats(chats){
     const b=document.createElement('button');
     b.type='button';
     b.className='chat-item'+(x.id===currentChatId?' active':'');
-    const tagMap={flota:'Flota',coti:'Coti',alta:'Alta',envios:'Envío',whatsapp:'WA'};
+    const tagMap={flota:'Flota',coti:'Coti',alta:'Alta',envios:'Envío',mail:'Mail',whatsapp:'WA'};
     const tagLabel=tagMap[String(x.tipo||'').toLowerCase()]||'';
     const tagHtml=tagLabel?'<em class="chat-tag">'+esc(tagLabel)+'</em>':'';
     b.innerHTML='<span class="chat-item-title">'+esc(x.titulo||'Sin título')+tagHtml+'</span><small class="chat-item-meta">'+esc(formatearFechaChat(x.actualizado_en))+'</small>';
@@ -486,49 +486,294 @@ function mostrarTabuladoAlta(texto){
   c.appendChild(r);
 }
 
-function mostrarOpcionesAltaAsegurado(tabulado,camposGuardar){
+function mostrarOpcionesAltaAsegurado(_tabuladoInicial,camposGuardar){
   const c=document.getElementById('chat');
-  if(!c||(!tabulado&&!camposGuardar))return;
+  if(!c||!camposGuardar||typeof camposGuardar!=='object')return;
+
+  const valores={...camposGuardar};
+  valores.LIBRO_ID=String(valores.LIBRO_ID||'1');
+  // En el alta desde póliza el teléfono es SIEMPRE manual. NUMERO es la
+  // columna histórica donde vive ese dato; TELEFONO queda como compatibilidad.
+  valores.NUMERO='';
+  valores.TELEFONO='';
+  valores['ENVIOS YA']='';
 
   const r=document.createElement('div');
   r.className='msg assistant';
   const b=document.createElement('div');
-  b.className='bubble excel-proposal';
+  b.className='bubble alta-compact-card';
 
   const titulo=document.createElement('div');
-  titulo.className='excel-proposal-title';
-  titulo.textContent='¿Cómo querés estos datos?';
+  titulo.className='alta-compact-title';
+  const refrescarTitulo=()=>{
+    const nombre=String(valores.ASEGURADO||'').trim();
+    titulo.textContent=nombre?`Alta detectada — ${nombre}`:'Alta detectada';
+  };
+  refrescarTitulo();
   b.appendChild(titulo);
 
-  const ayuda=document.createElement('div');
-  ayuda.className='excel-proposal-help';
-  ayuda.textContent='Elegí si preferís copiar la fila para pegarla vos, o guardar el asegurado directo en Excel.';
-  b.appendChild(ayuda);
+  const resumen=document.createElement('div');
+  resumen.className='alta-compact-summary';
+  const resumenRefs={};
+  const camposResumen=[
+    ['VEHICULO','Vehículo'],
+    ['PATENTE','Patente'],
+    ['CIA','Compañía'],
+    ['MEDIO DE PAGO','Medio de pago'],
+    ['IMPORTE APROX','Precio'],
+    ['EMITIDO DÍA:','Emisión']
+  ];
+  const valorVisible=(clave,valor)=>{
+    const raw=String(valor??'').trim();
+    if(!raw)return '—';
+    if(clave==='IMPORTE APROX'){
+      const n=Number(raw.replace(',','.'));
+      if(Number.isFinite(n)){
+        try{return new Intl.NumberFormat('es-AR',{style:'currency',currency:'ARS',maximumFractionDigits:2}).format(n)}catch(_){return raw}
+      }
+    }
+    return raw;
+  };
+  camposResumen.forEach(([clave,label])=>{
+    const item=document.createElement('div');
+    item.className='alta-compact-item';
+    const k=document.createElement('span');
+    k.className='alta-compact-key';
+    k.textContent=label;
+    const v=document.createElement('strong');
+    v.className='alta-compact-value';
+    v.textContent=valorVisible(clave,valores[clave]);
+    resumenRefs[clave]=v;
+    item.appendChild(k);item.appendChild(v);resumen.appendChild(item);
+  });
+  b.appendChild(resumen);
+
+  const telefonoWrap=document.createElement('label');
+  telefonoWrap.className='alta-phone-field';
+  const telefonoLabel=document.createElement('span');
+  telefonoLabel.textContent='Teléfono';
+  const telefonoInput=document.createElement('input');
+  telefonoInput.type='text';
+  telefonoInput.inputMode='tel';
+  telefonoInput.autocomplete='off';
+  telefonoInput.placeholder='Lo completás vos';
+  telefonoInput.value='';
+  telefonoInput.dataset.campo='NUMERO';
+  const telefonoNota=document.createElement('small');
+  telefonoNota.textContent='Manual · nunca se toma de la póliza';
+  telefonoWrap.appendChild(telefonoLabel);
+  telefonoWrap.appendChild(telefonoInput);
+  telefonoWrap.appendChild(telefonoNota);
+  b.appendChild(telefonoWrap);
+
+  const detalles=document.createElement('div');
+  detalles.className='alta-edit-panel';
+  detalles.hidden=true;
+  const editables=[
+    ['ASEGURADO','Asegurado','text'],
+    ['VEHICULO','Vehículo','text'],
+    ['PATENTE','Patente','text'],
+    ['CIA','Compañía','text'],
+    ['MEDIO DE PAGO','Medio de pago','select'],
+    ['CP','Código postal','text'],
+    ['EMITIDO DÍA:','Día de emisión','text'],
+    ['IMPORTE APROX','Precio','text'],
+    ['MAIL','Mail','email']
+  ];
+  const inputs={};
+  editables.forEach(([clave,label,tipo])=>{
+    const wrap=document.createElement('label');
+    wrap.className='alta-edit-field';
+    const span=document.createElement('span');
+    span.textContent=label;
+    let input;
+    if(tipo==='select'){
+      input=document.createElement('select');
+      [['','—'],['CUPONERA','CUPONERA'],['CBU','CBU'],['CREDITO','CREDITO']].forEach(([value,text])=>{
+        const opt=document.createElement('option');
+        opt.value=value;opt.textContent=text;
+        if(String(valores[clave]||'').toUpperCase()===value)opt.selected=true;
+        input.appendChild(opt);
+      });
+    }else{
+      input=document.createElement('input');
+      input.type=tipo;
+      input.value=String(valores[clave]??'');
+    }
+    input.dataset.campo=clave;
+    inputs[clave]=input;
+    const sync=()=>{
+      valores[clave]=input.value.trim();
+      if(resumenRefs[clave])resumenRefs[clave].textContent=valorVisible(clave,valores[clave]);
+      if(clave==='ASEGURADO')refrescarTitulo();
+    };
+    input.addEventListener('input',sync);
+    input.addEventListener('change',sync);
+    wrap.appendChild(span);wrap.appendChild(input);detalles.appendChild(wrap);
+  });
+  b.appendChild(detalles);
 
   const acciones=document.createElement('div');
-  acciones.className='excel-proposal-actions';
-
-  if(tabulado){
-    const btnTabular=document.createElement('button');
-    btnTabular.type='button';
-    btnTabular.className='tabulado-flota-copy';
-    btnTabular.textContent='Tabulado';
-    btnTabular.onclick=()=>{mostrarTabuladoAlta(tabulado);};
-    acciones.appendChild(btnTabular);
-  }
-
-  if(camposGuardar){
-    const btnGuardar=document.createElement('button');
-    btnGuardar.type='button';
-    btnGuardar.className='excel-proposal-save';
-    btnGuardar.textContent='Guardar en Excel';
-    btnGuardar.onclick=()=>{mostrarPropuestaExcel(camposGuardar);};
-    acciones.appendChild(btnGuardar);
-  }
-
+  acciones.className='alta-compact-actions';
+  const guardar=document.createElement('button');
+  guardar.type='button';
+  guardar.className='excel-proposal-save';
+  guardar.textContent='Guardar en Excel';
+  const editar=document.createElement('button');
+  editar.type='button';
+  editar.className='alta-secondary-btn';
+  editar.textContent='Editar';
+  const tabular=document.createElement('button');
+  tabular.type='button';
+  tabular.className='alta-secondary-btn';
+  tabular.textContent='Tabulado';
+  const estado=document.createElement('span');
+  estado.className='excel-proposal-status';
+  acciones.appendChild(guardar);
+  acciones.appendChild(editar);
+  acciones.appendChild(tabular);
+  acciones.appendChild(estado);
   b.appendChild(acciones);
+
+  // El tabulado vive AL FINAL de la misma ficha; no genera otro mensaje.
+  const tabPanel=document.createElement('div');
+  tabPanel.className='alta-inline-panel';
+  tabPanel.hidden=true;
+  const tabTitle=document.createElement('div');
+  tabTitle.className='alta-inline-title';
+  tabTitle.textContent='Fila tabulada';
+  const tabPre=document.createElement('pre');
+  tabPre.className='tabulado-flota-pre';
+  const tabCopy=document.createElement('button');
+  tabCopy.type='button';
+  tabCopy.className='tabulado-flota-copy';
+  tabCopy.textContent='Copiar';
+  tabPanel.appendChild(tabTitle);tabPanel.appendChild(tabPre);tabPanel.appendChild(tabCopy);
+  b.appendChild(tabPanel);
+
+  const enviosPanel=document.createElement('div');
+  enviosPanel.className='alta-inline-panel';
+  enviosPanel.hidden=true;
+  const enviosTitle=document.createElement('div');
+  enviosTitle.className='alta-inline-title';
+  enviosTitle.textContent='Envíos Ya';
+  const enviosPre=document.createElement('pre');
+  enviosPre.className='tabulado-flota-pre';
+  const enviosCopy=document.createElement('button');
+  enviosCopy.type='button';
+  enviosCopy.className='tabulado-flota-copy';
+  enviosCopy.textContent='Copiar';
+  enviosPanel.appendChild(enviosTitle);enviosPanel.appendChild(enviosPre);enviosPanel.appendChild(enviosCopy);
+  b.appendChild(enviosPanel);
+
   r.appendChild(b);
   c.appendChild(r);
+
+  const recoger=()=>{
+    Object.values(inputs).forEach(input=>{valores[input.dataset.campo]=input.value.trim()});
+    valores.NUMERO=telefonoInput.value.trim();
+    valores.TELEFONO='';
+    valores['ENVIOS YA']='';
+    return {...valores};
+  };
+
+  const filaTabulada=()=>{
+    const v=recoger();
+    const orden=['ASEGURADO','NUMERO','VEHICULO','PATENTE','ENVIOS YA','COMPAÑIA','MEDIO DE PAGO','CODIGO POSTAL','EMITIDO DÍA:','IMPORTE APROX','DE DONDE ','MAIL','TELEFONO'];
+    const map={
+      ASEGURADO:v.ASEGURADO||'',
+      NUMERO:v.NUMERO||'',
+      VEHICULO:v.VEHICULO||'',
+      PATENTE:v.PATENTE||'',
+      'ENVIOS YA':'',
+      COMPAÑIA:v.CIA||'',
+      'MEDIO DE PAGO':v['MEDIO DE PAGO']||'',
+      'CODIGO POSTAL':v.CP||'',
+      'EMITIDO DÍA:':v['EMITIDO DÍA:']||'',
+      'IMPORTE APROX':v['IMPORTE APROX']||'',
+      'DE DONDE ':'',
+      MAIL:v.MAIL||'',
+      TELEFONO:''
+    };
+    return orden.map(k=>String(map[k]??'')).join('\t');
+  };
+
+  editar.addEventListener('click',()=>{
+    detalles.hidden=!detalles.hidden;
+    editar.textContent=detalles.hidden?'Editar':'Cerrar edición';
+    if(!detalles.hidden)inputs.ASEGURADO?.focus();
+  });
+
+  tabular.addEventListener('click',()=>{
+    tabPre.textContent=filaTabulada();
+    tabPanel.hidden=!tabPanel.hidden;
+    tabular.textContent=tabPanel.hidden?'Tabulado':'Ocultar tabulado';
+  });
+
+  tabCopy.addEventListener('click',async()=>{
+    tabPre.textContent=filaTabulada();
+    try{await navigator.clipboard.writeText(tabPre.textContent);tabCopy.textContent='¡Copiado!';}
+    catch(_){tabPre.focus();const sel=window.getSelection(),range=document.createRange();range.selectNodeContents(tabPre);sel.removeAllRanges();sel.addRange(range);document.execCommand('copy');tabCopy.textContent='¡Copiado!';}
+    setTimeout(()=>{tabCopy.textContent='Copiar'},1600);
+  });
+
+  enviosCopy.addEventListener('click',async()=>{
+    try{await navigator.clipboard.writeText(enviosPre.textContent);enviosCopy.textContent='¡Copiado!';}
+    catch(_){enviosPre.focus();const sel=window.getSelection(),range=document.createRange();range.selectNodeContents(enviosPre);sel.removeAllRanges();sel.addRange(range);document.execCommand('copy');enviosCopy.textContent='¡Copiado!';}
+    setTimeout(()=>{enviosCopy.textContent='Copiar'},1600);
+  });
+
+  guardar.addEventListener('click',async()=>{
+    if(guardar.disabled)return;
+    const payload=recoger();
+    if(!payload.ASEGURADO){estado.textContent='Completá el asegurado.';return;}
+    if(!payload.PATENTE){estado.textContent='Completá la patente.';return;}
+    guardar.disabled=true;
+    editar.disabled=true;
+    estado.textContent='Validando…';
+    try{
+      const valResp=await fetch('/api/validar-excel-fila',{
+        method:'POST',headers:{'Content-Type':'application/json'},credentials:'same-origin',
+        body:JSON.stringify({campos:payload,libro_id:'1'})
+      });
+      const val=await leerJsonSeguro(valResp);
+      if(val.errores&&val.errores.length)throw Error(val.errores.join(' '));
+      if(val.campos&&typeof val.campos==='object')Object.assign(payload,val.campos);
+      if(val.avisos&&val.avisos.length){
+        const seguir=confirm(val.avisos.join('\n')+'\n\n¿Guardar de todas formas?');
+        if(!seguir){guardar.disabled=false;editar.disabled=false;estado.textContent='';return;}
+      }
+      estado.textContent='Guardando…';
+      const resp=await fetch('/api/excel/agregar-fila',{
+        method:'POST',headers:{'Content-Type':'application/json'},credentials:'same-origin',
+        body:JSON.stringify({campos:payload,libro_id:'1'})
+      });
+      const d=await leerJsonSeguro(resp);
+      if(!resp.ok||d.ok===false)throw Error(d.error||'No se pudo guardar el registro.');
+
+      guardar.textContent='✓ Guardado en Excel';
+      estado.textContent='';
+      detalles.hidden=true;
+      editar.textContent='Editar';
+      editar.disabled=true;
+      telefonoInput.disabled=true;
+      Object.values(inputs).forEach(input=>input.disabled=true);
+
+      if(d.texto_envios_ya){
+        enviosPre.textContent=d.texto_envios_ya;
+        const btnEnvios=document.createElement('button');
+        btnEnvios.type='button';
+        btnEnvios.className='alta-secondary-btn';
+        btnEnvios.textContent='Envíos Ya';
+        btnEnvios.addEventListener('click',()=>{enviosPanel.hidden=!enviosPanel.hidden;btnEnvios.textContent=enviosPanel.hidden?'Envíos Ya':'Ocultar Envíos Ya';});
+        acciones.insertBefore(btnEnvios,estado);
+      }
+    }catch(e){
+      estado.textContent=e?.message||'No se pudo guardar.';
+      guardar.disabled=false;
+      editar.disabled=false;
+    }
+  });
 }
 
 function mostrarTextoEnviosYa(texto){
@@ -1041,6 +1286,11 @@ const COMANDOS_CHAT=[
     plantilla:'/coti CIA COBERTURA SUMA PREMIO'
   },
   {
+    comando:'/mail',
+    descripcion:'Enviar un correo desde OficinaIA indicando destinatario, asunto y mensaje. Podés adjuntar el archivo del turno actual.',
+    plantilla:'/mail destinatario@correo.com asunto Asunto mensaje Mensaje'
+  },
+  {
     comando:'/envios ya',
     descripcion:'Generar el texto para cargar el asegurado en Envíos Ya, buscando por patente.',
     plantilla:'/envios ya (patente)'
@@ -1188,7 +1438,7 @@ function toggleMenuComandos(){
 }
 
 async function enviarMensaje(){
-  const i=document.getElementById('mensaje'),b=document.querySelector('.send'),pdf=document.getElementById('pdfInput');
+  const i=document.getElementById('mensaje'),b=document.querySelector('.send'),pdf=document.getElementById('archivoInput');
   if(!i||enviandoMensaje)return;
   const t=i.value.trim(),archivo=pdf?.files?.[0]||null;
   if(!t&&!archivo)return;
@@ -1204,11 +1454,11 @@ async function enviarMensaje(){
     const historial=historialParaApi();
     document.getElementById('chatWelcome')?.remove();try{document.getElementById('chat')?.classList.remove('history-empty')}catch(_){};
   try{document.getElementById('chat')?.classList.remove('history-empty')}catch(_){};
-    add('user',(archivo?'📎 '+archivo.name+'\n':'')+(t||'Analizá este PDF.'));
+    add('user',(archivo?'📎 '+archivo.name+'\n':'')+(t||'Analizá este archivo.'));
     // El archivo ya quedó capturado en la variable `archivo`. Limpiamos el
     // input y la pastilla visual AHORA, al enviar, para que el PDF no quede
     // pegado esperando la respuesta del servidor ni se reenvíe por accidente.
-    if(archivo)quitarPdf();
+    if(archivo)quitarAdjunto();
     i.value='';size();
     if(seguirConversacion)scrollToBottom(false);
     const thinking=add('assistant','<span class="typing"><i></i><i></i><i></i></span>',true);
@@ -1219,7 +1469,7 @@ async function enviarMensaje(){
       fd.append('mensaje',t);
       fd.append('historial',JSON.stringify(historial));
       fd.append('chat_id',String(currentChatId||''));
-      if(archivo)fd.append('pdf',archivo,archivo.name);
+      if(archivo)fd.append('archivo',archivo,archivo.name);
       const r=await fetch('/api/chat',{method:'POST',body:fd,credentials:'same-origin'});
       const d=await leerJsonSeguro(r);
       if(!r.ok||d.ok===false)throw Error(d.error||'No se pudo consultar el asistente.');
@@ -1233,7 +1483,7 @@ async function enviarMensaje(){
       if(d.tabulado_alta_asegurado||d.campos_guardar_alta_asegurado)mostrarOpcionesAltaAsegurado(d.tabulado_alta_asegurado,d.campos_guardar_alta_asegurado);
       if(d.texto_envios_ya)mostrarTextoEnviosYa(d.texto_envios_ya);
       if(pdf)pdf.value='';
-      mostrarPdf(null);
+      mostrarAdjunto(null);
       try{await cargarListaChats()}catch(_){}
     }catch(e){
       const mensaje=e?.message||'No se pudo procesar la consulta. Intentá nuevamente.';
@@ -1286,13 +1536,13 @@ async function initChat(){
     }
   };
 
-  const pdf=document.getElementById('pdfInput');
+  const pdf=document.getElementById('archivoInput');
   if(pdf)pdf.addEventListener('change',()=>{
     const file=pdf.files?.[0];
-    if(file)validarYAdjuntarPdf(file,pdf);
+    if(file)validarYAdjuntarArchivo(file,pdf);
   });
 
-  wireDragAndDropPdf();
+  wireDragAndDropArchivo();
 
   document.addEventListener('click',e=>{
     const menu=document.getElementById('chatCommandMenu');
@@ -1333,43 +1583,36 @@ async function initChat(){
 }
 
 async function buscar(q){const box=document.getElementById('resultadosBusqueda');if(!box)return;if(!q){box.innerHTML='<div class="empty"><b>Empezá a buscar</b><small>Los resultados aparecerán aquí.</small></div>';return}box.innerHTML='<div class="empty"><b>Buscando…</b></div>';try{const r=await fetch('/api/buscar?q='+encodeURIComponent(q)),d=await r.json();box.innerHTML=d.length?d.map(x=>`<div class="result"><b>${esc((x.extension||'FILE').replace('.','').toUpperCase())}</b><span><strong>${esc(x.nombre)}</strong><small>${esc(x.compania)} · ${esc(x.tamaño)} KB</small></span></div>`).join(''):'<div class="empty"><b>No encontramos coincidencias</b></div>'}catch{box.innerHTML='<div class="empty"><b>Error de búsqueda</b></div>'}}
-function mostrarPdf(file){const box=document.getElementById('pdfAdjunto'),name=document.getElementById('pdfNombre');if(!box||!name)return;if(file){name.textContent=file.name;box.hidden=false}else{box.hidden=true;name.textContent=''}}
-function quitarPdf(){const input=document.getElementById('pdfInput');if(input)input.value='';mostrarPdf(null)}
+function mostrarAdjunto(file){const box=document.getElementById('archivoAdjunto'),name=document.getElementById('archivoNombre');if(!box||!name)return;if(file){name.textContent=file.name;box.hidden=false}else{box.hidden=true;name.textContent=''}}
+function quitarAdjunto(){const input=document.getElementById('archivoInput');if(input)input.value='';mostrarAdjunto(null)}
 
-// Validación única para un PDF adjuntado, ya sea por el botón de clip o
-// por drag & drop: mismas reglas (solo .pdf, hasta 20MB), mismo aviso al
-// usuario y mismo destino final (#pdfInput), para no crear un segundo
+// Validación única para un archivo adjuntado, ya sea por el botón de clip o
+// por drag & drop: mismas reglas (PDF/TXT/imagen y su límite por tipo), mismo aviso al
+// usuario y mismo destino final (#archivoInput), para no crear un segundo
 // camino de lectura de PDF (Tanda 3).
-function validarYAdjuntarPdf(file,pdfInputEl){
-  const pdf=pdfInputEl||document.getElementById('pdfInput');
-  if(!file||!pdf)return false;
-  if(!file.name.toLowerCase().endsWith('.pdf')){
-    if(window.showToast)showToast('Solo podés adjuntar archivos PDF.','warning');else alert('Solo podés adjuntar archivos PDF.');
-    pdf.value='';
-    return false;
+function validarYAdjuntarArchivo(file,inputEl){
+  const input=inputEl||document.getElementById('archivoInput');
+  if(!file||!input)return false;
+  const ext=(file.name.split('.').pop()||'').toLowerCase();
+  const limites={pdf:20,txt:2,png:15,jpg:15,jpeg:15,webp:15};
+  const limite=limites[ext];
+  if(!limite){
+    if(window.showToast)showToast('Podés adjuntar PDF, TXT, PNG, JPG, JPEG o WEBP.','warning');else alert('Formato de archivo no compatible.');
+    input.value='';return false;
   }
-  if(file.size>20*1024*1024){
-    if(window.showToast)showToast('El PDF supera el límite de 20 MB.','warning');else alert('El PDF supera el límite de 20 MB.');
-    pdf.value='';
-    return false;
+  if(file.size>limite*1024*1024){
+    if(window.showToast)showToast(`El archivo supera el límite de ${limite} MB.`,`warning`);else alert(`El archivo supera el límite de ${limite} MB.`);
+    input.value='';return false;
   }
-  try{
-    const transferencia=new DataTransfer();
-    transferencia.items.add(file);
-    pdf.files=transferencia.files;
-  }catch(_){
-    // Navegadores muy viejos sin DataTransfer: si el archivo ya vino del
-    // propio input (caso botón de clip), pdf.files ya lo tiene igual.
-  }
-  mostrarPdf(file);
-  return true;
+  try{const transferencia=new DataTransfer();transferencia.items.add(file);input.files=transferencia.files}catch(_){}
+  mostrarAdjunto(file);return true;
 }
 
-// Arrastrar y soltar un PDF directamente sobre el chat (Tanda 3). No
+// Arrastrar y soltar un archivo directamente sobre el chat (Tanda 3). No
 // reemplaza al botón de clip: es una segunda forma de hacer lo mismo,
-// usando el mismo input y el mismo procesamiento de PDF que ya existe.
+// usando el mismo input y el mismo procesamiento de adjuntos que ya existe.
 //
-// FIX: el overlay ("Soltá la póliza en PDF acá") se quedaba pegado en
+// FIX: el overlay ("Soltá el archivo acá") se quedaba pegado en
 // pantalla cuando el drag terminaba fuera de la zona del chat (se soltaba
 // en otra parte de la página, se cancelaba con Esc, o el mouse salía de la
 // ventana del navegador arrastrando algo) porque el contador de
@@ -1377,10 +1620,10 @@ function validarYAdjuntarPdf(file,pdfInputEl){
 // relatedTarget para decidir si realmente se salió de la zona, y se
 // agregan redes de seguridad a nivel documento/ventana para ocultar el
 // overlay pase lo que pase.
-function wireDragAndDropPdf(){
+function wireDragAndDropArchivo(){
   const zona=document.getElementById('chatDropZone');
   const overlay=document.getElementById('chatDropOverlay');
-  const pdf=document.getElementById('pdfInput');
+  const pdf=document.getElementById('archivoInput');
   if(!zona||!overlay||!pdf)return;
   const contieneArchivo=e=>Array.from(e.dataTransfer?.types||[]).includes('Files');
   const ocultar=()=>{overlay.hidden=true};
@@ -1408,7 +1651,7 @@ function wireDragAndDropPdf(){
     e.preventDefault();
     ocultar();
     const archivo=e.dataTransfer.files?.[0];
-    if(archivo)validarYAdjuntarPdf(archivo,pdf);
+    if(archivo)validarYAdjuntarArchivo(archivo,pdf);
   });
 
   // Redes de seguridad: el drag puede terminar sin que la zona reciba
@@ -1452,118 +1695,20 @@ function inicializarFechaGlobal(){const e=document.getElementById('fechaHoy');if
 document.addEventListener('DOMContentLoaded',inicializarFechaGlobal);
 
 /* ==========================================================
-   Apariencia — tema + tamaño legible
+   Apariencia — tema + tipografía fija
    ========================================================== */
 (function(){
-  const THEME_KEY = 'oficinaia_theme';
-  const FONT_KEY = 'oficinaia_font_general_px';
-  const SIDEBAR_KEY = 'oficinaia_font_sidebar_px';
-  const CHAT_KEY = 'oficinaia_font_chat_px';
-  // La app arranca legible. +/- cambia los tres tamaños coordinadamente.
-  const MIN_FONT = 14, MAX_FONT = 20, DEFAULT_FONT = 16;
-
-  function getTheme(){
-    const t=localStorage.getItem(THEME_KEY);
-    if(t==='light'||t==='dark')return t;
-    return window.matchMedia&&window.matchMedia('(prefers-color-scheme: dark)').matches?'dark':'light';
-  }
-
-  function applyTheme(theme){
-    document.documentElement.setAttribute('data-theme',theme);
-    document.documentElement.style.colorScheme=theme==='dark'?'dark':'light';
-    const btn=document.getElementById('themeToggle');
-    if(btn){
-      btn.dataset.theme=theme;
-      btn.title=theme==='dark'?'Cambiar a modo claro':'Cambiar a modo oscuro';
-      btn.setAttribute('aria-label',btn.title);
-    }
-  }
+  const THEME_KEY='oficinaia_theme';
+  const DEFAULT_FONT=16;
+  function getTheme(){const t=localStorage.getItem(THEME_KEY);if(t==='light'||t==='dark')return t;return window.matchMedia&&window.matchMedia('(prefers-color-scheme: dark)').matches?'dark':'light'}
+  function applyTheme(theme){document.documentElement.setAttribute('data-theme',theme);document.documentElement.style.colorScheme=theme==='dark'?'dark':'light';const btn=document.getElementById('themeToggle');if(btn){btn.dataset.theme=theme;btn.title=theme==='dark'?'Cambiar a modo claro':'Cambiar a modo oscuro';btn.setAttribute('aria-label',btn.title)}}
   function setTheme(theme){localStorage.setItem(THEME_KEY,theme);applyTheme(theme)}
   function toggleTheme(){setTheme(getTheme()==='dark'?'light':'dark')}
-
-  function numeroGuardado(clave, fallback){
-    const n=parseInt(localStorage.getItem(clave)||String(fallback),10);
-    return Number.isFinite(n)?n:fallback;
-  }
-  function getFont(){
-    return Math.max(MIN_FONT,Math.min(MAX_FONT,numeroGuardado(FONT_KEY,DEFAULT_FONT)));
-  }
-  function viewportDensity(){
-    const w=window.innerWidth||document.documentElement.clientWidth||1600;
-    // Escritorio ancho (incluido el uso habitual al 80%): conservar la densidad actual.
-    if(w>=1540||w<1050)return 1;
-    // En un viewport efectivo típico de Chrome al 100%, compensar la ampliación
-    // geométrica del navegador sin intentar detectar el porcentaje de zoom.
-    if(w>=1360)return 0.84+((w-1360)/180)*0.16;
-    // Alrededor de 110% el viewport CSS se achica aún más: compactar gradualmente.
-    if(w>=1180)return 0.76+((w-1180)/180)*0.08;
-    return 0.74;
-  }
-  function applyFont(px){
-    const general=Math.max(MIN_FONT,Math.min(MAX_FONT,px));
-    // V20 Etapa 21: +/- sigue siendo una preferencia del usuario, mientras
-    // --viewport-density compensa la densidad visual en escritorios con viewport
-    // efectivo menor (por zoom del navegador o ventana más estrecha).
-    const density=viewportDensity();
-    const effective=(general/16)*density;
-    const sidebar=general;
-    const chat=general;
-    document.documentElement.style.setProperty('--ui-font-size',general+'px');
-    document.documentElement.style.setProperty('--viewport-density',String(density));
-    document.documentElement.style.setProperty('--font-scale',String(effective));
-    document.documentElement.style.setProperty('--sidebar-font-size',general+'px');
-    document.documentElement.style.setProperty('--chat-font-size',general+'px');
-    const dec=document.getElementById('fontDec'),inc=document.getElementById('fontInc');
-    if(dec)dec.disabled=general<=MIN_FONT;
-    if(inc)inc.disabled=general>=MAX_FONT;
-  }
-  function setFont(px){
-    const general=Math.max(MIN_FONT,Math.min(MAX_FONT,px));
-    localStorage.setItem(FONT_KEY,String(general));
-    localStorage.setItem(SIDEBAR_KEY,String(general));
-    localStorage.setItem(CHAT_KEY,String(general));
-    applyFont(general);
-    // Configuración usa sliders propios: mantenerlos sincronizados si están visibles.
-    const g=document.getElementById('fontGeneral'),s=document.getElementById('fontSidebar'),c=document.getElementById('fontChat');
-    if(g)g.value=String(general);if(s)s.value=String(general);if(c)c.value=String(general);
-    g?.dispatchEvent(new Event('input'));s?.dispatchEvent(new Event('input'));c?.dispatchEvent(new Event('input'));
-  }
-
-  window.showToast=function(message,type){
-    const host=document.getElementById('toastHost');if(!host)return;
-    const el=document.createElement('div');el.className='toast '+(type||'info');el.setAttribute('role','status');el.textContent=message;host.appendChild(el);
-    const hide=()=>{el.classList.add('leaving');setTimeout(()=>el.remove(),200)};
-    setTimeout(hide,type==='error'?4500:2800);el.addEventListener('click',hide);
-  };
-
-  function initAppearance(){
-    // Migración visual V4: la versión anterior guardaba 14/14/15 y en
-    // pantallas de escritorio quedaba demasiado chica. Se hace una sola vez;
-    // después +/- y Configuración respetan lo que el usuario elija.
-    if(localStorage.getItem('oficinaia_ui_v4_migrated')!=='1'){
-      const g=numeroGuardado(FONT_KEY,DEFAULT_FONT);
-      const sb=numeroGuardado(SIDEBAR_KEY,15);
-      const ch=numeroGuardado(CHAT_KEY,16);
-      if(g<=15)localStorage.setItem(FONT_KEY,'16');
-      if(sb<=14)localStorage.setItem(SIDEBAR_KEY,'15');
-      if(ch<=15)localStorage.setItem(CHAT_KEY,'16');
-      localStorage.setItem('oficinaia_ui_v4_migrated','1');
-    }
-    applyTheme(getTheme());applyFont(getFont());
-    document.getElementById('themeToggle')?.addEventListener('click',toggleTheme);
-    document.getElementById('fontDec')?.addEventListener('click',()=>setFont(getFont()-1));
-    document.getElementById('fontInc')?.addEventListener('click',()=>setFont(getFont()+1));
-    let resizeTimer=null;
-    window.addEventListener('resize',()=>{
-      clearTimeout(resizeTimer);
-      resizeTimer=setTimeout(()=>applyFont(getFont()),80);
-    },{passive:true});
-    if(window.matchMedia){
-      const mq=window.matchMedia('(prefers-color-scheme: dark)');
-      const onChange=()=>{if(localStorage.getItem(THEME_KEY)===null)applyTheme(mq.matches?'dark':'light')};
-      if(mq.addEventListener)mq.addEventListener('change',onChange);else if(mq.addListener)mq.addListener(onChange);
-    }
-  }
+  function getFont(){return DEFAULT_FONT}
+  function viewportDensity(){const w=window.innerWidth||document.documentElement.clientWidth||1600;if(w>=1540||w<1050)return 1;if(w>=1360)return 0.84+((w-1360)/180)*0.16;if(w>=1180)return 0.76+((w-1180)/180)*0.08;return 0.74}
+  function applyFont(){const general=getFont(),density=viewportDensity(),effective=(general/16)*density;document.documentElement.style.setProperty('--ui-font-size',general+'px');document.documentElement.style.setProperty('--viewport-density',String(density));document.documentElement.style.setProperty('--font-scale',String(effective));document.documentElement.style.setProperty('--sidebar-font-size',general+'px');document.documentElement.style.setProperty('--chat-font-size',general+'px')}
+  window.showToast=function(message,type){const host=document.getElementById('toastHost');if(!host)return;const el=document.createElement('div');el.className='toast '+(type||'info');el.setAttribute('role','status');el.textContent=message;host.appendChild(el);const hide=()=>{el.classList.add('leaving');setTimeout(()=>el.remove(),200)};setTimeout(hide,type==='error'?4500:2800);el.addEventListener('click',hide)};
+  function initAppearance(){applyTheme(getTheme());applyFont();document.getElementById('themeToggle')?.addEventListener('click',toggleTheme);let resizeTimer=null;window.addEventListener('resize',()=>{clearTimeout(resizeTimer);resizeTimer=setTimeout(applyFont,80)},{passive:true});if(window.matchMedia){const mq=window.matchMedia('(prefers-color-scheme: dark)');const onChange=()=>{if(localStorage.getItem(THEME_KEY)===null)applyTheme(mq.matches?'dark':'light')};if(mq.addEventListener)mq.addEventListener('change',onChange);else if(mq.addListener)mq.addListener(onChange)}}
   if(document.readyState==='loading')document.addEventListener('DOMContentLoaded',initAppearance);else initAppearance();
 })();
 
@@ -1587,6 +1732,34 @@ document.addEventListener('DOMContentLoaded',inicializarFechaGlobal);
     apply(collapsed);
     btn.addEventListener('click',()=>{
       const now=document.documentElement.getAttribute('data-sidebar')==='collapsed';
+      apply(!now);
+    });
+  }
+  if(document.readyState==='loading')document.addEventListener('DOMContentLoaded',init);
+  else init();
+})();
+
+
+/* Chat desktop: historial plegable dentro de la ventana flotante. */
+(function(){
+  const KEY='oficinaia_chat_list';
+  function apply(collapsed){
+    document.documentElement.setAttribute('data-chat-list', collapsed ? 'collapsed' : 'expanded');
+    const btn=document.getElementById('chatListToggle');
+    if(btn){
+      btn.setAttribute('aria-expanded', collapsed ? 'false' : 'true');
+      btn.title=collapsed ? 'Mostrar conversaciones' : 'Ocultar conversaciones';
+    }
+    try{localStorage.setItem(KEY,collapsed?'collapsed':'expanded')}catch(_){}
+  }
+  function init(){
+    const btn=document.getElementById('chatListToggle');
+    if(!btn)return;
+    let collapsed=false;
+    try{collapsed=localStorage.getItem(KEY)==='collapsed'}catch(_){}
+    apply(collapsed);
+    btn.addEventListener('click',()=>{
+      const now=document.documentElement.getAttribute('data-chat-list')==='collapsed';
       apply(!now);
     });
   }
@@ -1641,4 +1814,231 @@ document.addEventListener('DOMContentLoaded',inicializarFechaGlobal);
   }
   if(document.readyState==='loading')document.addEventListener('DOMContentLoaded',init);
   else init();
+})();
+
+/* Módulos de UI: badge, chips contextuales, plantillas y tips */
+(function () {
+  'use strict';
+
+  /* ---------- Badge pendientes ---------- */
+  window.actualizarBadgePendientes = function (n) {
+    const badge = document.getElementById('badgePendientes');
+    if (!badge) return;
+    const num = Number(n) || 0;
+    if (num > 0) {
+      badge.hidden = false;
+      badge.textContent = num > 99 ? '99+' : String(num);
+    } else {
+      badge.hidden = true;
+      badge.textContent = '0';
+    }
+  };
+
+  async function refrescarBadgePendientes() {
+    try {
+      const r = await fetch('/api/pendientes?estado=pendiente', { credentials: 'same-origin' });
+      const d = await r.json();
+      if (r.ok && d.ok) window.actualizarBadgePendientes(d.total_pendientes || 0);
+    } catch (_) {}
+  }
+
+  window.crearPendiente = async function (tipo, titulo, payload) {
+    try {
+      const r = await fetch('/api/pendientes', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'same-origin',
+        body: JSON.stringify({ tipo, titulo, payload: payload || {} }),
+      });
+      const d = await r.json();
+      if (!r.ok || !d.ok) throw new Error(d.error || 'No se pudo crear el pendiente');
+      window.actualizarBadgePendientes(d.total_pendientes || 0);
+      if (window.showToast) showToast('Quedó en Pendientes', 'success');
+      return d.id;
+    } catch (e) {
+      if (window.showToast) showToast(e.message || 'Error', 'error');
+      return null;
+    }
+  };
+
+  /* ---------- Tags historial ---------- */
+  function tagDesdeTitulo(titulo) {
+    const t = String(titulo || '').toLowerCase();
+    if (t.includes('/flota') || t.includes('flota')) return 'Flota';
+    if (t.includes('/coti') || t.includes('coti') || t.includes('cotiz')) return 'Coti';
+    if (t.includes('/mail') || t.includes('correo') || t.includes('gmail')) return 'Mail';
+    if (t.includes('whatsapp') || t.includes('mensaje')) return 'WA';
+    if (t.includes('remolque') || t.includes('grúa') || t.includes('grua') || t.includes('asistencia')) return 'Remolque';
+    if (t.includes('cobertura')) return 'Cobertura';
+    if (t.includes('asegurado') || t.includes('/guardar')) return 'Alta';
+    if (t.includes('envios') || t.includes('envíos')) return 'Envío';
+    return '';
+  }
+
+  const _renderListaChatsOrig = window.renderListaChats;
+  if (typeof _renderListaChatsOrig === 'function') {
+    window.renderListaChats = function (chats) {
+      _renderListaChatsOrig(chats);
+      document.querySelectorAll('.chat-item-title').forEach((el) => {
+        if (el.querySelector('.chat-tag')) return;
+        const tag = tagDesdeTitulo(el.textContent);
+        if (!tag) return;
+        const span = document.createElement('em');
+        span.className = 'chat-tag';
+        span.textContent = tag;
+        el.appendChild(span);
+      });
+    };
+  }
+
+  /* ---------- Plantillas metadato (sin reload) ---------- */
+  async function inyectarPlantillasMetadato() {
+    const panel = document.getElementById('metaPanel');
+    if (!panel || document.getElementById('metaPlantillas')) return;
+    const head = panel.querySelector('.workspace-head .excel-actions') || panel.querySelector('.workspace-head');
+    if (!head) return;
+    try {
+      const r = await fetch('/api/plantillas-metadato', { credentials: 'same-origin' });
+      const d = await r.json();
+      if (!r.ok || !d.ok) return;
+      const wrap = document.createElement('div');
+      wrap.id = 'metaPlantillas';
+      wrap.className = 'meta-plantillas';
+      wrap.innerHTML = '<span class="meta-plantillas-label">Plantillas:</span>';
+      (d.plantillas || []).forEach((pl) => {
+        const b = document.createElement('button');
+        b.type = 'button';
+        b.className = 'btn-soft';
+        b.textContent = pl.id;
+        b.title = pl.titulo;
+        b.addEventListener('click', async () => {
+          const titulo = pl.titulo.replace(/\{[^}]+\}/g, '').replace(/\s+/g, ' ').trim() || 'Nueva ficha';
+          const contenido = pl.contenido;
+          try {
+            b.disabled = true;
+            const r2 = await fetch('/api/metadatos', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              credentials: 'same-origin',
+              body: JSON.stringify({ titulo, contenido }),
+            });
+            const d2 = await r2.json();
+            if (!r2.ok || !d2.ok) throw new Error(d2.error || 'Error');
+            if (window.showToast) showToast('Plantilla creada: ' + pl.id, 'success');
+            if (typeof window.abrirPanelMetadatos === 'function') window.abrirPanelMetadatos();
+            if (typeof window.cargarListaMetadatos === 'function') await window.cargarListaMetadatos();
+            if (typeof window.cargarMetadato === 'function' && d2.metadato && d2.metadato.id) {
+              await window.cargarMetadato(d2.metadato.id);
+            }
+          } catch (e) {
+            if (window.showToast) showToast(e.message || 'No se pudo crear', 'error');
+          } finally {
+            b.disabled = false;
+          }
+        });
+        wrap.appendChild(b);
+      });
+      head.appendChild(wrap);
+    } catch (_) {}
+  }
+
+  document.addEventListener('DOMContentLoaded', () => {
+    refrescarBadgePendientes();
+    inyectarPlantillasMetadato();
+  });
+
+  /* ---------- Tips de descubrimiento (arriba del chat) ---------- */
+  const TIPS_OFICINAIA = [
+    'Tirame una póliza, imagen o TXT al chat y puedo analizarlo.',
+    'Si tirás una póliza individual, puedo reconocerla y prepararte el alta automáticamente.',
+    'También podés usar /alta para procesar una póliza individual a mano.',
+    'De una póliza puedo sacar asegurado, vehículo, patente, compañía, medio de pago, precio y fecha de emisión.',
+    'El teléfono del alta queda siempre manual: nunca lo tomo del número de póliza ni de otros números del PDF.',
+    'Antes de guardar un alta, siempre podés revisar los datos que encontré.',
+    'Puedo prepararte los datos de una póliza tabulados, listos para pegar en Excel.',
+    'Si una póliza trae varios vehículos, la distingo de una póliza individual.',
+    'Podés adjuntar PDF, TXT o imágenes con el 📎 o arrastrarlos directo sobre el chat.',
+    'Si mandás un archivo sin escribir nada, igual lo proceso.',
+    'Los PDFs admiten hasta 20 MB; las imágenes hasta 15 MB y los TXT hasta 2 MB.',
+    'Usá /flota para empezar a armar una flota.',
+    'No hace falta mandar toda la flota junta: podés cargarla en tandas.',
+    'También podés sumar vehículos de a uno.',
+    'Mientras armamos la flota, podés corregirme un dato de un vehículo puntual.',
+    'Si a un vehículo le falta un dato, me lo podés pasar más adelante.',
+    'Los vehículos que ya cargaste quedan guardados mientras seguimos con la flota.',
+    'Antes de que la flota llegue al Excel, la revisás vos.',
+    'El resultado de /flota queda tabulado, listo para copiar y pegar en Excel.',
+    'Podés armar una flota grande sin cargar cada vehículo a mano en el Excel.',
+    'Reconozco datos como patente, año, motor, chasis, uso, suma asegurada y cobertura, según el formato de la póliza.',
+    'Tengo un procesamiento pensado especialmente para el formato de flotas de La Segunda.',
+    'Si un dato de una fila no me cierra, lo marco para que lo revises en vez de inventarlo.',
+    'Los vehículos con datos dudosos pueden quedar pendientes de revisión mientras seguís cargando el resto.',
+    'OficinaIA trabaja con un Excel de Asegurados y otro de Flotas.',
+    'Podés elegir con qué libro de Excel querés trabajar.',
+    'Podés editar celdas del Excel directamente desde OficinaIA.',
+    'Podés agregar filas nuevas a la planilla.',
+    'Podés eliminar las filas vacías de un saque.',
+    'Podés eliminar columnas vacías.',
+    'Podés agregar columnas nuevas.',
+    'Podés eliminar columnas.',
+    'Podés importar un Excel existente a OficinaIA.',
+    'También podés exportar la planilla cuando la necesites.',
+    'Los datos de Asegurados y de Flotas se guardan en libros separados.',
+    'Para guardar un dato, busco la columna por su nombre, no por una posición fija.',
+    'Antes de sumar un asegurado, valido que tenga los datos mínimos para identificarlo.',
+    'Si una patente ya está cargada, te aviso antes de que la guardes de nuevo.',
+    'Usá /guardar asegurado para preparar un registro nuevo.',
+    '/guardar asegurado acepta los datos entre paréntesis.',
+    'También podés pasarle los datos de /guardar asegurado separados por comas.',
+    'Al final de /guardar asegurado podés indicar en qué Excel guardarlo.',
+    'El Excel 1 es Asegurados y el Excel 2 es Flotas.',
+    'Antes de guardar un alta que salió de una póliza, podés revisar lo que encontré.',
+    'Los datos de la póliza se acomodan según las columnas reales de tu Excel.',
+    'Usá /coti para cargar una cotización rápida.',
+    'El formato de /coti es: CIA COBERTURA SUMA PREMIO.',
+    'En /coti podés indicar compañía, cobertura, suma asegurada y premio.',
+    '/coti es un comando fijo: no depende de que Gemini lo interprete.',
+    'Usá /envios ya seguido de la patente.',
+    '/envios ya también acepta la patente entre paréntesis.',
+    'Los datos de Envíos Ya se guardan aparte del resto del asegurado.',
+    'Cuando preparo un alta desde una póliza, Envíos Ya queda vacío para que lo completes vos.',
+    'Podés preguntarme por coberturas, asistencia, remolques, grúas, límites o condiciones usando la documentación cargada.',
+    'Si mencionás una compañía, busco directo en su documentación.',
+    'Puedo buscar dentro de los PDFs cargados por término o frase.',
+    'Los metadatos pueden completar la información que traen los PDFs.',
+    'Podés guardar un dato útil de una compañía como metadato, para tenerlo a mano en futuras consultas.',
+    'Distingo entre una consulta sobre tu cartera y una consulta sobre documentación de compañías.',
+    'Para preguntas de coberturas, asistencia o remolque, uso la documentación cargada como fuente.',
+  ];
+
+  function mostrarTipOficinaIA() {
+    const tarjeta = document.getElementById('chatTip');
+    const texto = document.getElementById('chatTipTexto');
+    const cerrar = document.getElementById('chatTipCerrar');
+    if (!tarjeta || !texto || !cerrar || !TIPS_OFICINAIA.length) return;
+
+    // El tip se muestra SIEMPRE al cargar/entrar al Chat IA.
+    // No usamos sessionStorage para recordar que ya fue mostrado:
+    // F5, nueva entrada al chat o nuevo inicio de sesión vuelven a mostrarlo.
+    let elegido = Math.floor(Math.random() * TIPS_OFICINAIA.length);
+
+    // Evita repetir el mismo tip de forma consecutiva cuando sea posible.
+    try {
+      const ultimo = Number(localStorage.getItem('oficinaia_ultimo_tip'));
+      if (TIPS_OFICINAIA.length > 1 && Number.isInteger(ultimo) && elegido === ultimo) {
+        elegido = (elegido + 1 + Math.floor(Math.random() * (TIPS_OFICINAIA.length - 1))) % TIPS_OFICINAIA.length;
+      }
+      localStorage.setItem('oficinaia_ultimo_tip', String(elegido));
+    } catch (_) {}
+
+    texto.textContent = TIPS_OFICINAIA[elegido];
+    tarjeta.hidden = false;
+
+    // La X solo cierra el cartel actual. Al volver a cargar/entrar,
+    // el tip vuelve a aparecer.
+    cerrar.onclick = function () {
+      tarjeta.hidden = true;
+    };
+  }
+  document.addEventListener('DOMContentLoaded', mostrarTipOficinaIA);
 })();

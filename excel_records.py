@@ -184,10 +184,11 @@ def construir_fila_excel(campos_fila, indices, cantidad_columnas, libro_id):
 class ExcelRecordService:
     """Altas/validaciones lógicas sobre libros, con persistencia inyectada."""
 
-    def __init__(self, *, libros_excel, leer_excel, guardar_excel):
+    def __init__(self, *, libros_excel, leer_excel, guardar_excel, agregar_filas=None):
         self.libros_excel = libros_excel
         self.leer_excel = leer_excel
         self.guardar_excel = guardar_excel
+        self.agregar_filas = agregar_filas
 
     def _validar_libro(self, libro_id):
         libro_id = str(libro_id or "1")
@@ -226,7 +227,10 @@ class ExcelRecordService:
             construir_fila_excel(fila, indices, cantidad_columnas, libro_id)
             for fila in propuestas
         ]
-        self.guardar_excel(filas_actuales + nuevas, hoja_actual, libro_id=libro_id)
+        if self.agregar_filas:
+            self.agregar_filas(nuevas, libro_id=libro_id, nombre_hoja=hoja_actual)
+        else:
+            self.guardar_excel(filas_actuales + nuevas, hoja_actual, libro_id=libro_id)
         actualizado = self.leer_excel(libro_id)
         return {
             "libro_id": libro_id,

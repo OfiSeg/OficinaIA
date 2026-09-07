@@ -56,8 +56,20 @@ def procesar(
     es_alta_explicito = bool(re.match(r"^/alta\b", mensaje, re.IGNORECASE))
     mensaje_para_alta = mensaje
     alta_automatica = False
+    # Un PDF de póliza puede venir sólo como adjunto para reenviarlo. La
+    # detección automática de /alta nunca debe secuestrar un pedido de envío
+    # explícito (comando o lenguaje natural).
+    mensaje_norm = str(mensaje or "").strip().lower()
+    parece_pedido_envio = bool(re.search(
+        r"\b(?:mand(?:a|ale|alo|ar)|envi(?:a|ale|alo|ar)|reenvi(?:a|ar)|mail|correo|whatsapp)\b",
+        mensaje_norm,
+        re.IGNORECASE,
+    ))
+    es_otro_comando = bool(mensaje_norm.startswith("/") and not es_alta_explicito)
     if (
         not es_alta_explicito
+        and not es_otro_comando
+        and not parece_pedido_envio
         and contexto_pdf
         and alta_ops.pdf_parece_poliza_individual(contexto_pdf)
     ):

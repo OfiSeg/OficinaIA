@@ -1,0 +1,44 @@
+{% extends 'base.html' %}
+{% block title %}Salud del sistema · {{config_global.nombre_oficina}}{% endblock %}
+{% block content %}
+<div class="page health-page">
+  <header class="top"><div><h1>Salud del sistema</h1></div></header>
+  <section class="panel health-panel">
+    <div class="health-summary">
+      <b>{{ errores_24h }} error{% if errores_24h != 1 %}es{% endif %} en las últimas 24 h</b>
+      <span>{{ errores_ia_24h }} de IA</span>
+    </div>
+    <form class="health-filters" method="get">
+      <select name="categoria" aria-label="Categoría">
+        <option value="">Todas las categorías</option>
+        {% for value, label in [('ia','IA'),('excel','Excel/Sheets'),('mail','Mail'),('whatsapp','WhatsApp'),('general','General')] %}
+        <option value="{{value}}" {% if categoria == value %}selected{% endif %}>{{label}}</option>
+        {% endfor %}
+      </select>
+      <select name="nivel" aria-label="Nivel">
+        <option value="">Todos los niveles</option>
+        <option value="error" {% if nivel == 'error' %}selected{% endif %}>Error</option>
+        <option value="aviso" {% if nivel == 'aviso' %}selected{% endif %}>Aviso</option>
+      </select>
+      <button class="btn-soft" type="submit">Filtrar</button>
+    </form>
+    <div class="health-table-wrap">
+      <table class="health-table">
+        <thead><tr><th>Fecha</th><th>Categoría</th><th>Nivel</th><th>Mensaje</th></tr></thead>
+        <tbody>
+          {% for e in eventos %}
+          <tr>
+            <td>{{ e.timestamp|string|replace('T',' ') }}</td>
+            <td>{{ e.categoria }}</td>
+            <td><span class="health-level health-level-{{e.nivel}}">{{ e.nivel }}</span></td>
+            <td><b>{{ e.mensaje }}</b>{% if e.detalle_tecnico %}<details><summary>Detalle</summary><pre>{{ e.detalle_tecnico }}</pre></details>{% endif %}</td>
+          </tr>
+          {% else %}
+          <tr><td colspan="4" class="health-empty">No hay eventos para este filtro.</td></tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </section>
+</div>
+{% endblock %}

@@ -12,7 +12,7 @@
 
   <section class="estudio-panel active" data-estudio-panel="analizar">
     <div class="estudio-card estudio-upload-card">
-      <div class="estudio-card-head"><div><h2>Nuevo análisis</h2><p>Podés seleccionar muchos PDFs a la vez. Se procesan uno por uno para que un archivo lento no tire abajo todo el lote.</p></div></div>
+      <div class="estudio-card-head"><div><h2>Nuevo análisis</h2></div></div>
       <label class="estudio-drop" id="estudioDrop">
         <input id="estudioFiles" type="file" accept="application/pdf,.pdf" multiple hidden>
         <span class="drop-pdf-mark" aria-hidden="true">PDF</span><b>Arrastrá los PDFs acá</b><span>o hacé clic para seleccionarlos</span>
@@ -33,17 +33,17 @@
     <div class="estudio-learning-note"><b>Cómo aprende Sofía</b><span>Usa únicamente ejemplos validados por una persona como antecedentes internos. Sus propias respuestas no se incorporan solas como criterio.</span></div>
 
     <div class="estudio-card estudio-example-card">
-      <div class="estudio-card-head"><div><h2>Agregar ejemplo validado</h2><p>Guardá un caso real con la clasificación y el fundamento que usaría el estudio.</p></div></div>
+      <div class="estudio-card-head"><div><h2>Agregar ejemplo validado</h2></div></div>
       <form id="ejemploForm" class="estudio-example-form">
         <label>Nombre del ejemplo<input id="ejemploNombre" required placeholder="Ej. Alcance trasero con lesiones"></label>
         <label>Clasificación<select id="ejemploClasificacion"><option value="TOMAR">Tomar</option><option value="REVISAR">Revisar</option><option value="NO_TOMAR">No tomar</option><option value="INCOMPLETO">Incompleto</option></select></label>
         <label class="example-foundation">Por qué<textarea id="ejemploFundamento" required rows="3" placeholder="Criterio del letrado / resultado real"></textarea></label>
         <div class="example-pdf-field">
-          <span class="example-label">PDF del caso <small>(opcional, recomendado)</small></span>
+          <span class="example-label">PDF del caso </span>
           <label class="example-pdf-drop" id="examplePdfDrop">
             <input id="ejemploPdf" type="file" accept="application/pdf,.pdf" hidden>
             <span class="drop-pdf-mark" aria-hidden="true">PDF</span>
-            <span><b>Arrastrá el PDF acá</b><small>o hacé clic para seleccionarlo</small></span>
+            <span><b>Arrastrá el PDF acá</b></span>
           </label>
           <div class="example-pdf-selected" id="examplePdfSelected" hidden><div><b id="examplePdfName"></b><small id="examplePdfMeta"></small></div><button type="button" class="icon-button" id="examplePdfClear" aria-label="Quitar PDF" title="Quitar PDF">×</button></div>
         </div>
@@ -51,7 +51,7 @@
       </form>
     </div>
 
-    <div class="estudio-card"><div class="estudio-card-head"><div><h2>Ejemplos cargados</h2><p>Antecedentes ya validados que Sofía puede usar para comparar casos nuevos.</p></div></div><div id="ejemplosList" class="estudio-examples-list"></div></div>
+    <div class="estudio-card"><div class="estudio-card-head"><div><h2>Ejemplos cargados</h2></div></div><div id="ejemplosList" class="estudio-examples-list"></div></div>
   </section>
 
   <section class="estudio-panel" data-estudio-panel="historial">

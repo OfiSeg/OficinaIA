@@ -113,16 +113,17 @@ TOOL_DEFINITIONS = [
                 "Cuando el usuario pide guardar o agregar un asegurado a la planilla, "
                 "proponé un registro usando EXACTAMENTE estas claves: ASEGURADO, NUMERO, "
                 "VEHICULO, PATENTE, ENVIOS YA, CIA, MEDIO DE PAGO, CP, MAIL, TELEFONO. "
-                "NUMERO acepta DNI o número de póliza según el caso. Nunca inventes un "
-                "dato: si falta, dejalo como cadena vacía para que el usuario lo confirme. "
+                "NUMERO es el teléfono/número de contacto histórico de la planilla. "
+                "Nunca uses DNI ni número de póliza. Si falta, dejalo vacío para que "
+                "el usuario lo complete manualmente. "
                 "Intentá completar siempre todos los campos que estén presentes en el "
                 "mensaje, aunque el texto libre no tenga comas. Ejemplo: "
                 "'ramiro herrera, 1141492756, Brava Nevada 125, AC123BC, ATM' se mapea "
                 "a ASEGURADO=ramiro herrera, NUMERO=1141492756, VEHICULO=Brava Nevada 125, "
                 "PATENTE=AC123BC, CIA=ATM. Si el usuario usa sólo espacios como separadores "
                 "y la frase es ambigua, no adivines silenciosamente: completá lo seguro y "
-                "dejá el resto vacío. Otro ejemplo: 'Juan Perez 123456 ATM' permite "
-                "ASEGURADO=Juan Perez, NUMERO=123456, CIA=ATM si no hay datos suficientes "
+                "dejá el resto vacío. Otro ejemplo: 'Juan Perez 1141492756 ATM' permite "
+                "ASEGURADO=Juan Perez, NUMERO=1141492756, CIA=ATM si no hay datos suficientes "
                 "para inferir vehículo o patente. La tool sólo propone; no guarda nada."
             ),
             parameters_json_schema={
@@ -132,7 +133,7 @@ TOOL_DEFINITIONS = [
                         "type": "object",
                         "properties": {
                             "ASEGURADO": {"type": "string", "description": "Nombre completo del asegurado."},
-                            "NUMERO": {"type": "string", "description": "DNI o número de póliza, según el caso."},
+                            "NUMERO": {"type": "string", "description": "Teléfono/número de contacto histórico de la planilla. Nunca usar DNI ni número de póliza."},
                             "VEHICULO": {"type": "string", "description": "Marca/modelo/tipo del vehículo."},
                             "PATENTE": {"type": "string", "description": "Patente del vehículo."},
                             "ENVIOS YA": {"type": "string", "description": "Dato de Envíos Ya, si corresponde."},
@@ -180,6 +181,35 @@ TOOL_DEFINITIONS = [
             name="buscar_vehiculos",
             description="Busca vehículos y patentes en los registros estructurados, filtrando opcionalmente por compañía, tipo o cliente.",
             parameters_json_schema={"type": "object", "properties": {"compania": {"type": "string"}, "tipo": {"type": "string"}, "cliente": {"type": "string"}}},
+        ),
+        types.FunctionDeclaration(
+            name="enviar_por_canal",
+            description=(
+                "Envía un mensaje por un canal externo SOLO cuando el usuario pide explícitamente "
+                "mandar/enviar algo. El adjunto actual puede usarse normalmente; el adjunto del turno anterior "
+                "sólo puede reutilizarse si el usuario lo pide de forma explícita. "
+                "Si el destinatario no fue escrito pero se identifica un asegurado, pasá su nombre/patente "
+                "en 'asegurado' para buscar MAIL o TELEFONO en Sheets. Nunca inventes destinatarios."
+            ),
+            parameters_json_schema={
+                "type": "object",
+                "properties": {
+                    "canal": {"type": "string", "enum": ["mail", "whatsapp"]},
+                    "destinatario": {"type": "string"},
+                    "asegurado": {"type": "string"},
+                    "texto": {"type": "string"},
+                    "asunto": {
+                        "type": "string",
+                        "description": "Asunto del correo cuando el canal sea mail. Si el usuario lo indicó, respetalo; si no, redactá uno breve y descriptivo."
+                    },
+                    "usar_adjunto_del_turno": {"type": "boolean"},
+                    "usar_adjunto_anterior": {
+                        "type": "boolean",
+                        "description": "Usar sólo si el usuario pide explícitamente reutilizar/reenviar el adjunto del turno anterior. Nunca activarlo por omisión."
+                    },
+                },
+                "required": ["canal", "texto"],
+            },
         ),
         types.FunctionDeclaration(
             name="buscar_en_internet",

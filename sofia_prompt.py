@@ -77,10 +77,21 @@ EXCEL_POLICY = """
 
 WRITE_POLICY = """
 - Si el usuario pide guardar/agregar un asegurado, usá proponer_registro_excel con EXACTAMENTE: ASEGURADO, NUMERO, VEHICULO, PATENTE, ENVIOS YA, CIA, MEDIO DE PAGO, CP, MAIL, TELEFONO.
-- NUMERO puede ser DNI o número de póliza. Si falta un campo, dejalo vacío: nunca inventes.
+- NUMERO es el número de contacto/teléfono histórico de la planilla. Nunca lo completes con DNI ni número de póliza; si el usuario no dio un teléfono, dejalo vacío.
 - La propuesta requiere confirmación; no guardes directamente desde Sofia.
 - Si el usuario usa /guardar asegurado, respetá su parser determinístico y orden histórico; no reinterpretes posiciones.
 - guardar_metadato_relevante sólo propone fichas objetivas, estables y reutilizables respaldadas por evidencia del turno; nunca conversación descartable ni datos temporales.
+"""
+
+
+SEND_POLICY = """
+- Usá enviar_por_canal únicamente si el usuario pide de forma explícita enviar/mandar un mensaje o adjunto.
+- Si pide redactar, corregir o preparar un mensaje pero NO pide enviarlo, no uses la herramienta: entregá sólo el texto.
+- Si hay un destinatario explícito, preservalo exactamente. Si no lo hay pero el usuario identifica un asegurado, pasá ese identificador para buscar su MAIL/TELEFONO en Sheets.
+- Nunca inventes un mail o teléfono. Si no se puede resolver, pedí el destinatario.
+- Si el turno ACTUAL tiene un adjunto y el usuario pide enviarlo, usalo.
+- Nunca heredes automáticamente un adjunto del turno anterior. Sólo usá usar_adjunto_anterior=true si el usuario lo referencia explícitamente con frases como “reenviá ese archivo”, “mandá el adjunto anterior” o equivalentes.
+- Para mail, redactá un cuerpo de correo breve y profesional, no copies el tono conversacional crudo de Sofia.
 """
 
 INTERNET_POLICY = """
@@ -133,6 +144,7 @@ def build_sofia_prompt(*, fecha_hoy: str, plan_texto: str, historial_texto: str,
     # Guardado e Internet son capacidades opcionales y reciben reglas compactas
     # siempre, porque el router base no necesita anticipar cada redacción posible.
     sections.append(_section("REGLAS DE ESCRITURA:", WRITE_POLICY))
+    sections.append(_section("REGLAS DE ENVÍO:", SEND_POLICY))
     sections.append(_section("REGLAS DE INTERNET:", INTERNET_POLICY))
     sections.append(_section("FORMATO Y TONO:", FORMAT_POLICY))
 

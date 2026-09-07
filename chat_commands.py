@@ -6,6 +6,7 @@ fuera de app.py. No conoce Flask, session, DB ni archivos: recibe dependencias.
 from dataclasses import dataclass, field
 import re
 
+import dispatch_service
 from companias import normalizar_compania
 
 
@@ -61,7 +62,7 @@ def armar_texto_envios_ya(datos, *, normalizar_encabezado):
         return ""
 
     nombre = obtener("ASEGURADO", "nombre asegurado")
-    telefono = normalizar_telefono(obtener("TELEFONO"))
+    telefono = normalizar_telefono(obtener("TELEFONO", "NUMERO"))
     vehiculo = obtener("VEHICULO", "marca_modelo", "marca/modelo")
     patente = obtener("PATENTE", "dominio", "chapa").upper()
     cia = obtener("CIA", "compañia", "compania")
@@ -121,6 +122,10 @@ def parsear_guardar_asegurado(mensaje):
 
 
 def procesar(mensaje, *, leer_excel, normalizar_encabezado, libros_excel):
+    despacho = dispatch_service.procesar_comando_explicito(mensaje)
+    if despacho is not None:
+        return CommandResult(True, despacho.get("respuesta") or "No pude completar el envío.")
+
     envios = parsear_envios_ya(mensaje)
     if envios is not None:
         if envios.get("error"):

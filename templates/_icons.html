@@ -1,6 +1,7 @@
 {% macro icon(name) -%}
 <svg class="app-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
 {% if name == 'chat' %}<path d="M21 15a4 4 0 0 1-4 4H8l-5 3V7a4 4 0 0 1 4-4h10a4 4 0 0 1 4 4z"/><path d="M8 9h8M8 13h5"/>
+{% elif name == 'chat-spark' %}<path d="M20 13.5V15a4 4 0 0 1-4 4H8l-5 3V7a4 4 0 0 1 4-4h7.5"/><path d="M18 2.5l.75 2.25L21 5.5l-2.25.75L18 8.5l-.75-2.25L15 5.5l2.25-.75z"/><path d="M8 10h5M8 14h7"/>
 {% elif name == 'pending' %}<circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/>
 {% elif name == 'library' %}<path d="M4 5.5A2.5 2.5 0 0 1 6.5 3H11v16H6.5A2.5 2.5 0 0 0 4 21.5z"/><path d="M20 5.5A2.5 2.5 0 0 0 17.5 3H13v16h4.5a2.5 2.5 0 0 1 2.5 2.5z"/>
 {% elif name == 'sheet' %}<rect x="4" y="3" width="16" height="18" rx="2"/><path d="M4 8h16M9 8v13M14 8v13M4 13h16M4 17h16"/>

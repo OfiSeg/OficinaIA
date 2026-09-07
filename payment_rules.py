@@ -21,11 +21,21 @@ def _normalizar_medio_pago(medio_pago):
         return ""
     if "CUPON" in texto:
         return "CUPONERA"
-    if "CBU" in texto or "DEBITO" in texto or "TRANSFERENCIA" in texto:
-        return "CBU"
+    # Cualquier pago explícito con tarjeta pertenece a CREDITO en la planilla,
+    # incluso si el texto dice "débito en tarjeta".
     if "CREDITO" in texto or "TARJETA" in texto:
         return "CREDITO"
+    if "CBU" in texto or "DEBITO" in texto or "TRANSFERENCIA" in texto:
+        return "CBU"
     return ""
+
+
+def normalizar_medio_pago(medio_pago):
+    """Normaliza cualquier descripción explícita a las tres categorías del Excel.
+
+    Devuelve únicamente CUPONERA, CBU, CREDITO o cadena vacía.
+    """
+    return _normalizar_medio_pago(medio_pago)
 
 
 _REGLAS_PAGO = {

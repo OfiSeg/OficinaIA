@@ -5,8 +5,8 @@
   <header class="top clean-page-head envios-head"><div><h1>Envíos Masivos</h1></div></header>
 
   <section class="envios-card envios-upload-card">
-    <div class="envios-card-head"><div><h2>Cargar bases</h2><p>Subí Excel o CSV. OficinaIA detecta las columnas y prepara los archivos de salida.</p></div></div>
-    <label class="envios-drop" id="enviosDrop"><input id="enviosFiles" type="file" accept=".xlsx,.xlsm,.csv" multiple hidden><span class="envios-file-mark" aria-hidden="true">XLS</span><b>Arrastrá las bases acá</b><span>o hacé clic para seleccionarlas</span><small>Excel .xlsx / .xlsm · CSV · hasta 12 archivos por lote</small></label>
+    <div class="envios-card-head"><div><h2>Cargar bases</h2></div></div>
+    <label class="envios-drop" id="enviosDrop"><input id="enviosFiles" type="file" accept=".xlsx,.xlsm,.csv" multiple hidden><span class="envios-file-mark" aria-hidden="true">XLS</span><b>Arrastrá las bases acá</b><span>o hacé clic para seleccionarlas</span></label>
     <div class="envios-selected" id="enviosSelected"><div class="envios-empty">Todavía no seleccionaste archivos.</div></div>
 
     <div class="envios-toolbar">
@@ -25,15 +25,15 @@
     <div class="envios-quality-note" id="enviosQualityNote" hidden></div>
 
     <div class="envios-exports">
-      <div class="envios-export-card"><div><span class="envios-export-tag">CONTACTOS</span><h3>Excel EnvíosYA</h3><p>Mantiene exactamente la estructura del Excel de Contactos que exporta EnvíosYA. Sólo entran teléfonos válidos y texto principal limpio.</p></div><a class="primary envios-download" id="enviosDownload" href="#">Descargar Excel</a></div>
-      <div class="envios-export-card"><div><span class="envios-export-tag">NOTIFICACIONES</span><h3>CSV de notificaciones</h3><p id="enviosNotifText">Formato de la pantalla “Importar notificaciones”: apellido, nombre, celular, fecha, XXX, XXX, XXX, patente, XXX, póliza.</p></div><a class="primary envios-download" id="enviosNotifDownload" href="#">Descargar CSV</a></div>
-      <div class="envios-export-card"><div><span class="envios-export-tag">OFICINAIA</span><h3>Base completa</h3><p>Conserva email, CP, dirección, tipo, fuente, originales, reparaciones y todos los campos que EnvíosYA no incluye en esos formatos.</p></div><a class="secondary envios-download alt" id="enviosMasterDownload" href="#">Descargar base</a></div>
+      <div class="envios-export-card"><div><span class="envios-export-tag">CONTACTOS</span><h3>Excel EnvíosYA</h3></div><a class="primary envios-download" id="enviosDownload" href="#">Descargar Excel</a></div>
+      <div class="envios-export-card"><div><span class="envios-export-tag">NOTIFICACIONES</span><h3>CSV de notificaciones</h3></div><a class="primary envios-download" id="enviosNotifDownload" href="#">Descargar CSV</a></div>
+      <div class="envios-export-card"><div><span class="envios-export-tag">OFICINAIA</span><h3>Base completa</h3></div><a class="secondary envios-download alt" id="enviosMasterDownload" href="#">Descargar base</a></div>
     </div>
 
-    <p class="envios-inline-note">Los emails se conservan en la base completa. El CSV de notificaciones mantiene el formato de EnvíosYA y no agrega columnas.</p>
+    
 
-    <div class="envios-source-card"><div class="envios-source-head"><div><h3>Qué entendió OficinaIA</h3><p>La detección se hace por contenido y encabezados; no depende de posiciones fijas.</p></div></div><div class="envios-source-list" id="enviosSources"></div></div>
-    <div class="envios-preview-card"><div class="envios-preview-head"><div><h3>Vista previa</h3><p>Los registros para revisar no entran al Excel de contactos.</p></div><div class="envios-filters" role="group"><button type="button" class="active" data-envios-filter="TODOS">Todos</button><button type="button" data-envios-filter="VALIDO">Válidos</button><button type="button" data-envios-filter="REVISAR">Revisar</button></div></div><div class="envios-table-wrap"><table class="envios-table"><thead><tr><th>Estado</th><th>Apellido</th><th>Nombre</th><th>Celular</th><th>Email</th><th>Localidad</th><th>CP</th><th>Compañía</th><th>Patente</th><th>Tipo</th><th>Origen</th></tr></thead><tbody id="enviosPreview"></tbody></table></div></div>
+    <div class="envios-source-card"><div class="envios-source-head"><div><h3>Qué entendió OficinaIA</h3></div></div><div class="envios-source-list" id="enviosSources"></div></div>
+    <div class="envios-preview-card"><div class="envios-preview-head"><div><h3>Vista previa</h3></div><div class="envios-filters" role="group"><button type="button" class="active" data-envios-filter="TODOS">Todos</button><button type="button" data-envios-filter="VALIDO">Válidos</button><button type="button" data-envios-filter="REVISAR">Revisar</button></div></div><div class="envios-table-wrap"><table class="envios-table"><thead><tr><th>Estado</th><th>Apellido</th><th>Nombre</th><th>Celular</th><th>Email</th><th>Localidad</th><th>CP</th><th>Compañía</th><th>Patente</th><th>Tipo</th><th>Origen</th></tr></thead><tbody id="enviosPreview"></tbody></table></div></div>
   </section>
 </div>
 {% endblock %}

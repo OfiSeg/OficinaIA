@@ -153,6 +153,13 @@ def generate_with_fallback(
                 # Circuit breaker request-scoped: no volver a quemar tiempo/cuota
                 # contra el mismo modelo en las siguientes vueltas del tool loop.
                 state.disabled_models.add(modelo)
+                try:
+                    import system_health
+                    system_health.registrar_evento(
+                        "ia", "aviso", f"Modelo {modelo} alcanzó su cuota", str(error)
+                    )
+                except Exception:
+                    pass
 
     if not intento_real and state.disabled_models:
         deshabilitados = ", ".join(sorted(state.disabled_models))

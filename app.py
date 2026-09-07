@@ -14,6 +14,7 @@ from flask import (
 )
 
 from pathlib import Path
+from io import BytesIO
 from functools import wraps
 import re
 import os
@@ -25,6 +26,8 @@ from contextlib import closing
 from werkzeug.security import generate_password_hash, check_password_hash
 from werkzeug.utils import secure_filename
 from dotenv import load_dotenv
+from openpyxl import Workbook, load_workbook
+from openpyxl.utils import get_column_letter
 
 import pendientes_ops
 from pending_store import PendingStore
@@ -73,9 +76,6 @@ from storage_r2 import (
     subir_pdf as r2_subir_pdf,
     eliminar_pdf as r2_eliminar_pdf,
     obtener_objeto_stream,
-    EXCEL_INTERNO_R2_KEY,
-    subir_excel_interno,
-    descargar_excel_interno,
 )
 from companias import normalizar_compania, nombre_compania as _nombre_compania_canonico
 from local_db import conectar_db
@@ -107,12 +107,17 @@ import chat_ai
 import chat_context_actions
 from payment_rules import calcular_regla_pago
 from ai_gateway import begin_request
-from chat_request import parse_incoming, extract_pdf_attachment, ChatRequestError
+from chat_request import parse_incoming, extract_attachment, ChatRequestError
 import config_service
 import library_service
 from user_store import UserStore, validar_email
 from office_docs_service import OfficeDocumentsService, limpiar_filas_excel, limpiar_columnas_excel
+import google_sheets_service
+import system_health
+import dispatch_service
+import chat_attachments
 from excel_records import ExcelRecordService, normalizar_encabezado
+from excel_books import obtener_libros_excel
 
 # ==========================================================
 # CONFIGURACIÓN
@@ -206,21 +211,8 @@ DOCUMENTOS_DIR = BASE_DIR / "documentos"
 NOTAS_FILE = BASE_DIR / "notas.json"
 WORD_FILE = BASE_DIR / "documento_interno.docx"
 
-# Planilla interna editable de Oficina IA.
-EXCEL_FILE = BASE_DIR / "excel_interno.xlsx"
 
-LIBROS_EXCEL = {
-    "1": {
-        "archivo": "excel_interno.xlsx",
-        "r2_key": EXCEL_INTERNO_R2_KEY,
-        "nombre": "Asegurados",
-    },
-    "2": {
-        "archivo": "excel_flotas.xlsx",
-        "r2_key": "excel/flotas.xlsx",
-        "nombre": "Flotas",
-    },
-}
+LIBROS_EXCEL = obtener_libros_excel()
 
 DOCUMENTOS_DIR.mkdir(
     exist_ok=True
@@ -315,6 +307,15 @@ def inicializar_base_datos():
             actualizado_en TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
             FOREIGN KEY(conversacion_id) REFERENCES conversaciones(id) ON DELETE CASCADE
         )""")
+        db.execute("""CREATE TABLE IF NOT EXISTS eventos_sistema (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            timestamp TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            categoria TEXT NOT NULL,
+            nivel TEXT NOT NULL,
+            mensaje TEXT NOT NULL,
+            detalle_tecnico TEXT
+        )""")
+        db.execute("CREATE INDEX IF NOT EXISTS idx_eventos_sistema_fecha ON eventos_sistema(timestamp DESC)")
         db.execute("""CREATE TABLE IF NOT EXISTS metadatos (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             usuario TEXT NOT NULL,
@@ -822,26 +823,28 @@ def _invalidar_cache_excel_ia():
 
 
 _office_docs = OfficeDocumentsService(
-    base_dir=BASE_DIR,
-    libros_excel=LIBROS_EXCEL,
     word_file=WORD_FILE,
-    descargar_excel=descargar_excel_interno,
-    subir_excel=subir_excel_interno,
     usar_pg_documento=_documento_interno_usar_pg,
     pg_obtener_documento=pg_obtener_documento_interno,
     pg_guardar_documento=pg_guardar_documento_interno,
-    invalidar_cache_excel=_invalidar_cache_excel_ia,
 )
 
-# Wrappers de compatibilidad: consumidores existentes conservan el contrato.
-def asegurar_excel_interno(libro_id="1"):
-    return _office_docs.asegurar_excel(libro_id)
-
+# Wrappers de compatibilidad: el contrato externo no cambia, pero la fuente
+# activa de Asegurados/Flotas es exclusivamente Google Sheets.
 def leer_excel_interno(libro_id="1"):
-    return _office_docs.leer_excel(libro_id)
+    return google_sheets_service.leer_excel(libro_id)
 
 def guardar_matriz_excel(filas, nombre_hoja="Datos", libro_id="1"):
-    return _office_docs.guardar_excel(filas, nombre_hoja, libro_id)
+    google_sheets_service.guardar_excel(filas, nombre_hoja, libro_id)
+    if str(libro_id) == "1":
+        _invalidar_cache_excel_ia()
+    return None
+
+def agregar_filas_excel(filas, libro_id="1", nombre_hoja=None):
+    cantidad = google_sheets_service.agregar_filas(filas, libro_id, nombre_hoja)
+    if str(libro_id) == "1":
+        _invalidar_cache_excel_ia()
+    return cantidad
 
 def _limpiar_filas_excel(filas, conservar_vacias=False):
     return limpiar_filas_excel(filas, conservar_vacias)
@@ -873,6 +876,7 @@ def api_excel():
     try:
         return jsonify({"ok": True, **leer_excel_interno(libro_id)})
     except Exception as error:
+        system_health.registrar_evento("excel", "error", "No se pudo leer la planilla", str(error))
         print("ERROR LEYENDO EXCEL INTERNO:", error)
         return jsonify({"ok": False, "error": "No se pudo leer la planilla."}), 500
 
@@ -886,6 +890,7 @@ def api_excel_guardar():
         guardar_matriz_excel(data.get("filas", []), data.get("hoja", "Datos"), libro_id)
         return jsonify({"ok": True, **leer_excel_interno(libro_id)})
     except Exception as error:
+        system_health.registrar_evento("excel", "error", "No se pudo guardar la planilla", str(error))
         print("ERROR GUARDANDO EXCEL INTERNO:", error)
         return jsonify({"ok": False, "error": "No se pudo guardar la planilla."}), 500
 
@@ -901,6 +906,7 @@ def api_excel_limpiar():
         guardar_matriz_excel(filas_limpias, datos["hoja"], libro_id)
         return jsonify({"ok": True, **leer_excel_interno(libro_id)})
     except Exception as error:
+        system_health.registrar_evento("excel", "error", "No se pudieron eliminar filas vacías", str(error))
         print("ERROR LIMPIANDO EXCEL:", error)
         return jsonify({"ok": False, "error": "No se pudieron eliminar las filas vacías."}), 500
 
@@ -915,7 +921,8 @@ def api_excel_limpiar_columnas():
         filas_limpias = _limpiar_columnas_excel(datos["filas"])
         guardar_matriz_excel(filas_limpias, datos["hoja"], libro_id)
         return jsonify({"ok": True, **leer_excel_interno(libro_id)})
-    except Exception:
+    except Exception as error:
+        system_health.registrar_evento("excel", "error", "No se pudieron eliminar columnas vacías", str(error))
         return jsonify({"ok": False, "error": "No se pudieron eliminar las columnas vacías."}), 500
 
 
@@ -932,9 +939,15 @@ def api_excel_importar():
     if str(libro_id) not in LIBROS_EXCEL:
         return jsonify({"ok": False, "error": "Libro de Excel no válido."}), 400
     try:
-        datos = _office_docs.importar_excel(archivo, libro_id)
-        return jsonify({"ok": True, **datos})
+        wb = load_workbook(archivo.stream, data_only=False)
+        if not wb.sheetnames:
+            raise ValueError("El Excel no contiene hojas.")
+        ws = wb[wb.sheetnames[0]]
+        filas = [["" if v is None else str(v) for v in row] for row in ws.iter_rows(values_only=True)]
+        guardar_matriz_excel(filas, ws.title, libro_id)
+        return jsonify({"ok": True, **leer_excel_interno(libro_id)})
     except Exception as error:
+        system_health.registrar_evento("excel", "error", "No se pudo importar un Excel a Sheets", str(error))
         print("ERROR IMPORTANDO EXCEL:", error)
         return jsonify({"ok": False, "error": "No se pudo importar el Excel."}), 400
 
@@ -945,14 +958,26 @@ def excel_exportar():
     libro_id = request.args.get("libro_id", "1")
     if str(libro_id) not in LIBROS_EXCEL:
         return jsonify({"ok": False, "error": "Libro de Excel no válido."}), 400
-    archivo = BASE_DIR / LIBROS_EXCEL[str(libro_id)]["archivo"]
-    asegurar_excel_interno(libro_id)
-    return send_from_directory(
-        archivo.parent,
-        archivo.name,
-        as_attachment=True,
-        download_name="OficinaIA.xlsx" if str(libro_id) == "1" else archivo.name,
-    )
+    try:
+        datos = leer_excel_interno(libro_id)
+        wb = Workbook()
+        ws = wb.active
+        ws.title = str(datos.get("hoja") or "Datos")[:31]
+        filas = datos.get("filas") or []
+        for fila in filas:
+            ws.append(["" if v is None else str(v) for v in fila])
+        for c in range(1, max(1, int(datos.get("columnas") or 1)) + 1):
+            letra = get_column_letter(c)
+            valores = [str(ws.cell(r, c).value or "") for r in range(1, min(ws.max_row, 30) + 1)]
+            ws.column_dimensions[letra].width = min(max([len(v) for v in valores] + [10]) + 2, 32)
+        buffer = BytesIO()
+        wb.save(buffer)
+        buffer.seek(0)
+        nombre = "OficinaIA_Asegurados.xlsx" if str(libro_id) == "1" else "OficinaIA_Flotas.xlsx"
+        return send_file(buffer, as_attachment=True, download_name=nombre, mimetype="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+    except Exception as error:
+        system_health.registrar_evento("excel", "error", "No se pudo exportar Sheets a XLSX", str(error))
+        return jsonify({"ok": False, "error": "No se pudo exportar la planilla."}), 500
 
 
 @app.route("/api/word", methods=["GET"])
@@ -1326,6 +1351,7 @@ _excel_records = ExcelRecordService(
     libros_excel=LIBROS_EXCEL,
     leer_excel=leer_excel_interno,
     guardar_excel=guardar_matriz_excel,
+    agregar_filas=agregar_filas_excel,
 )
 
 
@@ -1349,7 +1375,9 @@ def api_excel_agregar_fila():
         texto_envios_ya = None
         if tipo_propuesta != "flota" and resultado["libro_id"] == "1":
             try:
-                texto_envios_ya = _armar_texto_envios_ya(campos or {})
+                texto_envios_ya = chat_commands.armar_texto_envios_ya(
+                    campos or {}, normalizar_encabezado=normalizar_encabezado
+                )
             except Exception as error:
                 print("ERROR ARMANDO TEXTO ENVIOS YA:", error)
         return jsonify({
@@ -1362,8 +1390,9 @@ def api_excel_agregar_fila():
     except ValueError as error:
         return jsonify({"ok": False, "error": str(error)}), 400
     except Exception as error:
+        system_health.registrar_evento("excel", "error", "No se pudo agregar una fila desde el chat", str(error))
         print("ERROR AGREGANDO FILA DESDE CHAT:", error)
-        return jsonify({"ok": False, "error": "No se pudo agregar el registro al Excel."}), 500
+        return jsonify({"ok": False, "error": "No se pudo agregar el registro a la planilla."}), 500
 
 
 # V20 Etapa 5 — dominio /flota movido a flota_ops.py.
@@ -1433,6 +1462,7 @@ def _envolver_chat_con_manejo_de_errores(func):
             logger.info("CHAT[%s] fin %.2fs", request_id, time.monotonic() - inicio)
             return respuesta
         except Exception as error:
+            system_health.registrar_evento("ia", "error", "Sofia no pudo responder", str(error))
             logger.exception(
                 "CHAT[%s] excepción no controlada tras %.2fs: %s",
                 request_id,
@@ -1461,17 +1491,17 @@ def chat():
     # El historial conversacional sigue persistiendo por separado.
     begin_request()
 
-    # El chat acepta JSON para consultas normales y multipart/form-data
-    # cuando el usuario adjunta un PDF. El PDF se procesa en memoria y no
-    # se guarda como documento permanente.
+    # El chat acepta JSON para consultas normales y multipart/form-data con
+    # un adjunto efímero (PDF, TXT o imagen). El archivo no se incorpora a la
+    # biblioteca ni se persiste como documento permanente.
     logger.info("CHAT[%s] etapa=request_parse", getattr(g, "chat_request_id", "-"))
     entrada = parse_incoming(request)
     mensaje = entrada.mensaje
     chat_id = entrada.chat_id
     historial = entrada.historial
-    archivo_pdf = entrada.archivo_pdf
+    archivo = entrada.archivo
 
-    if not entrada.tiene_data and not archivo_pdf:
+    if not entrada.tiene_data and not archivo:
         return jsonify({"respuesta": "No recibí ningún mensaje."})
 
     # El libro de un /guardar asegurado queda pendiente sólo para su confirmación
@@ -1508,28 +1538,47 @@ def chat():
 
     _asignar_tipo_chat(chat_id, session["usuario"], mensaje)
 
-    contexto_pdf_adjunto = ""
-    nombre_pdf_adjunto = ""
-    if archivo_pdf and archivo_pdf.filename:
-        logger.info("CHAT[%s] etapa=pdf_inicio", getattr(g, "chat_request_id", "-"))
+    adjunto_actual = None
+    if archivo and archivo.filename:
+        logger.info("CHAT[%s] etapa=adjunto_inicio", getattr(g, "chat_request_id", "-"))
         try:
-            pdf = extract_pdf_attachment(
-                archivo_pdf,
-                max_bytes=MAX_PDF_FILE_SIZE_BYTES,
+            adjunto_actual = extract_attachment(
+                archivo,
+                max_pdf_bytes=MAX_PDF_FILE_SIZE_BYTES,
                 max_pages=MAX_PDF_PAGES_CHAT,
                 max_chars=MAX_PDF_TEXT_CHARS_CHAT,
             )
         except ChatRequestError as exc:
             return jsonify({"ok": False, "error": str(exc)}), exc.status_code
-        nombre_pdf_adjunto = pdf.nombre
-        contexto_pdf_adjunto = pdf.contexto
+        chat_attachments.guardar(chat_id, adjunto_actual)
         logger.info(
-            "CHAT[%s] etapa=pdf_extraido paginas=%s chars=%s",
-            getattr(g, "chat_request_id", "-"), pdf.paginas, pdf.chars
+            "CHAT[%s] etapa=adjunto_extraido tipo=%s chars=%s",
+            getattr(g, "chat_request_id", "-"), adjunto_actual.tipo, adjunto_actual.chars
         )
 
-    if not mensaje and archivo_pdf:
-        mensaje = _MENSAJE_PDF_POR_DEFECTO
+    # El adjunto actual y el anterior se mantienen separados. Un mail/WhatsApp
+    # nuevo sólo usa el archivo cargado en ESTE turno. El adjunto anterior queda
+    # disponible únicamente durante este request para una referencia explícita
+    # del usuario (por ejemplo: "reenviá ese archivo").
+    adjunto_anterior = None
+    if adjunto_actual is None:
+        adjunto_anterior = chat_attachments.obtener(chat_id)
+        if adjunto_anterior is not None:
+            # Después de este turno deja de ser "el inmediatamente anterior".
+            chat_attachments.limpiar(chat_id)
+    dispatch_service.set_turn_attachments([adjunto_actual] if adjunto_actual else [])
+    dispatch_service.set_previous_attachments([adjunto_anterior] if adjunto_anterior else [])
+
+    contexto_adjunto = adjunto_actual.contexto if adjunto_actual else ""
+    nombre_adjunto = adjunto_actual.nombre if adjunto_actual else ""
+
+    if not mensaje and adjunto_actual:
+        if adjunto_actual.tipo == "pdf":
+            mensaje = _MENSAJE_PDF_POR_DEFECTO
+        elif adjunto_actual.tipo == "imagen":
+            mensaje = "Analizá esta imagen según su contenido."
+        else:
+            mensaje = "Analizá este archivo de texto según su contenido."
 
     if not mensaje:
 
@@ -1539,8 +1588,8 @@ def chat():
         })
 
     mensaje_guardado = mensaje
-    if nombre_pdf_adjunto:
-        mensaje_guardado = f"[PDF adjunto: {nombre_pdf_adjunto}]\n{mensaje}"
+    if nombre_adjunto:
+        mensaje_guardado = f"[Adjunto: {nombre_adjunto}]\n{mensaje}"
     _guardar_mensaje(chat_id, "user", mensaje_guardado)
     logger.info("CHAT[%s] mensaje usuario guardado chat_id=%s", getattr(g, "chat_request_id", "-"), chat_id)
 
@@ -1553,7 +1602,7 @@ def chat():
     especial = chat_special.procesar(
         chat_id=chat_id,
         mensaje=mensaje,
-        contexto_pdf=contexto_pdf_adjunto,
+        contexto_pdf=contexto_adjunto if (adjunto_actual and adjunto_actual.tipo == "pdf") else "",
         flota_store=_flota_store,
         on_stage=_log_stage,
     )
@@ -1564,7 +1613,7 @@ def chat():
         return jsonify({
             "respuesta": especial.respuesta,
             "chat_id": chat_id,
-            "archivo_adjunto": nombre_pdf_adjunto or None,
+            "archivo_adjunto": nombre_adjunto or None,
             "propuesta_excel": None,
             "propuesta_metadato": None,
             **especial.payload_extra,
@@ -1588,7 +1637,7 @@ def chat():
         return jsonify({
             "respuesta": comando.respuesta,
             "chat_id": chat_id,
-            "archivo_adjunto": nombre_pdf_adjunto or None,
+            "archivo_adjunto": nombre_adjunto or None,
             "propuesta_excel": comando.propuesta_excel,
             "propuesta_metadato": None,
             "texto_envios_ya": comando.texto_envios_ya,
@@ -1604,7 +1653,7 @@ def chat():
         return jsonify({
             "respuesta": accion_contextual.respuesta,
             "chat_id": chat_id,
-            "archivo_adjunto": nombre_pdf_adjunto or None,
+            "archivo_adjunto": nombre_adjunto or None,
             "propuesta_excel": None,
             "propuesta_metadato": accion_contextual.propuesta_metadato,
             **accion_contextual.payload_extra,
@@ -1617,7 +1666,7 @@ def chat():
     # El plan de ejecución y la precarga de fuentes viven en servicios_ia.py,
     # dentro del mismo request/cache que usa Sofia. Acá sólo viaja el contexto
     # explícito del adjunto cuando corresponde.
-    contexto = contexto_pdf_adjunto
+    contexto = contexto_adjunto
 
     # ======================================================
     # GEMINI
@@ -1627,12 +1676,13 @@ def chat():
     propuesta_metadato = None
     try:
         logger.info("CHAT[%s] Gemini inicio", getattr(g, "chat_request_id", "-"))
-        resultado_ia = chat_ai.responder(mensaje, contexto, historial)
+        resultado_ia = chat_ai.responder(mensaje, contexto, historial, adjunto=adjunto_actual)
         respuesta = resultado_ia.respuesta
         propuesta_excel = resultado_ia.propuesta_excel
         propuesta_metadato = resultado_ia.propuesta_metadato
         logger.info("CHAT[%s] Gemini fin %.2fs", getattr(g, "chat_request_id", "-"), resultado_ia.elapsed)
     except Exception as error:
+        system_health.registrar_evento("ia", "error", "Sofia no pudo responder", str(error))
         print("ERROR CHAT GEMINI:", error)
         if contexto:
             respuesta = (
@@ -1651,7 +1701,7 @@ def chat():
     return jsonify({
         "respuesta": respuesta,
         "chat_id": chat_id,
-        "archivo_adjunto": nombre_pdf_adjunto or None,
+        "archivo_adjunto": nombre_adjunto or None,
         "propuesta_excel": propuesta_excel,
         "propuesta_metadato": propuesta_metadato,
     })
@@ -1660,6 +1710,24 @@ def chat():
 # ==========================================================
 # CONFIGURACIÓN
 # ==========================================================
+
+@app.route("/salud")
+@requiere_admin
+def salud_sistema():
+    categoria = str(request.args.get("categoria") or "").strip() or None
+    nivel = str(request.args.get("nivel") or "").strip() or None
+    eventos = system_health.listar_eventos(categoria=categoria, nivel=nivel, dias=7)
+    ultimas_24h = system_health.listar_eventos(nivel="error", dias=1)
+    errores_ia_24h = sum(1 for e in ultimas_24h if e.get("categoria") == "ia")
+    return render_template(
+        "salud.html",
+        eventos=eventos,
+        categoria=categoria or "",
+        nivel=nivel or "",
+        errores_ia_24h=errores_ia_24h,
+        errores_24h=len(ultimas_24h),
+    )
+
 
 @app.route("/manuales")
 @requiere_login

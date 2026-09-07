@@ -17,30 +17,30 @@
     <div class="settings-content">
       <section class="settings-section active" data-settings-panel="general">
         <div class="settings-section-head">
-          <div><h2>General</h2><p>Preferencias generales de OficinaIA.</p></div>
+          <div><h2>General</h2></div>
         </div>
         <div class="settings-card settings-card-spaced">
-          <div class="setting-row field-row"><label for="nombreOficina"><b>Nombre de la oficina</b><small>Se muestra en la barra lateral y en el título.</small></label><input id="nombreOficina" value="{{config.nombre_oficina}}"></div>
-          <div class="setting-row"><span><b>Mostrar Excel</b><small>Hace visible el acceso al Excel interno.</small></span><label class="switch"><input id="excelVisible" type="checkbox" {% if config.excel_visible %}checked{% endif %}><span></span></label></div>
-          <div class="setting-row"><span><b>Mostrar “¿Sabías que...?”</b><small>Activa o desactiva los consejos breves del chat.</small></span><label class="switch"><input id="tipsVisibles" type="checkbox" {% if config.tips_visibles %}checked{% endif %}><span></span></label></div>
+          <div class="setting-row field-row"><label for="nombreOficina"><b>Nombre de la oficina</b></label><input id="nombreOficina" value="{{config.nombre_oficina}}"></div>
+          <div class="setting-row"><span><b>Mostrar Excel</b></span><label class="switch"><input id="excelVisible" type="checkbox" {% if config.excel_visible %}checked{% endif %}><span></span></label></div>
+          <div class="setting-row"><span><b>Mostrar “¿Sabías que...?”</b></span><label class="switch"><input id="tipsVisibles" type="checkbox" {% if config.tips_visibles %}checked{% endif %}><span></span></label></div>
         </div>
         <div class="settings-footer"><button class="primary settings-save" type="button" onclick="guardarConfiguracion()">Guardar cambios</button><span class="save-state" id="estadoConfig"></span></div>
       </section>
 
       <section class="settings-section" data-settings-panel="herramientas">
-        <div class="settings-section-head settings-title-row"><div><h2>Herramientas</h2><p>Accesos rápidos visibles al pie de la barra lateral.</p></div><button type="button" class="secondary compact" id="addTool">{{ icon('plus') }} Agregar</button></div>
+        <div class="settings-section-head settings-title-row"><div><h2>Herramientas</h2></div><button type="button" class="secondary compact" id="addTool">{{ icon('plus') }} Agregar</button></div>
         <div class="tools-editor" id="toolsEditor"></div>
         <div class="settings-footer"><button class="primary settings-save" type="button" onclick="guardarConfiguracion()">Guardar cambios</button><span class="save-state" id="estadoHerramientas"></span></div>
       </section>
 
       <section class="settings-section" data-settings-panel="companias">
-        <div class="settings-section-head settings-title-row"><div><h2>Compañías</h2><p>Enlaces que aparecen dentro del acceso Compañías.</p></div><button type="button" class="secondary compact" id="addCompany">{{ icon('plus') }} Agregar</button></div>
+        <div class="settings-section-head settings-title-row"><div><h2>Compañías</h2></div><button type="button" class="secondary compact" id="addCompany">{{ icon('plus') }} Agregar</button></div>
         <div class="tools-editor" id="companiesEditor"></div>
         <div class="settings-footer"><button class="primary settings-save" type="button" onclick="guardarConfiguracion()">Guardar cambios</button><span class="save-state" id="estadoCompanias"></span></div>
       </section>
 
       <section class="settings-section" data-settings-panel="usuarios">
-        <div class="settings-section-head settings-title-row"><div><h2>Usuarios</h2><p>Administrá accesos y permisos sin exponer acciones destructivas todo el tiempo.</p></div><button class="primary compact" type="button" onclick="abrirUsuarioModal()">{{ icon('plus') }} Nuevo usuario</button></div>
+        <div class="settings-section-head settings-title-row"><div><h2>Usuarios</h2></div><button class="primary compact" type="button" onclick="abrirUsuarioModal()">{{ icon('plus') }} Nuevo usuario</button></div>
         <div class="users-list" id="usersList">
           {% for u in usuarios %}
           <article class="user-row" data-user-id="{{u.id}}">
@@ -69,8 +69,8 @@
   <div class="settings-shell settings-shell-single">
     <div class="settings-content">
       <section class="settings-section active">
-        <div class="settings-section-head"><div><h2>Cuenta</h2><p>La configuración general solo puede modificarla un administrador.</p></div></div>
-        <div class="settings-card settings-card-spaced"><div class="setting-row"><span><b>{{usuario}}</b><small>Usuario de OficinaIA</small></span><span class="user-role">Usuario</span></div></div>
+        <div class="settings-section-head"><div><h2>Cuenta</h2></div></div>
+        <div class="settings-card settings-card-spaced"><div class="setting-row"><span><b>{{usuario}}</b></span><span class="user-role">Usuario</span></div></div>
       </section>
     </div>
   </div>

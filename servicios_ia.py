@@ -6,7 +6,6 @@ from datetime import datetime, date
 from pathlib import Path
 from google.genai import types
 from ai_gateway import obtener_cliente_gemini, generate_with_fallback, DEFAULT_MODELS
-from openpyxl import load_workbook
 from companias import normalizar_compania, aliases_companias
 from context_router import construir_plan_base, es_consulta_comparativa
 from sofia_prompt import build_sofia_prompt
@@ -15,11 +14,10 @@ from document_search import buscar_en_documentos
 from metadata_store import cargar_metadatos
 from excel_analytics import analizar as analizar_dataset_excel
 
-try:
-    from storage_r2 import descargar_excel_interno, EXCEL_INTERNO_R2_KEY
-except Exception:
-    descargar_excel_interno = None
-    EXCEL_INTERNO_R2_KEY = "excel_interno.xlsx"
+import google_sheets_service
+import dispatch_service
+import system_health
+
 
 
 # ==========================================================
@@ -34,8 +32,6 @@ except Exception:
 _CACHE_EXCEL = {"datos": None, "cargado_en": 0.0}
 TTL_CACHE_EXCEL_SEGUNDOS = 10
 
-BASE_DIR = Path(__file__).resolve().parent
-EXCEL_INTERNO = BASE_DIR / "excel_interno.xlsx"
 
 
 # ==========================================================
@@ -55,25 +51,6 @@ def _coincidencia_identificador(pregunta, fila):
             return True
     return False
 
-def _asegurar_excel_local_para_ia():
-    """Asegura el Excel interno para la IA usando la misma fuente que la UI (P0.6).
-
-    Si R2 está configurado, SIEMPRE descarga de R2 (aunque exista copia local
-    del repo). Así Gemini no trabaja con el xlsx versionado en git mientras
-    la grilla de /notas ya tiene la versión de nube.
-    """
-    if descargar_excel_interno is None:
-        return EXCEL_INTERNO.exists()
-    try:
-        ok = bool(descargar_excel_interno(EXCEL_INTERNO, EXCEL_INTERNO_R2_KEY))
-        if ok:
-            return True
-        return EXCEL_INTERNO.exists()
-    except Exception as error:
-        print("ERROR RECUPERANDO EXCEL INTERNO PARA IA:", error)
-        return EXCEL_INTERNO.exists()
-
-
 def invalidar_cache_excel_interno():
     """Invalida la copia en memoria después de una escritura confirmada."""
     _CACHE_EXCEL["datos"] = None
@@ -81,19 +58,16 @@ def invalidar_cache_excel_interno():
 
 
 def _cargar_excel_interno():
+    """Carga Asegurados desde Google Sheets y lo normaliza a list[dict]."""
     ahora = time.monotonic()
     cache = _CACHE_EXCEL.get("datos")
     if cache is not None and (ahora - _CACHE_EXCEL["cargado_en"]) < TTL_CACHE_EXCEL_SEGUNDOS:
         return cache
 
-    if not _asegurar_excel_local_para_ia():
-        return []
     try:
-        wb = load_workbook(EXCEL_INTERNO, read_only=True, data_only=True)
-        ws = wb.active
-        rows = list(ws.iter_rows(values_only=True))
+        matriz = google_sheets_service.leer_excel("1")
+        rows = matriz.get("filas") or []
         if not rows:
-            wb.close()
             _CACHE_EXCEL["datos"] = []
             _CACHE_EXCEL["cargado_en"] = ahora
             return []
@@ -107,15 +81,42 @@ def _cargar_excel_interno():
             }
             if any(fila.values()):
                 datos.append(fila)
-        wb.close()
         _CACHE_EXCEL["datos"] = datos
         _CACHE_EXCEL["cargado_en"] = time.monotonic()
-        print("EXCEL INTERNO IA:", len(datos), "registros cargados.")
+        print("GOOGLE SHEETS IA:", len(datos), "registros cargados.")
         return datos
     except Exception as error:
-        print("ERROR EXCEL INTERNO:", error)
-        return []
+        print("ERROR GOOGLE SHEETS IA:", error)
+        system_health.registrar_evento(
+            "excel", "error", "Sofia no pudo leer Google Sheets", str(error)
+        )
+        # No convertir una caída/mala configuración de Sheets en un dataset
+        # vacío: eso produciría respuestas falsas del tipo "hay 0". El error
+        # sube hasta el wrapper de herramientas, que lo transforma en un
+        # fallo controlado para que Sofia reconozca que la fuente no estuvo
+        # disponible.
+        raise RuntimeError("No se pudo leer la fuente de Asegurados en Google Sheets.") from error
 
+
+
+def buscar_cliente_exactamente(pregunta, datos):
+    """Devuelve el nombre de CLIENTE cuyo valor completo aparece en la consulta.
+
+    La versión original invocaba esta función pero nunca la definía. Se evita
+    adivinar por coincidencias parciales: solo se considera el valor completo
+    normalizado y, si hay más de uno, gana el más largo/específico.
+    """
+    consulta = _normalizar_texto(pregunta)
+    candidatos = []
+    for fila in datos or []:
+        valor = str((fila or {}).get("CLIENTE", "") or "").strip()
+        normalizado = _normalizar_texto(valor)
+        if normalizado and normalizado in consulta:
+            candidatos.append((len(normalizado), valor))
+    if not candidatos:
+        return None
+    candidatos.sort(reverse=True)
+    return candidatos[0][1]
 
 def _buscar_en_registros(pregunta, datos, etiqueta):
     if not datos:
@@ -1421,6 +1422,7 @@ _TOOL_HANDLERS = {
     "guardar_metadato_relevante": guardar_metadato_relevante,
     "buscar_vehiculos": buscar_vehiculos,
     "buscar_en_internet": buscar_en_internet,
+    "enviar_por_canal": dispatch_service.enviar_por_canal,
 }
 
 
@@ -1624,6 +1626,85 @@ def _formatear_contexto_estructurado(resultado):
     )
 
 
+def _respuesta_analitica_directa(resultado, pregunta):
+    """Devuelve respuestas de conteo simples sin volver a pasar por Gemini.
+
+    El objetivo es que una cifra ya calculada por Python no pueda ser re-sumada,
+    redondeada o reinterpretada por el modelo al redactar la respuesta. Sólo se
+    cubren consultas simples de composición vehicular; el resto mantiene el flujo
+    normal con Gemini y el contexto estructurado.
+    """
+    if not isinstance(resultado, dict) or not resultado.get("ok"):
+        return None
+
+    q = _normalizar_texto(pregunta)
+    operacion = str(resultado.get("operacion") or "").strip().lower()
+    compania = str(resultado.get("compania") or "").strip()
+    prefijo = f"En {compania}, " if compania else ""
+
+    if operacion == "clasificacion_vehiculos":
+        autos = int(resultado.get("autos") or 0)
+        motos = int(resultado.get("motos") or 0)
+        autos_motos_total = int(resultado.get("autos_motos_total") or (autos + motos))
+        otros = int(resultado.get("otros") or 0)
+        hogar = int(resultado.get("hogar_combinado") or 0)
+        indeterminados = int(resultado.get("indeterminados") or 0)
+        vehiculos = int(resultado.get("vehiculos_confirmados") or (autos_motos_total + otros))
+
+        menciona_auto = bool(re.search(r"\bautos?\b|\bautomotores?\b", q))
+        menciona_moto = bool(re.search(r"\bmotos?\b|\bmotocicletas?\b|\bmotovehiculos?\b", q))
+        pide_comparar = any(x in q for x in ("mas", "menos", "diferencia", "mayor", "menor"))
+
+        if menciona_auto and menciona_moto:
+            if pide_comparar:
+                if autos > motos:
+                    base = f"{prefijo}tenés más autos: {autos} autos y {motos} motos. La diferencia es de {autos - motos}."
+                elif motos > autos:
+                    base = f"{prefijo}tenés más motos: {motos} motos y {autos} autos. La diferencia es de {motos - autos}."
+                else:
+                    base = f"{prefijo}tenés la misma cantidad: {autos} autos y {motos} motos."
+            else:
+                base = f"{prefijo}tenés {autos} autos y {motos} motos confirmados. Entre ambas categorías son {autos_motos_total}."
+
+            extras = []
+            if otros:
+                extras.append(f"{otros} registro vehicular adicional")
+            if hogar:
+                extras.append(f"{hogar} de hogar/combinado")
+            if indeterminados:
+                extras.append(f"{indeterminados} indeterminados")
+            if extras:
+                if otros:
+                    etiqueta_otro = "registro vehicular adicional" if otros == 1 else "registros vehiculares adicionales"
+                    base += f" El total de vehículos confirmados es {vehiculos}, porque además hay {otros} {etiqueta_otro}."
+                    extras = extras[1:]
+                if extras:
+                    base += " Fuera de esas categorías hay " + " y ".join(extras) + "."
+            return base
+
+    if operacion == "clasificacion_riesgos" and any(x in q for x in ("vehiculo", "vehiculos")):
+        autos = int(resultado.get("autos") or 0)
+        motos = int(resultado.get("motos") or 0)
+        otros = int(resultado.get("otros_vehiculares") or 0)
+        total = int(resultado.get("vehiculos_confirmados") or 0)
+        hogar = int(resultado.get("hogar_combinado") or 0)
+        indeterminados = int(resultado.get("indeterminados") or 0)
+        partes = [f"{autos} autos", f"{motos} motos"]
+        if otros:
+            partes.append(f"{otros} otro vehicular" if otros == 1 else f"{otros} otros vehiculares")
+        texto = f"{prefijo}tenés {total} vehículos confirmados: " + ", ".join(partes) + "."
+        extras = []
+        if hogar:
+            extras.append(f"{hogar} de hogar/combinado")
+        if indeterminados:
+            extras.append(f"{indeterminados} indeterminados")
+        if extras:
+            texto += " Además hay " + " y ".join(extras) + " que no se cuentan como vehículos confirmados."
+        return texto
+
+    return None
+
+
 def _construir_plan_ejecucion(pregunta, historial=None):
     """Plan único del turno para fuentes precargadas.
 
@@ -1761,7 +1842,7 @@ def _tools_para_plan(plan):
     return salida or TOOL_DEFINITIONS
 
 
-def consultar_gemini(pregunta, contexto="", historial=None):
+def consultar_gemini(pregunta, contexto="", historial=None, adjunto=None):
     cliente = obtener_cliente_gemini()
     if cliente is None:
         return "La IA todavía no está configurada. Falta GEMINI_API_KEY."
@@ -1785,6 +1866,7 @@ def consultar_gemini(pregunta, contexto="", historial=None):
     contexto_comparativo = ""
     contexto_documental_plan = ""
     contexto_estructurado = ""
+    resultado_estructurado = None
     consulta_fuente = plan.get("consulta_fuente") or str(pregunta or "").strip()
 
     if "comparar_companias" in (plan.get("fuentes") or []):
@@ -1801,6 +1883,9 @@ def consultar_gemini(pregunta, contexto="", historial=None):
             resultado_estructurado = _ejecutar_tool(
                 "analizar_excel", {"consulta": consulta_fuente}, cache=tool_cache
             )
+            respuesta_directa = _respuesta_analitica_directa(resultado_estructurado, pregunta)
+            if respuesta_directa:
+                return respuesta_directa
             contexto_estructurado = _formatear_contexto_estructurado(resultado_estructurado)
         except Exception as error:
             print("ERROR PRECONTEXTO ANALITICO EXCEL:", error)
@@ -1853,7 +1938,19 @@ def consultar_gemini(pregunta, contexto="", historial=None):
         pregunta=pregunta,
     )
 
-    contents = [prompt]
+    if adjunto is not None and getattr(adjunto, "tipo", "") == "imagen" and getattr(adjunto, "datos_binarios", None):
+        contents = [types.Content(
+            role="user",
+            parts=[
+                types.Part.from_text(text=prompt),
+                types.Part.from_bytes(
+                    data=adjunto.datos_binarios,
+                    mime_type=adjunto.mime_type,
+                ),
+            ],
+        )]
+    else:
+        contents = [prompt]
     propuesta_excel = None
     propuesta_metadato = None
 

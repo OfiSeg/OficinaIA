@@ -125,14 +125,19 @@ def clasificar_riesgo(row: dict) -> str:
 def clasificacion_riesgos(rows: list[dict], compania: str | None = None) -> dict:
     base = _filter_company(rows, compania)
     counts = Counter(clasificar_riesgo(r) for r in base)
-    vehiculos_confirmados = counts.get("AUTO", 0) + counts.get("MOTO", 0) + counts.get("OTRO_VEHICULAR", 0)
+    autos = counts.get("AUTO", 0)
+    motos = counts.get("MOTO", 0)
+    otros_vehiculares = counts.get("OTRO_VEHICULAR", 0)
+    autos_motos_total = autos + motos
+    vehiculos_confirmados = autos_motos_total + otros_vehiculares
     return {
         "ok": True,
         "operacion": "clasificacion_riesgos",
         "total_registros": len(base),
-        "autos": counts.get("AUTO", 0),
-        "motos": counts.get("MOTO", 0),
-        "otros_vehiculares": counts.get("OTRO_VEHICULAR", 0),
+        "autos": autos,
+        "motos": motos,
+        "autos_motos_total": autos_motos_total,
+        "otros_vehiculares": otros_vehiculares,
         "hogar_combinado": counts.get("HOGAR_COMBINADO", 0),
         "indeterminados": counts.get("INDETERMINADO", 0),
         "vehiculos_confirmados": vehiculos_confirmados,
@@ -179,7 +184,7 @@ def _find_field(rows: list[dict], requested: str) -> str | None:
         "patente": PLATE_ALIASES,
         "vehiculo": VEHICLE_ALIASES,
         "asegurado": ("ASEGURADO", "CLIENTE", "NOMBRE"),
-        "numero": ("NUMERO", "NRO", "DNI", "POLIZA", "PÓLIZA"),
+        "numero": ("NUMERO", "NRO", "TELEFONO", "TEL"),
     }.get(_norm(requested), (requested,))
     for row in rows[:20]:
         key = _field(row, aliases)
@@ -253,6 +258,7 @@ def clasificacion(rows: list[dict], compania: str | None = None) -> dict:
         "total": risk["total_registros"],
         "autos": autos,
         "motos": motos,
+        "autos_motos_total": risk["autos_motos_total"],
         "otros": risk["otros_vehiculares"],
         "hogar_combinado": risk["hogar_combinado"],
         "indeterminados": risk["indeterminados"],

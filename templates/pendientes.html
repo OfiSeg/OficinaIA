@@ -3,7 +3,7 @@
 {% block content %}
 <div class="page">
   <header class="top pendientes-head">
-    <div><h1>Pendientes</h1><p>Seguimiento de tareas y gestiones que todavía requieren una acción.</p></div>
+    <div><h1>Pendientes</h1></div>
     <strong class="count" id="pendientesCount">—</strong>
   </header>
   <div class="pend-toolbar"><button type="button" class="primary" id="btnNuevoPendiente">+ Nuevo pendiente</button></div>
@@ -146,7 +146,7 @@
       if(countEl)countEl.textContent=(d.total_pendientes??items.length)+' en cola';
       if(window.actualizarBadgePendientes)window.actualizarBadgePendientes(d.total_pendientes||0);
       if(!items.length){
-        lista.innerHTML='<div class="empty"><b>Nada por aquí</b><small>Usá “Dejar pendiente” en una propuesta de Excel/flota, o confirmá cargas más tarde desde acá.</small></div>';
+        lista.innerHTML='<div class="empty"><b>Nada por aquí</b></div>';
         return;
       }
       lista.innerHTML=items.map(item=>{

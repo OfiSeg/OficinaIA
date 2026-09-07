@@ -82,15 +82,13 @@ vehículo o mezclar dos.
 ALTA_SYSTEM_INSTRUCTION = r"""
 Vas a recibir el texto crudo del frente de una póliza de seguro individual
 (un solo asegurado, un solo vehículo) de una compañía argentina, pegado sin
-formato. Tu tarea es identificar un conjunto fijo de datos para proponer el
-alta de ese asegurado en una planilla.
+formato. Tu tarea es identificar únicamente los datos útiles para el alta en
+la planilla interna.
 
 Devolvé ÚNICAMENTE JSON válido, sin markdown ni texto fuera del JSON, con
 esta estructura exacta:
 {
   "asegurado": "",
-  "telefono": "",
-  "numero": "",
   "vehiculo": "",
   "patente": "",
   "compania": "",
@@ -102,30 +100,28 @@ esta estructura exacta:
 
 REGLAS ESTRICTAS (no las rompas aunque el texto sea ambiguo):
 
-1. "asegurado": el nombre de la persona o razón social asegurada, tal como
-   figura en la póliza. Si no está claro, dejalo vacío.
-2. "telefono": el teléfono de contacto del asegurado, SOLO si figura explícitamente en la póliza. Si no aparece, dejalo vacío. NUNCA uses el DNI ni el número de póliza como teléfono.
-3. "numero": el número de póliza.
-4. "vehiculo": marca/modelo o descripción del vehículo tal como figura.
-5. "patente": la patente, si figura.
-6. "compania": la compañía de seguros que emitió la póliza.
-7. "medio_pago": SOLO si el texto permite identificarlo con evidencia clara
-   (por ejemplo dice explícitamente "cuponera", "CBU", "tarjeta de crédito").
-   NUNCA lo asumas a partir de qué compañía es. Si no hay evidencia clara,
-   dejalo vacío. No adivines.
-8. "codigo_postal": SOLO si aparece explícito en el texto o se puede
-   identificar sin ambigüedad a partir de los propios datos de la póliza.
-   Si no aparece, dejalo vacío. No lo inventes ni lo busques externamente.
-9. "emitido": la FECHA DE EMISIÓN de la póliza (no la fecha de hoy, no la
-   fecha de vigencia, no el vencimiento). Formato DD/MM/AAAA. Si no hay una
-   fecha de emisión confiable, dejalo vacío.
-10. "premio": el importe del PREMIO (el precio final del seguro), tal como
-   figura. Si la póliza usa otra palabra que equivale claramente al premio
-   final, usá ese valor. NUNCA sumes conceptos, ni calcules un precio
-   nuevo, ni estimes en base a la cobertura. Si no hay un premio
-   identificable con certeza, dejalo vacío.
+1. "asegurado": nombre o razón social asegurada tal como figura.
+2. "vehiculo": marca/modelo o descripción del vehículo tal como figura.
+3. "patente": patente/dominio, si figura.
+4. "compania": compañía que emitió la póliza.
+5. "medio_pago": devolvé SOLAMENTE una de estas tres categorías:
+   - CUPONERA: cuando la póliza expresa cuponera/cupones o cobranza por cupón.
+   - CBU: cuando expresa CBU, débito automático en cuenta, cuenta bancaria o
+     equivalente inequívoco.
+   - CREDITO: cuando expresa tarjeta de crédito/débito a tarjeta o identifica
+     inequívocamente una tarjeta como medio de pago.
+   Si no hay evidencia clara, devolvé "". Nunca devuelvas otra etiqueta.
+6. "codigo_postal": solo si aparece explícito o se identifica sin ambigüedad
+   a partir del propio texto. No lo busques externamente.
+7. "emitido": FECHA DE EMISIÓN de la póliza, no inicio de vigencia ni
+   vencimiento. Formato DD/MM/AAAA. Si no es confiable, "".
+8. "premio": importe del PREMIO / precio final que figure en la póliza. No
+   sumes conceptos ni estimes. Si no hay un importe final identificable, "".
 
-No inventes ningún dato. Un campo que no aparece con certeza en el texto
-queda vacío ("") — nunca "N/D", "no informado" ni similares.
+MUY IMPORTANTE:
+- NO extraigas ni devuelvas el número de póliza: OficinaIA no lo usa para el alta.
+- NO extraigas teléfonos del PDF. El teléfono se completa manualmente en la UI.
+- Nunca uses DNI, número de póliza, certificado, endoso u otro número como teléfono.
+- No inventes ningún dato. Un campo incierto queda vacío ("").
 """
 
