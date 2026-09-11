@@ -17,6 +17,7 @@ from typing import Any
 from xml.sax.saxutils import escape as _xml_escape
 
 from openpyxl import Workbook, load_workbook
+from envios_ya_utils import normalizar_telefono_argentina as _normalizar_telefono_argentina_compartido
 
 BASE_DIR = Path(__file__).resolve().parent
 PLANTILLA_ENVIOSYA = BASE_DIR / "plantillas" / "enviosya_contactos.xlsx"
@@ -144,49 +145,8 @@ def _digits(v: Any) -> str:
 
 
 def normalizar_telefono_argentina(valor: Any) -> tuple[str, str]:
-    """Devuelve (telefono_10_digitos, motivo_error).
-
-    Reglas EnvíosYA: sólo 10 dígitos, sin +54/54, sin 9 internacional,
-    sin 0 interurbano y sin el 15 histórico cuando aparece como prefijo móvil.
-    Nunca borra un '15' que forme parte de un número ya válido de 10 dígitos.
-    """
-    original = _digits(valor)
-    if not original:
-        return "", "Sin teléfono"
-
-    d = original
-    if d.startswith("0054"):
-        d = d[4:]
-    elif d.startswith("54") and len(d) >= 12:
-        d = d[2:]
-
-    # Formato internacional móvil: +54 9 AA ...
-    if len(d) == 11 and d.startswith("9"):
-        d = d[1:]
-
-    # Prefijo interurbano 0. Ej.: 011 4149 2756.
-    if len(d) == 11 and d.startswith("0"):
-        d = d[1:]
-
-    # Formato histórico: 0 + área + 15 + abonado, o área + 15 + abonado.
-    # Sólo se evalúa si todavía NO son 10 dígitos.
-    if len(d) != 10:
-        sin_cero = d[1:] if d.startswith("0") else d
-        candidatos = []
-        for largo_area in (2, 3, 4):
-            if len(sin_cero) == 12 and sin_cero[largo_area:largo_area + 2] == "15":
-                candidatos.append(sin_cero[:largo_area] + sin_cero[largo_area + 2:])
-        candidatos = [x for x in candidatos if len(x) == 10 and not x.startswith("0")]
-        if len(candidatos) == 1:
-            d = candidatos[0]
-
-    if len(d) != 10:
-        return "", f"No se pudo normalizar a 10 dígitos ({len(d)} dígitos)"
-    if d.startswith("0"):
-        return "", "El número normalizado no puede comenzar con 0"
-    if len(set(d)) <= 2:
-        return "", "Número sospechoso"
-    return d, ""
+    """Compatibilidad pública: delega en la regla canónica compartida."""
+    return _normalizar_telefono_argentina_compartido(valor)
 
 
 def _es_email(v: Any) -> bool:
@@ -207,7 +167,7 @@ def _es_anio(v: Any) -> bool:
         n = int(s)
     except Exception:
         return False
-    return 1900 <= n <= datetime.now().year + 2
+    return 1900 <= n <= office_year() + 2
 
 
 def _excel_serial_fecha(v: Any) -> date | None:
@@ -389,6 +349,7 @@ def _mapear_con_gemini(rows: list[list[Any]], mapping_actual: dict[int, str]) ->
     try:
         from ai_gateway import begin_request, generate_with_fallback, obtener_cliente_gemini, DEFAULT_MODELS
         from google.genai import types
+        from resilience import parse_json_object
         cliente = obtener_cliente_gemini()
         if not cliente:
             return mapping_actual
@@ -407,8 +368,9 @@ def _mapear_con_gemini(rows: list[list[Any]], mapping_actual: dict[int, str]) ->
                 contents=prompt,
                 config=types.GenerateContentConfig(response_mime_type="application/json", temperature=0),
                 log_prefix="GEMINI /ENVIOS",
+                response_validator=lambda resp: parse_json_object(getattr(resp, "text", "")),
             )
-            data = json.loads(r.text or "{}")
+            data = parse_json_object(r.text or "{}")
             out = dict(mapping_actual)
             validos = set(ALIASES_CAMPOS)
             for k, v in data.items():

@@ -3,12 +3,37 @@
 {% block content %}
 <div class="page health-page">
   <header class="top"><div><h1>Salud del sistema</h1></div></header>
+
+  <nav class="health-tabs" aria-label="Salud del sistema">
+    <a class="health-tab {{ 'active' if vista == 'eventos' else '' }}" href="{{ url_for('salud_sistema', vista='eventos') }}">Eventos</a>
+    <a class="health-tab {{ 'active' if vista == 'servicios' else '' }}" href="{{ url_for('salud_sistema', vista='servicios') }}">Servicios</a>
+  </nav>
+
+  {% if vista == 'servicios' %}
+  <section class="panel health-panel health-services-panel" id="healthServicesPanel">
+    <div class="health-services-head">
+      <div>
+        <b>Estado de servicios</b>
+        <span id="healthCheckedAt">Comprobando…</span>
+      </div>
+      <button class="btn-soft" type="button" id="healthRefreshBtn">Comprobar servicios</button>
+    </div>
+    <div class="health-services-summary" id="healthServicesSummary" aria-live="polite">
+      Revisando dependencias de OficinaIA…
+    </div>
+    <div class="health-services-list" id="healthServicesList">
+      <div class="health-service-placeholder">Cargando estado de servicios…</div>
+    </div>
+    <p class="health-services-note">La comprobación es de sólo lectura: no envía correos, no modifica planillas y no muestra claves ni credenciales.</p>
+  </section>
+  {% else %}
   <section class="panel health-panel">
     <div class="health-summary">
       <b>{{ errores_24h }} error{% if errores_24h != 1 %}es{% endif %} en las últimas 24 h</b>
       <span>{{ errores_ia_24h }} de IA</span>
     </div>
     <form class="health-filters" method="get">
+      <input type="hidden" name="vista" value="eventos">
       <select name="categoria" aria-label="Categoría">
         <option value="">Todas las categorías</option>
         {% for value, label in [('ia','IA'),('excel','Excel/Sheets'),('mail','Mail'),('whatsapp','WhatsApp'),('general','General')] %}
@@ -31,7 +56,11 @@
             <td>{{ e.timestamp|string|replace('T',' ') }}</td>
             <td>{{ e.categoria }}</td>
             <td><span class="health-level health-level-{{e.nivel}}">{{ e.nivel }}</span></td>
-            <td><b>{{ e.mensaje }}</b>{% if e.detalle_tecnico %}<details><summary>Detalle</summary><pre>{{ e.detalle_tecnico }}</pre></details>{% endif %}</td>
+            <td>
+              <b>{{ e.mensaje }}</b>
+              {% if e.codigo %}<div class="health-event-code">{{ e.codigo }}</div>{% endif %}
+              {% if e.detalle_tecnico %}<details><summary>Detalle</summary><pre>{{ e.detalle_tecnico }}</pre></details>{% endif %}
+            </td>
           </tr>
           {% else %}
           <tr><td colspan="4" class="health-empty">No hay eventos para este filtro.</td></tr>
@@ -40,5 +69,9 @@
       </table>
     </div>
   </section>
+  {% endif %}
 </div>
+{% endblock %}
+{% block scripts %}
+{% if vista == 'servicios' %}<script src="{{ static_asset('js/salud.js') }}"></script>{% endif %}
 {% endblock %}

@@ -41,6 +41,75 @@ TOOL_DEFINITIONS = [
             },
         ),
         types.FunctionDeclaration(
+            name="buscar_registros_estructurados",
+            description=(
+                "Recupera filas exactas del Excel interno con filtros determinísticos. "
+                "Usar para detalles/listados basados en una fecha, compañía, patente, "
+                "asegurado, póliza o filtro concreto. Si se pasa desde/hasta, las filas "
+                "sin fecha NO califican; no amplía por similitud."
+            ),
+            parameters_json_schema={
+                "type": "object",
+                "properties": {
+                    "compania": {"type": "string"},
+                    "asegurado": {"type": "string"},
+                    "nombre": {"type": "string"},
+                    "patente": {"type": "string"},
+                    "dominio": {"type": "string"},
+                    "numero": {"type": "string", "description": "Número de contacto/teléfono histórico; no usar como DNI/póliza."},
+                    "poliza": {"type": "string"},
+                    "vehiculo": {"type": "string"},
+                    "campo": {"type": "string"},
+                    "valor": {"type": "string"},
+                    "tipo_vehiculo": {"type": "string"},
+                    "desde": {"type": "string", "description": "Fecha desde inclusive, DD/MM/AAAA."},
+                    "hasta": {"type": "string", "description": "Fecha hasta inclusive, DD/MM/AAAA."},
+                    "campo_fecha": {"type": "string", "description": "Opcional; por defecto usa EMITIDO DÍA:."},
+                    "limite": {"type": "integer"},
+                },
+            },
+        ),
+
+        types.FunctionDeclaration(
+            name="resolver_cuit_por_dni",
+            description=(
+                "Resuelve CUIT/CUIL de una persona desde el padrón ARCA interno usando un DNI. "
+                "No consulta Excel y no inventa CUIT si el padrón no devuelve coincidencia. "
+                "Usar cuando el usuario pide CUIT/CUIL, ARCA o cuando un flujo de alta necesita corroborar CUIT con DNI."
+            ),
+            parameters_json_schema={
+                "type": "object",
+                "properties": {
+                    "dni": {"type": "string", "description": "DNI con o sin puntos; soporta DNI históricos menores a 10 millones."},
+                    "nombre": {"type": "string", "description": "Nombre visible opcional para corroborar coincidencia."},
+                },
+                "required": ["dni"],
+            },
+        ),
+        types.FunctionDeclaration(
+            name="buscar_personas_arca",
+            description=(
+                "Busca personas reales por apellido/nombre en el padrón ARCA interno. "
+                "Devuelve hasta 10 candidatos reales. No genera variantes artificiales y no implica que sean asegurados de la oficina."
+            ),
+            parameters_json_schema={
+                "type": "object",
+                "properties": {
+                    "nombre": {"type": "string"},
+                    "limite": {"type": "integer"},
+                },
+                "required": ["nombre"],
+            },
+        ),
+        types.FunctionDeclaration(
+            name="estado_padron_arca",
+            description=(
+                "Informa si el padrón ARCA interno está cargado, cantidad de registros, fecha y backend. "
+                "Usar antes de prometer resultados si hay dudas sobre disponibilidad."
+            ),
+            parameters_json_schema={"type": "object", "properties": {}},
+        ),
+        types.FunctionDeclaration(
             name="analizar_excel",
             description=(
                 "Hace analítica exacta sobre TODO el Excel interno: agrupaciones y rankings, "

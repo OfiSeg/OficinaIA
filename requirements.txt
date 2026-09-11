@@ -57,3 +57,7 @@ psycopg2-binary==2.9.11
 python-dotenv==1.1.1
 
 PyMuPDF==1.26.4
+
+Pillow>=10.0.0
+
+tzdata>=2025.2

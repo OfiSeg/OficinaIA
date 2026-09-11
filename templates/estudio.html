@@ -30,7 +30,7 @@
   </section>
 
   <section class="estudio-panel" data-estudio-panel="ejemplos">
-    <div class="estudio-learning-note"><b>Cómo aprende Sofía</b><span>Usa únicamente ejemplos validados por una persona como antecedentes internos. Sus propias respuestas no se incorporan solas como criterio.</span></div>
+    <div class="estudio-learning-note"><b>Cómo aprende OficinaIA</b><span>Usa únicamente ejemplos validados por una persona como antecedentes internos. Sus propias respuestas no se incorporan solas como criterio.</span></div>
 
     <div class="estudio-card estudio-example-card">
       <div class="estudio-card-head"><div><h2>Agregar ejemplo validado</h2></div></div>
@@ -59,4 +59,4 @@
   </section>
 </div>
 {% endblock %}
-{% block scripts %}<script src="{{url_for('static',filename='js/estudio.js', v='20260905-estudio-v3')}}"></script>{% endblock %}
+{% block scripts %}<script src="{{ static_asset('js/estudio.js') }}"></script>{% endblock %}

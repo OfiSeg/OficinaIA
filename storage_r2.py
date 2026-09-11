@@ -7,8 +7,10 @@ conoce las credenciales.
 """
 from __future__ import annotations
 
-import os
 import tempfile
+
+import runtime_config
+from resilience import call_read_with_resilience, is_transient_error
 from pathlib import Path
 from typing import BinaryIO
 
@@ -17,10 +19,10 @@ from botocore.exceptions import BotoCoreError, ClientError
 
 
 def _config():
-    endpoint = os.getenv("R2_ENDPOINT_URL")
-    access_key = os.getenv("R2_ACCESS_KEY_ID")
-    secret_key = os.getenv("R2_SECRET_ACCESS_KEY")
-    bucket = os.getenv("R2_BUCKET_NAME")
+    endpoint = runtime_config.get_text("R2_ENDPOINT_URL")
+    access_key = runtime_config.get_text("R2_ACCESS_KEY_ID")
+    secret_key = runtime_config.get_text("R2_SECRET_ACCESS_KEY")
+    bucket = runtime_config.get_text("R2_BUCKET_NAME")
 
     faltantes = [
         nombre
@@ -99,26 +101,45 @@ def descargar_pdf_temporal(r2_key: str) -> Path:
         return destino
 
     temporal = cache_dir / f".{digest}.tmp"
-    try:
+
+    def _descargar_una_vez():
+        temporal.unlink(missing_ok=True)
         with _cliente().get_object(Bucket=_bucket(), Key=r2_key)["Body"] as body:
             with temporal.open("wb") as salida:
                 for bloque in iter(lambda: body.read(1024 * 1024), b""):
                     salida.write(bloque)
+        if not temporal.is_file() or temporal.stat().st_size <= 0:
+            raise RuntimeError("EMPTY RESPONSE al descargar objeto desde R2")
         temporal.replace(destino)
         return destino
-    except (BotoCoreError, ClientError, OSError) as exc:
+
+    def _retry_r2(exc: Exception) -> bool:
+        if isinstance(exc, ClientError):
+            try:
+                status = int(exc.response.get("ResponseMetadata", {}).get("HTTPStatusCode", 0))
+            except Exception:
+                status = 0
+            return status in {408, 425, 429, 500, 502, 503, 504}
+        return isinstance(exc, (BotoCoreError, OSError)) or is_transient_error(exc)
+
+    try:
+        return call_read_with_resilience(
+            _descargar_una_vez, operation="r2_download", provider="cloudflare_r2",
+            attempts=3, delays=(0.0, 0.5, 1.2), retry_if=_retry_r2,
+        )
+    except (BotoCoreError, ClientError, OSError, RuntimeError) as exc:
         temporal.unlink(missing_ok=True)
         raise RuntimeError("No se pudo descargar el PDF desde Cloudflare R2.") from exc
 
 
 def obtener_objeto_stream(r2_key: str):
-    """Devuelve el streaming body de R2 para servir un PDF sin hacerlo público."""
+    """Devuelve el streaming body de R2; GET es idempotente y reintentable."""
     try:
-        return _cliente().get_object(
-            Bucket=_bucket(),
-            Key=r2_key,
+        return call_read_with_resilience(
+            lambda: _cliente().get_object(Bucket=_bucket(), Key=r2_key),
+            operation="r2_get_object", provider="cloudflare_r2", attempts=3,
         )
-    except (BotoCoreError, ClientError) as exc:
+    except (BotoCoreError, ClientError, RuntimeError) as exc:
         raise RuntimeError("No se pudo obtener el PDF desde Cloudflare R2.") from exc
 
 
@@ -156,3 +177,11 @@ def eliminar_objeto(r2_key: str) -> None:
         _cliente().delete_object(Bucket=_bucket(), Key=r2_key)
     except (BotoCoreError, ClientError) as exc:
         raise RuntimeError("No se pudo eliminar un respaldo antiguo de Cloudflare R2.") from exc
+
+
+def comprobar_conexion() -> None:
+    """Comprobación de sólo lectura para Salud → Servicios."""
+    try:
+        _cliente().list_objects_v2(Bucket=_bucket(), MaxKeys=1)
+    except (BotoCoreError, ClientError) as exc:
+        raise RuntimeError("No se pudo comprobar el acceso a Cloudflare R2.") from exc

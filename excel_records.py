@@ -93,7 +93,7 @@ def construir_fila_excel(campos_fila, indices, cantidad_columnas, libro_id):
             )
         if not numero and not patente:
             raise ValueError(
-                "Antes de guardar, indicá al menos NUMERO (DNI/póliza) o PATENTE."
+                "Antes de guardar, indicá al menos NUMERO (teléfono/contacto) o PATENTE."
             )
         if indice_asegurado is None:
             raise ValueError("El Excel no tiene la columna ASEGURADO.")
@@ -256,7 +256,7 @@ class ExcelRecordService:
             if not aseg:
                 errores.append("Falta ASEGURADO.")
             if not num and not pat:
-                errores.append("Completá NUMERO (DNI/póliza) o PATENTE.")
+                errores.append("Completá NUMERO (teléfono/contacto) o PATENTE.")
             if pat:
                 limpio = re.sub(r"[^A-Za-z0-9]", "", pat).upper()
                 if len(limpio) < 6 or len(limpio) > 8:

@@ -2,8 +2,9 @@
 from __future__ import annotations
 
 import base64
-import os
 import re
+
+import runtime_config
 from email.mime.application import MIMEApplication
 from email.mime.image import MIMEImage
 from email.mime.multipart import MIMEMultipart
@@ -27,10 +28,10 @@ class MailChannel:
 
     @staticmethod
     def _credentials():
-        sender = (os.getenv("GMAIL_SENDER_EMAIL") or "").strip()
-        client_id = (os.getenv("GMAIL_OAUTH_CLIENT_ID") or "").strip()
-        client_secret = (os.getenv("GMAIL_OAUTH_CLIENT_SECRET") or "").strip()
-        refresh_token = (os.getenv("GMAIL_OAUTH_REFRESH_TOKEN") or "").strip()
+        sender = (runtime_config.get_text("GMAIL_SENDER_EMAIL") or "").strip()
+        client_id = (runtime_config.get_text("GMAIL_OAUTH_CLIENT_ID") or "").strip()
+        client_secret = (runtime_config.get_text("GMAIL_OAUTH_CLIENT_SECRET") or "").strip()
+        refresh_token = (runtime_config.get_text("GMAIL_OAUTH_REFRESH_TOKEN") or "").strip()
         faltan = [
             nombre for nombre, valor in (
                 ("GMAIL_SENDER_EMAIL", sender),

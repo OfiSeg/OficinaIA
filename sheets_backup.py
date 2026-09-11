@@ -1,7 +1,8 @@
 """Respaldo de sólo escritura: Google Sheets -> XLSX -> Cloudflare R2."""
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import datetime
+from office_time import office_now, timezone
 from io import BytesIO
 
 from openpyxl import Workbook
@@ -47,7 +48,7 @@ def _podar(prefijo: str, conservar: int = 30) -> int:
 
 
 def ejecutar_respaldo_diario(fecha: datetime | None = None, conservar: int = 30) -> dict:
-    fecha = fecha or datetime.now()
+    fecha = fecha or office_now()
     stamp = fecha.strftime("%Y-%m-%d")
     resultado = {"ok": True, "libros": {}}
     for libro_id, nombre in BOOKS.items():

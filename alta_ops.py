@@ -8,9 +8,11 @@ import re
 from google.genai import types
 
 from ai_gateway import generate_with_fallback, obtener_cliente_gemini, DEFAULT_MODELS
+from resilience import parse_json_object
 from companias import normalizar_compania, aliases_companias
 from domain_prompts import ALTA_SYSTEM_INSTRUCTION
 from payment_rules import calcular_regla_pago, normalizar_medio_pago
+from attachment_vision import renderizar_para_vision
 
 
 COLUMNAS_ALTA_ASEGURADO = (
@@ -21,6 +23,24 @@ COLUMNAS_ALTA_ASEGURADO = (
 
 MENSAJE_PDF_POR_DEFECTO = "Analizá el PDF que acabo de adjuntar y explicame de qué trata."
 PATENTE_REGEX_ALTA = re.compile(r"\b[A-Z]{2}\d{3}[A-Z]{2}\b|\b[A-Z]{3}\d{3}\b")
+
+
+def _parsear_json_alta(bruto):
+    return parse_json_object(bruto)
+
+def _detectar_numero_poliza(texto):
+    fuente = str(texto or "")
+    patrones = (
+        r"(?:N[°ºRO. ]*\s*)?P[ÓO]LIZA\s*(?:N[°ºRO. ]*)?[:#-]?\s*([A-Z0-9][A-Z0-9./-]{2,30})",
+        r"P[ÓO]LIZA\s+([0-9][0-9./-]{2,30})",
+    )
+    for patron in patrones:
+        m = re.search(patron, fuente, re.IGNORECASE)
+        if m:
+            valor = re.sub(r"\s+", "", m.group(1)).strip(" .,:;-")
+            if valor:
+                return valor
+    return ""
 
 
 def pdf_parece_poliza_individual(contexto_pdf_adjunto):
@@ -171,13 +191,12 @@ def interpretar_poliza_a_json(texto):
             contents=texto.strip(),
             config=config,
             log_prefix="GEMINI /ALTA",
+            response_validator=lambda r: _parsear_json_alta(getattr(r, "text", "")),
         )
         bruto = str(getattr(respuesta, "text", "") or "").strip()
         if not bruto:
             raise ValueError("Gemini no devolvió JSON.")
-        datos = json.loads(bruto)
-        if not isinstance(datos, dict):
-            raise ValueError("Gemini no devolvió un objeto JSON.")
+        datos = _parsear_json_alta(bruto)
 
         def limpio(clave):
             return re.sub(r"\s+", " ", str(datos.get(clave, "") or "")).strip()
@@ -187,6 +206,7 @@ def interpretar_poliza_a_json(texto):
         premio = _normalizar_importe(limpio("premio") or _detectar_premio_poliza(texto))
         return {
             "asegurado": limpio("asegurado"),
+            "numero_poliza": limpio("numero_poliza") or _detectar_numero_poliza(texto),
             "vehiculo": limpio("vehiculo"),
             "patente": limpio("patente").upper(),
             "compania": normalizar_compania(limpio("compania") or _detectar_compania_poliza(texto)),
@@ -200,12 +220,59 @@ def interpretar_poliza_a_json(texto):
         raise RuntimeError(f"No pude interpretar la póliza: {error}") from error
 
 
+def interpretar_poliza_adjunto(adjunto):
+    """Extrae un alta desde foto o PDF escaneado usando visión multimodal."""
+    if adjunto is None:
+        return {}
+    contexto = str(getattr(adjunto, "contexto", "") or "").strip()
+    if contexto:
+        return interpretar_poliza_a_json(contexto)
+    cliente = obtener_cliente_gemini()
+    if cliente is None:
+        raise RuntimeError("La IA todavía no está configurada. Falta GEMINI_API_KEY.")
+    media = renderizar_para_vision(adjunto, max_paginas=3, escala_pdf=2.1)
+    if not media:
+        raise ValueError("No hay contenido visual para leer la póliza.")
+    parts = ["Leé visualmente esta póliza individual y extraé los campos del alta. No inventes datos."]
+    for idx, blob in enumerate(media, start=1):
+        parts.extend([
+            f"PÁGINA/IMAGEN {idx}",
+            types.Part.from_bytes(data=blob.data, mime_type=blob.mime_type),
+        ])
+    config = types.GenerateContentConfig(
+        temperature=0,
+        max_output_tokens=1600,
+        response_mime_type="application/json",
+        system_instruction=ALTA_SYSTEM_INSTRUCTION.strip(),
+    )
+    respuesta, _modelo = generate_with_fallback(
+        client=cliente, models=DEFAULT_MODELS, contents=parts, config=config,
+        log_prefix="GEMINI ALTA VISUAL",
+        response_validator=lambda r: _parsear_json_alta(getattr(r, "text", "")),
+    )
+    datos = _parsear_json_alta(getattr(respuesta, "text", ""))
+    def limpio(clave):
+        return re.sub(r"\s+", " ", str(datos.get(clave, "") or "")).strip()
+    return {
+        "asegurado": limpio("asegurado"),
+        "numero_poliza": limpio("numero_poliza"),
+        "vehiculo": limpio("vehiculo"),
+        "patente": limpio("patente").upper(),
+        "compania": normalizar_compania(limpio("compania")),
+        "medio_pago": normalizar_medio_pago(limpio("medio_pago")),
+        "codigo_postal": limpio("codigo_postal"),
+        "emitido": _normalizar_fecha_emision(limpio("emitido")),
+        "premio": _normalizar_importe(limpio("premio")),
+    }
+
+
 def propuesta_a_columnas(propuesta):
     propuesta = propuesta or {}
     return {
         "ASEGURADO": propuesta.get("asegurado", ""),
-        # NUMERO es el teléfono histórico de la planilla. Nunca se completa
-        # desde una póliza: queda manual.
+        # POLIZA es efímero para Envíos Ya; no cambia la columna NUMERO del Excel.
+        "POLIZA": propuesta.get("numero_poliza", ""),
+        # NUMERO es el teléfono histórico de la planilla y sigue siendo manual.
         "NUMERO": "",
         "VEHICULO": propuesta.get("vehiculo", ""),
         "PATENTE": propuesta.get("patente", ""),
@@ -230,21 +297,20 @@ def resumen(columnas):
     return "Póliza detectada. Preparé el alta para revisar y guardar."
 
 
-def procesar(mensaje, contexto_pdf_adjunto, automatico=False):
+def procesar(mensaje, contexto_pdf_adjunto, automatico=False, adjunto=None):
     if not re.match(r"^/alta\b", str(mensaje or ""), re.IGNORECASE):
         return None, False, None
     texto_comando = re.sub(r"^/alta\s*", "", mensaje, count=1, flags=re.IGNORECASE).strip()
     fuente = texto_comando
     if contexto_pdf_adjunto:
         fuente = f"{texto_comando}\n\n{contexto_pdf_adjunto}".strip() if texto_comando else contexto_pdf_adjunto
-    if not fuente:
+    if not fuente and adjunto is None:
         return (
-            "Para dar de alta un asegurado desde una póliza, adjuntame el PDF "
-            "(con el clip o arrastrándolo al chat) y escribí /alta, o pegame "
-            "el texto del frente de póliza después de /alta.", True, None,
+            "Para dar de alta un asegurado, adjuntame la póliza o pegame "
+            "el texto del frente después de /alta.", True, None,
         )
     try:
-        propuesta = interpretar_poliza_a_json(fuente)
+        propuesta = interpretar_poliza_a_json(fuente) if fuente else interpretar_poliza_adjunto(adjunto)
     except Exception as error:
         print("ERROR PROCESANDO /ALTA:", error)
         return (
@@ -268,6 +334,7 @@ def a_campos_guardar_asegurado(columnas):
     return {
         "LIBRO_ID": "1",
         "ASEGURADO": columnas.get("ASEGURADO", ""),
+        "POLIZA": columnas.get("POLIZA", ""),
         "NUMERO": "",
         "VEHICULO": columnas.get("VEHICULO", ""),
         "PATENTE": columnas.get("PATENTE", ""),
@@ -281,3 +348,27 @@ def a_campos_guardar_asegurado(columnas):
         "TELEFONO": "",
     }
 
+
+
+def columnas_desde_campos_formulario(campos):
+    """Convierte el estado editable al contrato canónico sin alterar Excel."""
+    campos = campos or {}
+    return {
+        "ASEGURADO": campos.get("ASEGURADO", ""),
+        "NUMERO": campos.get("NUMERO", ""),
+        "VEHICULO": campos.get("VEHICULO", ""),
+        "PATENTE": campos.get("PATENTE", ""),
+        "ENVIOS YA": campos.get("ENVIOS YA", ""),
+        "COMPAÑIA": campos.get("COMPAÑIA") or campos.get("CIA", ""),
+        "MEDIO DE PAGO": campos.get("MEDIO DE PAGO", ""),
+        "CODIGO POSTAL": campos.get("CODIGO POSTAL") or campos.get("CP", ""),
+        "EMITIDO DÍA:": campos.get("EMITIDO DÍA:", ""),
+        "IMPORTE APROX": campos.get("IMPORTE APROX", ""),
+        "DE DONDE ": campos.get("DE DONDE ", ""),
+        "MAIL": campos.get("MAIL", ""),
+        "TELEFONO": campos.get("TELEFONO", ""),
+    }
+
+
+def armar_tabulado_desde_campos(campos):
+    return armar_tabulado(columnas_desde_campos_formulario(campos))

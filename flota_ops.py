@@ -10,6 +10,7 @@ import re
 import unicodedata
 
 from ai_gateway import generate_with_fallback, obtener_cliente_gemini, DEFAULT_MODELS
+from resilience import parse_json_object
 from domain_prompts import FLOTA_SYSTEM_INSTRUCTION
 
 def _dividir_marca_modelo_flota(marca_modelo):
@@ -474,11 +475,12 @@ def interpretar_flota_a_json(texto):
             contents=texto.strip(),
             config=config,
             log_prefix="GEMINI /FLOTA",
+            response_validator=lambda r: parse_json_object(getattr(r, "text", "")),
         )
         bruto = str(getattr(respuesta, "text", "") or "").strip()
         if not bruto:
             raise ValueError("Gemini no devolvió JSON.")
-        datos = json.loads(bruto)
+        datos = parse_json_object(bruto)
         vehiculos = datos.get("vehiculos")
         if not isinstance(vehiculos, list):
             raise ValueError("Gemini no devolvió la lista de vehículos.")

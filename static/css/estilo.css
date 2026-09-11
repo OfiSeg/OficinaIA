@@ -34,7 +34,7 @@ html[data-theme="light"]{
 /* ===== OficinaIA 2026: chat + biblioteca ===== */
 .chat-page .top{margin-bottom:15px}.chat-shell{display:grid;grid-template-columns:200px minmax(0,1fr);height:calc(100vh - 177px);min-height:560px;max-height:790px;background:#fff;border:1px solid var(--line);border-radius:20px;overflow:hidden;box-shadow:0 14px 45px #12203312}.chat-list{border-right:1px solid var(--line);background:#fbfcfd;display:flex;flex-direction:column;min-width:0}.chat-list-head{padding:14px;border-bottom:1px solid var(--line);display:flex;align-items:center;justify-content:space-between}.chat-list-head b,.chat-list-head small{display:block}.chat-list-head b{font:600 calc(10px * var(--font-scale,1)) Sora;color:var(--navy)}.chat-list-head small{font-size:calc(7px * var(--font-scale,1));color:var(--soft);margin-top:3px}.chat-list-head button{width:32px;height:32px;border:0;border-radius:10px;background:var(--teal);color:#fff;font-size:calc(20px * var(--font-scale,1));line-height:1;cursor:pointer;display:grid;place-items:center;box-shadow:0 2px 8px rgba(49,90,114,.25)}.chat-list-head button:hover{filter:brightness(1.08)}.chat-list-items{padding:8px;overflow:auto}.chat-item{width:100%;border:0;background:transparent;text-align:left;padding:10px;border-radius:9px;cursor:pointer;margin-bottom:3px}.chat-item:hover{background:#f1f5f6}.chat-item.active{background:var(--tealbg)}.chat-item span,.chat-item small{display:block;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.chat-item span{font-size:calc(9px * var(--font-scale,1));color:#435163;font-weight:650}.chat-item small{font-size:calc(7px * var(--font-scale,1));color:var(--soft);margin-top:4px}.chat-empty{padding:20px 8px;text-align:center;color:var(--soft);font-size:calc(8px * var(--font-scale,1))}.chat-shell>.chat{height:auto;min-height:0;max-height:none;border:0;border-radius:0;box-shadow:none}.chat>header .clear-chat{margin-left:auto;border:1px solid var(--line);background:#fff;border-radius:8px;padding:7px 9px;color:#7c8793;font-size:calc(8px * var(--font-scale,1));cursor:pointer}.chat>header .clear-chat:hover{color:#c84d4d;border-color:#eccaca}.quick-grid{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-top:20px}.quick-grid button{display:flex;align-items:center;gap:10px;text-align:left;padding:11px;border:1px solid var(--line);background:#fff;border-radius:11px;cursor:pointer}.quick-grid button:hover{border-color:#b4d9d3;transform:translateY(-1px);box-shadow:0 8px 22px #1220330b}.quick-grid button>b{width:30px;height:30px;display:grid;place-items:center;border-radius:8px;background:var(--tealbg);color:var(--teal);flex:0 0 auto}.quick-grid span{min-width:0}.quick-grid strong,.quick-grid small{display:block}.quick-grid strong{font-size:calc(9px * var(--font-scale,1));color:var(--navy)}.quick-grid small{font-size:calc(7px * var(--font-scale,1));color:var(--soft);margin-top:3px}.typing{display:flex;gap:4px;padding:3px 0}.typing i{width:5px;height:5px;border-radius:50%;background:#8aa09c;animation:typing .9s infinite}.typing i:nth-child(2){animation-delay:.15s}.typing i:nth-child(3){animation-delay:.3s}@keyframes typing{0%,60%,100%{transform:translateY(0);opacity:.45}30%{transform:translateY(-3px);opacity:1}}.bullet{padding-left:8px}.library-tabs{display:flex;gap:5px;background:#edf2f3;padding:5px;border-radius:11px;width:max-content;margin-bottom:12px}.library-tab{border:0;background:transparent;padding:9px 13px;border-radius:8px;font-size:calc(9px * var(--font-scale,1));font-weight:750;color:#687586;cursor:pointer}.library-tab.active{background:#fff;color:var(--teal);box-shadow:0 2px 8px #1220330c}.library-panel.hidden{display:none}.policy-list{display:grid;gap:7px;margin-top:8px}.policy-row{display:flex;align-items:center;gap:7px;padding:8px 0;border-top:1px solid var(--line)}.policy-row>a{display:flex;align-items:center;gap:9px;min-width:0;flex:1}.policy-row a>b{width:34px;height:34px;border-radius:9px;background:#fff0f0;color:#c65b5b;display:grid;place-items:center;font-size:calc(8px * var(--font-scale,1))}.policy-row a span{min-width:0}.policy-row strong,.policy-row small{display:block;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.policy-row strong{font-size:calc(10px * var(--font-scale,1))}.policy-row small{font-size:calc(8px * var(--font-scale,1));color:var(--soft);margin-top:3px}.delete-policy{width:28px;height:28px;border:1px solid var(--line);background:#fff;border-radius:7px;color:#c84d4d;cursor:pointer}.btn-primary{display:inline-flex;align-items:center;justify-content:center;background:var(--navy);color:#fff;border:0;border-radius:8px;padding:8px 10px;font-size:calc(9px * var(--font-scale,1));font-weight:750;cursor:pointer}.file-btn{position:relative;overflow:hidden}.file-btn input{position:absolute;inset:0;opacity:0;cursor:pointer}
 @media(max-width:850px){.chat-shell{grid-template-columns:1fr}.chat-list{display:none}.quick-grid{grid-template-columns:1fr}.chat-shell{height:calc(100vh - 190px)}}
-.file-attached{width:min(820px,100%);margin:0 auto 7px;padding:7px 9px;border:1px solid #CFDCE3;background:var(--tealbg);border-radius:9px;display:flex;align-items:center;gap:7px;font-size:calc(9px * var(--font-scale,1));color:#294F64}.file-attached[hidden]{display:none}.file-attached strong{min-width:0;flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.file-attached button{width:22px;height:22px;border:0;border-radius:6px;background:#fff;color:#758292;cursor:pointer}.attach-file{width:32px;height:32px;display:grid;place-items:center;flex:0 0 auto;border-radius:8px;color:#6e7b89;cursor:pointer;font-size:calc(15px * var(--font-scale,1))}.attach-file:hover{background:#f1f5f6;color:var(--teal)}.attach-file input{display:none}.composer-wrap>small{line-height:1.4}
+.file-attached{width:min(820px,100%);margin:0 auto 7px;padding:7px 9px;border:1px solid #CFDCE3;background:var(--tealbg);border-radius:9px;font-size:calc(9px * var(--font-scale,1));color:#294F64}.file-attached[hidden]{display:none}.file-attached-list{display:flex;flex-wrap:wrap;gap:6px}.file-attached-item{min-width:0;max-width:100%;display:flex;align-items:center;gap:6px;padding:4px 5px 4px 7px;border:1px solid color-mix(in srgb,var(--line) 75%,transparent);background:var(--surface,#fff);border-radius:7px}.file-attached-item strong{min-width:0;max-width:260px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.file-attached-icon{flex:0 0 auto}.file-attached-remove{width:22px;height:22px;flex:0 0 auto;border:0;border-radius:6px;background:var(--surface,#fff);color:#758292;cursor:pointer}.file-attached-remove:hover{background:var(--hover,#eef2f4);color:var(--ink,#25313c)}.attach-file{width:32px;height:32px;display:grid;place-items:center;flex:0 0 auto;border-radius:8px;color:#6e7b89;cursor:pointer;font-size:calc(15px * var(--font-scale,1))}.attach-file:hover{background:#f1f5f6;color:var(--teal)}.attach-file input{display:none}.composer-wrap>small{line-height:1.4}
 /* ==========================================================
    POLISH OficinaIA — conserva la estructura existente
    ========================================================== */
@@ -3782,4 +3782,806 @@ html[data-theme="dark"] .alta-edit-field select{background:rgba(255,255,255,.035
   .alta-compact-summary,.alta-edit-panel{grid-template-columns:1fr 1fr}
   .alta-phone-field{grid-template-columns:1fr}
   .alta-phone-field small{grid-column:auto}
+}
+
+/* ===== Cédula operativa — Motor / Chasis reforzados ===== */
+.cedula-card{padding:14px 16px!important;max-width:min(680px,calc(100vw - 260px));box-sizing:border-box}
+.cedula-card .alta-compact-title{display:flex;align-items:center;gap:8px}
+.cedula-summary{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:8px 10px;margin-bottom:10px}
+.cedula-summary-item{min-width:0;padding:7px 9px;border:1px solid rgba(127,127,127,.18);border-radius:9px;background:rgba(127,127,127,.055)}
+.cedula-summary-item span{display:block;font-size:calc(11px * var(--font-scale,1));text-transform:uppercase;letter-spacing:.04em;opacity:.62;margin-bottom:2px}
+.cedula-summary-item strong{display:block;font-size:calc(13px * var(--font-scale,1));white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.cedula-identifiers{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+.cedula-identifier{min-width:0;border:1px solid rgba(127,127,127,.2);border-radius:10px;padding:10px;background:rgba(127,127,127,.035)}
+.cedula-identifier.is-warning{border-color:rgba(185,125,25,.38);background:rgba(185,125,25,.06)}
+.cedula-identifier-head{display:flex;align-items:center;justify-content:space-between;gap:8px;margin-bottom:7px}
+.cedula-identifier-head strong{font-size:calc(12px * var(--font-scale,1));letter-spacing:.04em}
+.cedula-status{font-size:calc(11px * var(--font-scale,1));font-weight:700;white-space:nowrap;opacity:.78}
+.cedula-code{display:block;width:100%;box-sizing:border-box;overflow-wrap:anywhere;word-break:break-all;padding:8px 9px;margin-bottom:8px;border-radius:7px;background:rgba(127,127,127,.08);font-family:ui-monospace,SFMono-Regular,Consolas,"Liberation Mono",monospace;font-size:calc(15px * var(--font-scale,1));font-weight:700;letter-spacing:.035em;color:inherit}
+.cedula-doubt{font-size:calc(12px * var(--font-scale,1));line-height:1.35;margin:0 0 8px;opacity:.82}
+.cedula-crop-details{margin:2px 0 8px}
+.cedula-crop-details summary{cursor:pointer;font-size:calc(12px * var(--font-scale,1));font-weight:650;user-select:none}
+.cedula-crop{display:block;max-width:100%;max-height:210px;object-fit:contain;margin-top:7px;border-radius:8px;border:1px solid rgba(127,127,127,.22);background:#fff}
+.cedula-warning,.alta-envios-warning{margin-top:9px;padding:8px 10px;border-radius:8px;background:rgba(185,125,25,.08);border:1px solid rgba(185,125,25,.25);font-size:calc(12px * var(--font-scale,1));line-height:1.4}
+html[data-theme="dark"] .cedula-identifier,html[data-theme="dark"] .cedula-summary-item{border-color:rgba(255,255,255,.12);background:rgba(255,255,255,.025)}
+html[data-theme="dark"] .cedula-identifier.is-warning{border-color:rgba(238,183,76,.3);background:rgba(238,183,76,.06)}
+@media(max-width:900px){.cedula-card{max-width:100%}}
+@media(max-width:620px){.cedula-summary,.cedula-identifiers{grid-template-columns:1fr}.cedula-card{padding:12px!important}.cedula-code{font-size:calc(14px * var(--font-scale,1))}}
+
+/* Salud → Servicios: extensión del panel de Salud existente. */
+.health-tabs{display:flex;gap:4px;margin:0 0 12px;border-bottom:1px solid var(--line)}
+.health-tab{display:inline-flex;align-items:center;min-height:38px;padding:0 12px;border-bottom:2px solid transparent;color:var(--muted);font-size:var(--font-sm);font-weight:700;text-decoration:none}
+.health-tab:hover{color:var(--ink);background:var(--hover)}
+.health-tab.active{color:var(--ink);border-bottom-color:var(--teal)}
+.health-services-panel{padding:0!important;overflow:hidden}
+.health-services-head{display:flex;align-items:center;justify-content:space-between;gap:14px;padding:14px 16px;border-bottom:1px solid var(--line)}
+.health-services-head>div{display:flex;flex-direction:column;gap:2px;min-width:0}
+.health-services-head b{font-size:var(--font-base)}
+.health-services-head span{font-size:var(--font-xs);color:var(--muted)}
+.health-services-summary{padding:11px 16px;border-bottom:1px solid var(--line);font-size:var(--font-sm);color:var(--muted);background:var(--surface-2)}
+.health-summary-ok{color:var(--success)}
+.health-summary-warning{color:var(--teal)}
+.health-summary-error{color:var(--danger)}
+.health-services-list{display:flex;flex-direction:column}
+.health-service{border-bottom:1px solid var(--line);background:var(--surface)}
+.health-service:last-child{border-bottom:0}
+.health-service>summary{list-style:none;display:flex;align-items:center;justify-content:space-between;gap:14px;padding:13px 16px;cursor:pointer;user-select:none}
+.health-service>summary::-webkit-details-marker{display:none}
+.health-service>summary:hover{background:var(--hover)}
+.health-service-title{display:flex;align-items:center;gap:9px;min-width:0}
+.health-service-title b{font-size:var(--font-sm)}
+.health-service-state{font-size:var(--font-xs);font-weight:700;color:var(--muted)}
+.health-service-state-icon{display:inline-grid;place-items:center;width:20px;height:20px;border-radius:50%;font-size:12px;font-weight:800;background:var(--surface-2);border:1px solid var(--line);color:var(--muted);flex:0 0 auto}
+.health-service-ok .health-service-state-icon{color:var(--success);background:var(--success-bg)}
+.health-service-warning .health-service-state-icon{color:var(--teal);background:var(--tealbg)}
+.health-service-error .health-service-state-icon{color:var(--danger);background:var(--danger-bg)}
+.health-service-body{padding:0 16px 14px 45px}
+.health-service-message{margin:0 0 10px;color:var(--muted);font-size:var(--font-sm);line-height:1.45}
+.health-service-checks{display:grid;gap:5px}
+.health-service-check{display:flex;align-items:flex-start;justify-content:space-between;gap:16px;padding:5px 0;font-size:var(--font-xs)}
+.health-service-check span{color:var(--muted)}
+.health-service-check b{font-weight:700;text-align:right;color:var(--ink)}
+.health-check-ok{color:var(--success)!important}
+.health-check-warning{color:var(--teal)!important}
+.health-check-error{color:var(--danger)!important}
+.health-service-code,.health-event-code{display:inline-block;margin-top:8px;padding:2px 6px;border-radius:6px;background:var(--surface-2);border:1px solid var(--line);color:var(--muted);font-family:ui-monospace,SFMono-Regular,Consolas,monospace;font-size:11px}
+.health-services-note{margin:0;padding:11px 16px;border-top:1px solid var(--line);font-size:var(--font-xs);color:var(--muted);background:var(--surface-2)}
+.health-service-placeholder{padding:24px 16px;color:var(--muted);font-size:var(--font-sm);text-align:center}
+
+@media(max-width:650px){
+  .health-services-head{align-items:stretch;flex-direction:column}
+  .health-services-head .btn-soft{width:100%}
+  .health-service>summary{align-items:flex-start}
+  .health-service-body{padding-left:16px}
+  .health-service-check{gap:10px}
+}
+
+/* Documentos operativos: extensión de la tarjeta de cédula existente. */
+.cedula-identifiers-three{grid-template-columns:repeat(3,minmax(0,1fr))}
+.cedula-copy-actions{margin-top:10px;display:flex;flex-wrap:wrap;gap:8px}
+.personal-document-card{max-width:min(720px,calc(100vw - 260px))}
+.personal-fields{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px}
+.personal-value{word-break:break-word}
+@media(max-width:980px){.cedula-identifiers-three{grid-template-columns:1fr 1fr}.personal-document-card{max-width:100%}}
+@media(max-width:620px){.cedula-identifiers-three,.personal-fields{grid-template-columns:1fr}.cedula-copy-actions{align-items:stretch}.cedula-copy-actions .alta-secondary-btn{flex:1 1 auto}}
+
+/* ===== Cédula operativa — ajuste visual V3 (solo presentación) =====
+   Alcance deliberado: únicamente la tarjeta de CÉDULA.
+   DNI/Licencia conservan sus estilos actuales mediante :not(.personal-document-card). */
+.cedula-card:not(.personal-document-card){
+  padding:16px 17px!important;
+  border-radius:15px!important;
+  border-color:color-mix(in srgb,var(--line) 86%,transparent)!important;
+  background:color-mix(in srgb,var(--surface,#fff) 96%,var(--tealbg) 4%)!important;
+  box-shadow:0 8px 24px rgba(18,32,51,.055);
+}
+.cedula-card:not(.personal-document-card) .alta-compact-title{
+  position:relative;
+  margin:0 0 13px;
+  padding:0 0 11px 12px;
+  border-bottom:1px solid var(--line);
+  font-size:calc(15px * var(--font-scale,1));
+  font-weight:780;
+  letter-spacing:-.01em;
+  color:var(--ink);
+}
+.cedula-card:not(.personal-document-card) .alta-compact-title::before{
+  content:"";
+  position:absolute;
+  left:0;
+  top:3px;
+  width:4px;
+  height:17px;
+  border-radius:999px;
+  background:var(--teal);
+}
+.cedula-card:not(.personal-document-card) .cedula-summary{
+  gap:8px;
+  margin-bottom:12px;
+}
+.cedula-card:not(.personal-document-card) .cedula-summary-item{
+  padding:8px 10px 9px;
+  border-color:color-mix(in srgb,var(--line) 82%,transparent);
+  background:var(--surface-2);
+  border-radius:9px;
+}
+.cedula-card:not(.personal-document-card) .cedula-summary-item span{
+  margin-bottom:3px;
+  color:var(--muted);
+  opacity:1;
+  font-size:calc(10px * var(--font-scale,1));
+  font-weight:750;
+  letter-spacing:.065em;
+}
+.cedula-card:not(.personal-document-card) .cedula-summary-item strong{
+  color:var(--ink);
+  font-size:calc(13px * var(--font-scale,1));
+  font-weight:720;
+  line-height:1.3;
+  white-space:normal;
+  overflow:visible;
+  text-overflow:clip;
+  word-break:break-word;
+}
+.cedula-card:not(.personal-document-card) .cedula-identifiers{
+  gap:9px;
+}
+.cedula-card:not(.personal-document-card) .cedula-identifier{
+  display:flex;
+  min-height:142px;
+  flex-direction:column;
+  padding:10px;
+  border-radius:10px;
+  border-color:color-mix(in srgb,var(--line) 88%,transparent);
+  background:var(--surface);
+  box-shadow:0 1px 0 rgba(18,32,51,.025);
+}
+.cedula-card:not(.personal-document-card) .cedula-identifier.is-ok{
+  border-color:color-mix(in srgb,var(--teal) 30%,var(--line));
+  background:color-mix(in srgb,var(--surface) 97%,var(--tealbg) 3%);
+}
+.cedula-card:not(.personal-document-card) .cedula-identifier.is-warning{
+  border-color:rgba(185,125,25,.38);
+  background:rgba(185,125,25,.055);
+}
+.cedula-card:not(.personal-document-card) .cedula-identifier-head{
+  min-height:22px;
+  margin-bottom:7px;
+}
+.cedula-card:not(.personal-document-card) .cedula-identifier-head strong{
+  color:var(--muted);
+  font-size:calc(10px * var(--font-scale,1));
+  font-weight:800;
+  letter-spacing:.075em;
+}
+.cedula-card:not(.personal-document-card) .cedula-status{
+  max-width:58%;
+  overflow:hidden;
+  text-overflow:ellipsis;
+  padding:3px 6px;
+  border:1px solid color-mix(in srgb,var(--line) 80%,transparent);
+  border-radius:999px;
+  background:var(--surface-2);
+  color:var(--muted);
+  opacity:1;
+  font-size:calc(9px * var(--font-scale,1));
+  line-height:1.15;
+}
+.cedula-card:not(.personal-document-card) .is-ok .cedula-status{
+  border-color:color-mix(in srgb,var(--teal) 28%,var(--line));
+  background:var(--tealbg);
+  color:var(--teal);
+}
+.cedula-card:not(.personal-document-card) .is-warning .cedula-status{
+  border-color:rgba(185,125,25,.28);
+  background:rgba(185,125,25,.08);
+}
+.cedula-card:not(.personal-document-card) .cedula-code{
+  min-height:42px;
+  display:flex;
+  align-items:center;
+  margin:0 0 8px;
+  padding:9px 10px;
+  border:1px solid color-mix(in srgb,var(--line) 72%,transparent);
+  border-radius:8px;
+  background:var(--surface-2);
+  color:var(--ink);
+  font-size:calc(14px * var(--font-scale,1));
+  font-weight:760;
+  line-height:1.25;
+  letter-spacing:.025em;
+}
+.cedula-card:not(.personal-document-card) .cedula-doubt{
+  margin:0 0 8px;
+  color:var(--muted);
+  opacity:1;
+  font-size:calc(11px * var(--font-scale,1));
+  line-height:1.4;
+}
+.cedula-card:not(.personal-document-card) .cedula-crop-details{
+  margin:0 0 8px;
+}
+.cedula-card:not(.personal-document-card) .cedula-crop-details summary{
+  color:var(--muted);
+  font-size:calc(11px * var(--font-scale,1));
+}
+.cedula-card:not(.personal-document-card) .cedula-identifier>.alta-secondary-btn{
+  width:100%;
+  min-height:34px;
+  margin-top:auto;
+  padding:7px 9px;
+  border-color:color-mix(in srgb,var(--line) 90%,transparent);
+  background:var(--surface-2);
+  font-size:calc(10px * var(--font-scale,1));
+}
+.cedula-card:not(.personal-document-card) .cedula-identifier>.alta-secondary-btn:hover{
+  border-color:color-mix(in srgb,var(--teal) 35%,var(--line));
+  background:var(--hover);
+}
+.cedula-card:not(.personal-document-card) .cedula-copy-actions{
+  margin-top:11px;
+  padding-top:11px;
+  border-top:1px solid var(--line);
+  gap:7px;
+}
+.cedula-card:not(.personal-document-card) .cedula-copy-actions .alta-secondary-btn{
+  min-height:34px;
+  padding:7px 10px;
+  font-size:calc(10px * var(--font-scale,1));
+}
+.cedula-card:not(.personal-document-card) .cedula-warning{
+  margin-top:10px;
+  padding:8px 10px;
+  border-radius:8px;
+  font-size:calc(11px * var(--font-scale,1));
+}
+html[data-theme="dark"] .cedula-card:not(.personal-document-card){
+  box-shadow:0 8px 24px rgba(0,0,0,.14);
+}
+html[data-theme="dark"] .cedula-card:not(.personal-document-card) .cedula-identifier.is-ok{
+  border-color:color-mix(in srgb,var(--teal) 34%,var(--line));
+}
+@media(max-width:980px){
+  .cedula-card:not(.personal-document-card) .cedula-identifier{min-height:136px}
+}
+@media(max-width:620px){
+  .cedula-card:not(.personal-document-card){padding:13px!important}
+  .cedula-card:not(.personal-document-card) .alta-compact-title{margin-bottom:11px;padding-bottom:9px}
+  .cedula-card:not(.personal-document-card) .cedula-summary{grid-template-columns:repeat(2,minmax(0,1fr));gap:7px}
+  .cedula-card:not(.personal-document-card) .cedula-identifiers{gap:8px}
+  .cedula-card:not(.personal-document-card) .cedula-identifier{min-height:0;padding:9px}
+  .cedula-card:not(.personal-document-card) .cedula-code{min-height:40px;font-size:calc(13px * var(--font-scale,1))}
+  .cedula-card:not(.personal-document-card) .cedula-copy-actions{align-items:stretch}
+  .cedula-card:not(.personal-document-card) .cedula-copy-actions .alta-secondary-btn{flex:1 1 100%}
+}
+@media(max-width:430px){
+  .cedula-card:not(.personal-document-card) .cedula-summary{grid-template-columns:1fr}
+  .cedula-card:not(.personal-document-card) .cedula-status{max-width:62%}
+}
+
+/* Adjuntos múltiples del chat: extensión del componente existente. */
+html[data-theme="dark"] .file-attached-item{background:var(--surface);border-color:var(--line);color:var(--ink)}
+html[data-theme="dark"] .file-attached-remove{background:var(--surface-3);color:var(--muted)}
+html[data-theme="dark"] .file-attached-remove:hover{background:var(--hover);color:var(--ink)}
+@media(max-width:640px){.file-attached-list{display:grid;grid-template-columns:1fr}.file-attached-item strong{max-width:none;flex:1}}
+
+/* ===== ETAPA 1 — Cédula: ambigüedad + confirmación humana ===== */
+.cedula-card:not(.personal-document-card) .cedula-confirmation{
+  margin-top:auto;
+  padding-top:8px;
+  border-top:1px solid color-mix(in srgb,var(--line) 82%,transparent);
+  display:grid;
+  gap:7px;
+}
+.cedula-card:not(.personal-document-card) .cedula-confirmation-title{
+  color:var(--muted);
+  font-size:calc(10px * var(--font-scale,1));
+  line-height:1.35;
+  font-weight:650;
+}
+.cedula-card:not(.personal-document-card) .cedula-options{
+  display:grid;
+  gap:5px;
+}
+.cedula-card:not(.personal-document-card) .cedula-option{
+  display:grid;
+  grid-template-columns:auto minmax(0,1fr);
+  align-items:center;
+  gap:7px;
+  min-width:0;
+  padding:6px 7px;
+  border:1px solid color-mix(in srgb,var(--line) 84%,transparent);
+  border-radius:7px;
+  background:var(--surface-2);
+  cursor:pointer;
+  color:var(--ink);
+  font-size:calc(10px * var(--font-scale,1));
+}
+.cedula-card:not(.personal-document-card) .cedula-option input[type="radio"]{
+  margin:0;
+  accent-color:var(--teal);
+}
+.cedula-card:not(.personal-document-card) .cedula-option>span{
+  min-width:0;
+  overflow-wrap:anywhere;
+  font-family:ui-monospace,SFMono-Regular,Consolas,"Liberation Mono",monospace;
+  font-weight:700;
+}
+.cedula-card:not(.personal-document-card) .cedula-manual-input{
+  grid-column:1/-1;
+  width:100%;
+  min-width:0;
+  height:32px;
+  padding:6px 8px;
+  border:1px solid var(--line);
+  border-radius:7px;
+  background:var(--surface);
+  color:var(--ink);
+  outline:0;
+  text-transform:uppercase;
+  font-family:ui-monospace,SFMono-Regular,Consolas,"Liberation Mono",monospace;
+  font-size:calc(11px * var(--font-scale,1));
+}
+.cedula-card:not(.personal-document-card) .cedula-manual-input:focus{
+  border-color:color-mix(in srgb,var(--teal) 55%,var(--line));
+  box-shadow:0 0 0 2px color-mix(in srgb,var(--tealbg) 75%,transparent);
+}
+.cedula-card:not(.personal-document-card) .cedula-manual-input:disabled{opacity:.48;cursor:not-allowed}
+.cedula-card:not(.personal-document-card) .cedula-confirm-btn{width:100%;margin-top:1px!important}
+.cedula-card:not(.personal-document-card) .cedula-confirmed-note{
+  color:var(--teal);
+  font-size:calc(10px * var(--font-scale,1));
+  line-height:1.35;
+  font-weight:700;
+}
+.cedula-card:not(.personal-document-card) .cedula-identifier.is-confirmed{
+  border-color:color-mix(in srgb,var(--teal) 42%,var(--line));
+}
+.cedula-card:not(.personal-document-card) .cedula-identifier.is-confirmed .cedula-status{
+  border-color:color-mix(in srgb,var(--teal) 38%,var(--line));
+  background:var(--tealbg);
+  color:var(--teal);
+}
+@media(max-width:620px){
+  .cedula-card:not(.personal-document-card) .cedula-option{padding:7px 8px}
+}
+
+/* ======================================================================
+   ETAPA 10 — Prueba visual estilo WhatsApp Web
+   Alcance: sólo UI del chat. No toca envío, IA, adjuntos backend ni historial.
+   ====================================================================== */
+body.chat-layout .chat[data-wallpaper="classic"] .history,
+body.chat-layout .chat:not([data-wallpaper]) .history{
+  background-color:#efeae2 !important;
+  background-image:
+    radial-gradient(circle at 18px 18px, rgba(84,101,111,.055) 0 1.4px, transparent 1.5px),
+    radial-gradient(circle at 58px 48px, rgba(84,101,111,.04) 0 1.2px, transparent 1.3px),
+    linear-gradient(135deg, transparent 0 47%, rgba(84,101,111,.032) 47% 53%, transparent 53% 100%),
+    linear-gradient(45deg, transparent 0 47%, rgba(84,101,111,.026) 47% 53%, transparent 53% 100%) !important;
+  background-size:76px 76px,92px 92px,118px 118px,132px 132px !important;
+}
+body.chat-layout .chat[data-wallpaper="soft"] .history{
+  background-color:#e5ddd5 !important;
+  background-image:
+    radial-gradient(circle at 12px 12px, rgba(17,27,33,.045) 0 1px, transparent 1.1px),
+    radial-gradient(circle at 44px 42px, rgba(17,27,33,.04) 0 1.2px, transparent 1.3px),
+    linear-gradient(135deg, transparent 0 48%, rgba(17,27,33,.025) 48% 52%, transparent 52%) !important;
+  background-size:68px 68px,88px 88px,116px 116px !important;
+}
+body.chat-layout .chat[data-wallpaper="clean"] .history{
+  background:#efeae2 !important;
+}
+html[data-theme="dark"] body.chat-layout .chat[data-wallpaper="classic"] .history,
+html[data-theme="dark"] body.chat-layout .chat:not([data-wallpaper]) .history{
+  background-color:#0b141a !important;
+  background-image:
+    radial-gradient(circle at 18px 18px, rgba(233,237,239,.055) 0 1.4px, transparent 1.5px),
+    radial-gradient(circle at 58px 48px, rgba(233,237,239,.04) 0 1.2px, transparent 1.3px),
+    linear-gradient(135deg, transparent 0 47%, rgba(233,237,239,.032) 47% 53%, transparent 53% 100%) !important;
+  background-size:76px 76px,92px 92px,118px 118px !important;
+}
+html[data-theme="dark"] body.chat-layout .chat[data-wallpaper="soft"] .history{background:#111b21 !important}
+html[data-theme="dark"] body.chat-layout .chat[data-wallpaper="clean"] .history{background:#0b141a !important}
+
+/* Header: brocha a la izquierda y basura roja a la derecha. */
+body.chat-layout .chat>header .chat-header-actions{
+  margin-left:auto !important;
+  display:flex !important;
+  align-items:center !important;
+  gap:7px !important;
+  position:relative !important;
+}
+body.chat-layout .chat>header .chat-visual-btn,
+body.chat-layout .chat>header .chat-clear-danger{
+  width:34px !important;
+  height:34px !important;
+  min-width:34px !important;
+  padding:0 !important;
+  border-radius:50% !important;
+  display:grid !important;
+  place-items:center !important;
+  cursor:pointer !important;
+  font-size:0 !important;
+  line-height:1 !important;
+}
+body.chat-layout .chat>header .chat-visual-btn{
+  border:1px solid rgba(84,101,111,.16) !important;
+  background:#f0f2f5 !important;
+  color:#54656f !important;
+}
+body.chat-layout .chat>header .chat-visual-btn:hover,
+body.chat-layout .chat>header .chat-visual-btn[aria-expanded="true"]{
+  background:#e9edef !important;
+  color:#00a884 !important;
+}
+body.chat-layout .chat>header .chat-clear-danger.clear-chat{
+  margin-left:0 !important;
+  border:1px solid rgba(220,38,38,.22) !important;
+  background:#fff5f5 !important;
+  color:#dc2626 !important;
+}
+body.chat-layout .chat>header .chat-clear-danger.clear-chat:hover,
+body.chat-layout .chat>header .chat-clear-danger.clear-chat:focus-visible{
+  border-color:#dc2626 !important;
+  background:#fee2e2 !important;
+  color:#b91c1c !important;
+  outline:none !important;
+}
+body.chat-layout .chat>header .chat-visual-btn .app-icon,
+body.chat-layout .chat>header .chat-clear-danger .app-icon{width:18px !important;height:18px !important}
+.chat-wallpaper-menu{
+  position:absolute !important;
+  right:39px !important;
+  top:42px !important;
+  z-index:40 !important;
+  min-width:176px !important;
+  padding:6px !important;
+  border:1px solid rgba(17,27,33,.10) !important;
+  border-radius:10px !important;
+  background:#fff !important;
+  box-shadow:0 12px 32px rgba(11,20,26,.18) !important;
+}
+.chat-wallpaper-menu[hidden]{display:none !important}
+.chat-wallpaper-menu button{
+  width:100% !important;
+  border:0 !important;
+  background:transparent !important;
+  color:#111b21 !important;
+  text-align:left !important;
+  padding:9px 10px !important;
+  border-radius:8px !important;
+  font-size:12px !important;
+  font-weight:600 !important;
+  cursor:pointer !important;
+}
+.chat-wallpaper-menu button:hover,
+.chat-wallpaper-menu button.active{background:#f0f2f5 !important;color:#008069 !important}
+html[data-theme="dark"] .chat-wallpaper-menu{background:#202c33 !important;border-color:rgba(255,255,255,.10) !important}
+html[data-theme="dark"] .chat-wallpaper-menu button{color:#e9edef !important}
+html[data-theme="dark"] .chat-wallpaper-menu button:hover,
+html[data-theme="dark"] .chat-wallpaper-menu button.active{background:#2a3942 !important;color:#00a884 !important}
+
+/* Burbujas del asistente/sistema: estilo entrante de WhatsApp Web.
+   La burbuja del usuario NO se redefine en esta sección. */
+body.chat-layout .history .msg.assistant{
+  max-width:min(74%,760px) !important;
+  margin-bottom:6px !important;
+}
+body.chat-layout .history .msg.assistant .bubble{
+  position:relative !important;
+  background:#ffffff !important;
+  border:0 !important;
+  color:#111b21 !important;
+  border-radius:7.5px !important;
+  border-top-left-radius:0 !important;
+  padding:7px 9px 8px !important;
+  line-height:1.45 !important;
+  box-shadow:0 1px .5px rgba(11,20,26,.13) !important;
+}
+body.chat-layout .history .msg.assistant .bubble::before{
+  content:"";
+  position:absolute;
+  left:-8px;
+  top:0;
+  width:0;
+  height:0;
+  border-top:8px solid #ffffff;
+  border-left:8px solid transparent;
+}
+html[data-theme="dark"] body.chat-layout .history .msg.assistant .bubble{
+  background:#202c33 !important;
+  color:#e9edef !important;
+  box-shadow:0 1px .5px rgba(0,0,0,.30) !important;
+}
+html[data-theme="dark"] body.chat-layout .history .msg.assistant .bubble::before{border-top-color:#202c33 !important}
+body.chat-layout .history .msg.assistant .bubble p{margin:0 0 4px !important}
+body.chat-layout .history .msg.assistant .bubble ul{margin:5px 0 5px 18px !important;padding:0 !important}
+body.chat-layout .history .msg.assistant .bubble li{margin:2px 0 !important}
+
+/* Sin hora, vistos ni checks en ningún mensaje si alguna plantilla antigua los trae. */
+body.chat-layout .msg-time,
+body.chat-layout .message-time,
+body.chat-layout .bubble-time,
+body.chat-layout .chat-msg-time,
+body.chat-layout .read-receipt,
+body.chat-layout .seen-receipt,
+body.chat-layout .delivery-receipt,
+body.chat-layout .message-status,
+body.chat-layout .msg-status,
+body.chat-layout .wa-check,
+body.chat-layout .wa-checks,
+body.chat-layout .checkmarks{
+  display:none !important;
+}
+
+/* Adjuntos/previews con formato compacto tipo WhatsApp. */
+body.chat-layout .file-attached{
+  width:min(820px,100%) !important;
+  margin:0 auto 7px !important;
+  padding:0 !important;
+  border:0 !important;
+  background:transparent !important;
+  color:#111b21 !important;
+}
+body.chat-layout .file-attached-list{display:flex !important;flex-wrap:wrap !important;gap:6px !important}
+body.chat-layout .file-attached-item{
+  min-height:36px !important;
+  padding:6px 7px 6px 9px !important;
+  border:1px solid #e9edef !important;
+  background:#ffffff !important;
+  border-radius:8px !important;
+  box-shadow:0 1px .5px rgba(11,20,26,.13) !important;
+  color:#111b21 !important;
+}
+body.chat-layout .file-attached-icon{
+  width:24px !important;height:24px !important;border-radius:6px !important;
+  display:grid !important;place-items:center !important;background:#f0f2f5 !important;color:#54656f !important;
+}
+body.chat-layout .file-attached-item strong{font-size:12px !important;font-weight:600 !important;color:inherit !important}
+body.chat-layout .file-attached-remove{border-radius:50% !important;background:#f0f2f5 !important;color:#54656f !important}
+body.chat-layout .file-attached-remove:hover{background:#e9edef !important;color:#dc2626 !important}
+html[data-theme="dark"] body.chat-layout .file-attached-item{background:#202c33 !important;border-color:#2a3942 !important;color:#e9edef !important}
+html[data-theme="dark"] body.chat-layout .file-attached-icon,
+html[data-theme="dark"] body.chat-layout .file-attached-remove{background:#2a3942 !important;color:#aebac1 !important}
+
+/* Tarjetas generadas dentro del chat: integrarlas a la burbuja WhatsApp sin tocar lógica. */
+body.chat-layout .history .msg.assistant .bubble.excel-proposal,
+body.chat-layout .history .msg.assistant .bubble.metadata-proposal,
+body.chat-layout .history .msg.assistant .bubble.tabulado-flota,
+body.chat-layout .history .msg.assistant .bubble.alta-compact-card,
+body.chat-layout .history .msg.assistant .bubble.cedula-card,
+body.chat-layout .history .msg.assistant .bubble.personal-document-card{
+  background:#ffffff !important;
+  border:0 !important;
+  border-radius:8px !important;
+  border-top-left-radius:0 !important;
+  box-shadow:0 1px .5px rgba(11,20,26,.13) !important;
+}
+html[data-theme="dark"] body.chat-layout .history .msg.assistant .bubble.excel-proposal,
+html[data-theme="dark"] body.chat-layout .history .msg.assistant .bubble.metadata-proposal,
+html[data-theme="dark"] body.chat-layout .history .msg.assistant .bubble.tabulado-flota,
+html[data-theme="dark"] body.chat-layout .history .msg.assistant .bubble.alta-compact-card,
+html[data-theme="dark"] body.chat-layout .history .msg.assistant .bubble.cedula-card,
+html[data-theme="dark"] body.chat-layout .history .msg.assistant .bubble.personal-document-card{
+  background:#202c33 !important;
+  color:#e9edef !important;
+}
+body.chat-layout .history .msg.assistant .bubble img,
+body.chat-layout .history .msg.assistant .bubble .cedula-crop{
+  border-radius:7px !important;
+  box-shadow:none !important;
+}
+
+@media(max-width:560px){
+  body.chat-layout .history .msg.assistant{max-width:88% !important}
+  .chat-wallpaper-menu{right:0 !important;top:40px !important}
+}
+body.chat-layout .chat>header .chat-clear-danger.clear-chat::before{content:none !important;display:none !important}
+
+/* ==========================================================
+   ETAPA 10.1 — Previews de fotos y adjuntos estilo WhatsApp
+   Alcance: sólo presentación de adjuntos/fotos. La burbuja del usuario
+   conserva su caja externa; se estilizan únicamente los previews internos.
+   ========================================================== */
+body.chat-layout .wa-sent-attachments{
+  display:grid !important;
+  gap:4px !important;
+  margin:0 0 6px !important;
+  max-width:330px !important;
+}
+body.chat-layout .wa-sent-attachments.has-images{
+  grid-template-columns:repeat(2,minmax(0,1fr)) !important;
+}
+body.chat-layout .wa-sent-attachments.has-images .wa-attachment-image:first-child:nth-last-child(1){
+  grid-column:1 / -1 !important;
+}
+body.chat-layout .wa-user-message-text{
+  white-space:pre-wrap !important;
+  overflow-wrap:anywhere !important;
+}
+body.chat-layout .wa-attachment-card{
+  position:relative !important;
+  overflow:hidden !important;
+  border-radius:7.5px !important;
+  background:#f0f2f5 !important;
+  border:0 !important;
+  box-shadow:none !important;
+  color:#111b21 !important;
+  min-width:0 !important;
+}
+body.chat-layout .wa-attachment-card.wa-attachment-image{
+  aspect-ratio:4/3 !important;
+  min-height:118px !important;
+  background:#d1d7db !important;
+}
+body.chat-layout .wa-attachment-card.wa-attachment-image .wa-photo-preview{
+  display:block !important;
+  width:100% !important;
+  height:100% !important;
+  min-height:118px !important;
+  object-fit:cover !important;
+  border-radius:7.5px !important;
+  border:0 !important;
+  box-shadow:none !important;
+  background:#d1d7db !important;
+}
+body.chat-layout .wa-attachment-card.wa-attachment-image .wa-attachment-info{
+  position:absolute !important;
+  left:0 !important;
+  right:0 !important;
+  bottom:0 !important;
+  display:flex !important;
+  gap:7px !important;
+  align-items:center !important;
+  padding:18px 7px 6px !important;
+  background:linear-gradient(to top,rgba(0,0,0,.55),rgba(0,0,0,0)) !important;
+  color:#fff !important;
+}
+body.chat-layout .wa-attachment-card:not(.wa-attachment-image){
+  display:flex !important;
+  align-items:center !important;
+  gap:8px !important;
+  min-height:54px !important;
+  padding:7px !important;
+  background:#f0f2f5 !important;
+}
+body.chat-layout .wa-attachment-card:not(.wa-attachment-image) .wa-attachment-info{
+  display:flex !important;
+  align-items:center !important;
+  gap:8px !important;
+  min-width:0 !important;
+  width:100% !important;
+}
+body.chat-layout .wa-attachment-icon{
+  width:34px !important;
+  height:34px !important;
+  min-width:34px !important;
+  border-radius:6px !important;
+  display:grid !important;
+  place-items:center !important;
+  background:#d9dee2 !important;
+  color:#54656f !important;
+  font-size:10px !important;
+  font-weight:800 !important;
+  letter-spacing:.02em !important;
+}
+body.chat-layout .wa-attachment-image .wa-attachment-icon{
+  display:none !important;
+}
+body.chat-layout .wa-attachment-text{
+  display:block !important;
+  min-width:0 !important;
+  flex:1 1 auto !important;
+}
+body.chat-layout .wa-attachment-text strong{
+  display:block !important;
+  max-width:100% !important;
+  overflow:hidden !important;
+  text-overflow:ellipsis !important;
+  white-space:nowrap !important;
+  font-size:12px !important;
+  font-weight:600 !important;
+  line-height:1.2 !important;
+  color:inherit !important;
+}
+body.chat-layout .wa-attachment-text small{
+  display:block !important;
+  margin-top:2px !important;
+  max-width:100% !important;
+  overflow:hidden !important;
+  text-overflow:ellipsis !important;
+  white-space:nowrap !important;
+  font-size:10px !important;
+  color:rgba(17,27,33,.62) !important;
+}
+body.chat-layout .wa-attachment-image .wa-attachment-text small{color:rgba(255,255,255,.82) !important}
+body.chat-layout .wa-attachment-card.is-historical.wa-attachment-image{
+  aspect-ratio:auto !important;
+  min-height:54px !important;
+  display:flex !important;
+  align-items:center !important;
+  padding:7px !important;
+}
+body.chat-layout .wa-attachment-card.is-historical.wa-attachment-image .wa-attachment-info{
+  position:static !important;
+  padding:0 !important;
+  background:transparent !important;
+  color:#111b21 !important;
+}
+body.chat-layout .wa-attachment-card.is-historical.wa-attachment-image .wa-attachment-icon{
+  display:grid !important;
+}
+
+/* Selector/cola de adjuntos antes de enviar: ahora muestra miniaturas reales,
+   no sólo una lista de nombres. */
+body.chat-layout .file-attached-list{
+  display:grid !important;
+  grid-template-columns:repeat(auto-fit,minmax(150px,220px)) !important;
+  gap:7px !important;
+  justify-content:center !important;
+}
+body.chat-layout .file-attached-item.wa-composer-attachment{
+  position:relative !important;
+  display:block !important;
+  min-height:0 !important;
+  padding:0 !important;
+  border:0 !important;
+  background:transparent !important;
+  box-shadow:none !important;
+  color:#111b21 !important;
+}
+body.chat-layout .file-attached-item.wa-composer-attachment .wa-attachment-card{
+  width:100% !important;
+  box-shadow:0 1px .5px rgba(11,20,26,.13) !important;
+}
+body.chat-layout .file-attached-item.wa-composer-attachment .wa-attachment-image{
+  min-height:112px !important;
+}
+body.chat-layout .file-attached-item.wa-composer-attachment .wa-photo-preview{
+  min-height:112px !important;
+}
+body.chat-layout .file-attached-item.wa-composer-attachment .file-attached-remove{
+  position:absolute !important;
+  top:5px !important;
+  right:5px !important;
+  z-index:2 !important;
+  width:24px !important;
+  height:24px !important;
+  min-width:24px !important;
+  border:0 !important;
+  border-radius:50% !important;
+  display:grid !important;
+  place-items:center !important;
+  background:rgba(17,27,33,.64) !important;
+  color:#fff !important;
+  box-shadow:0 1px 3px rgba(0,0,0,.25) !important;
+}
+body.chat-layout .file-attached-item.wa-composer-attachment .file-attached-remove:hover{
+  background:#dc2626 !important;
+  color:#fff !important;
+}
+
+/* Fotos/recortes generados por la IA: estética de imagen dentro de conversación WhatsApp. */
+body.chat-layout .history .msg.assistant .bubble img,
+body.chat-layout .history .msg.assistant .bubble .cedula-crop{
+  display:block !important;
+  max-width:100% !important;
+  border-radius:7.5px !important;
+  border:0 !important;
+  box-shadow:none !important;
+  background:#d1d7db !important;
+}
+
+html[data-theme="dark"] body.chat-layout .wa-attachment-card{background:#2a3942 !important;color:#e9edef !important}
+html[data-theme="dark"] body.chat-layout .wa-attachment-card:not(.wa-attachment-image){background:#2a3942 !important}
+html[data-theme="dark"] body.chat-layout .wa-attachment-icon{background:#111b21 !important;color:#aebac1 !important}
+html[data-theme="dark"] body.chat-layout .wa-attachment-text small{color:#aebac1 !important}
+html[data-theme="dark"] body.chat-layout .wa-attachment-card.is-historical.wa-attachment-image .wa-attachment-info{color:#e9edef !important}
+html[data-theme="dark"] body.chat-layout .file-attached-item.wa-composer-attachment{background:transparent !important;color:#e9edef !important}
+
+@media(max-width:560px){
+  body.chat-layout .wa-sent-attachments{max-width:260px !important}
+  body.chat-layout .file-attached-list{grid-template-columns:repeat(auto-fit,minmax(132px,1fr)) !important}
+  body.chat-layout .wa-attachment-card.wa-attachment-image,
+  body.chat-layout .wa-attachment-card.wa-attachment-image .wa-photo-preview{min-height:98px !important}
 }

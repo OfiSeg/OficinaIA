@@ -14,13 +14,24 @@
 <aside class="chat-list"><div class="chat-list-head"><div><b>Conversaciones</b></div><button onclick="nuevoChat()" title="Nueva conversación">＋</button></div><div id="chatList" class="chat-list-items"></div></aside>
 <section class="chat" id="chatDropZone">
 <div id="chatDropOverlay" class="chat-drop-overlay" hidden aria-hidden="true">
-  <div class="chat-drop-overlay-inner"><span>📎</span>Soltá el archivo acá</div>
+  <div class="chat-drop-overlay-inner"><span>📎</span>Soltá los archivos acá</div>
 </div>
 <header>
-  <strong class="sofia-logo-shell" aria-hidden="true"><img class="sofia-logo-img" src="{{ url_for('static', filename='img/favicon.png', v='20260906-brand') }}" alt=""></strong>
-  <div><b>Sofia</b></div>
+  <strong class="sofia-logo-shell" aria-hidden="true"><img class="sofia-logo-img" src="{{ static_asset('img/favicon.png') }}" alt=""></strong>
   <button type="button" class="chat-list-open" id="chatListOpen" title="Conversaciones" aria-label="Abrir lista de conversaciones">☰</button>
-  <button class="clear-chat" onclick="borrarChatActual()">Eliminar chat</button>
+  <div class="chat-header-actions" aria-label="Acciones del chat">
+    <button type="button" class="chat-visual-btn chat-wallpaper-btn" id="chatWallpaperBtn" title="Cambiar fondo" aria-label="Cambiar fondo" aria-haspopup="true" aria-expanded="false">
+      <svg class="app-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M18.5 3.5l2 2L8.6 17.4 5 19l1.6-3.6L18.5 3.5z"/><path d="M14.5 7.5l2 2"/><path d="M4 21c2.5 0 4-1.1 4-3"/></svg>
+    </button>
+    <div class="chat-wallpaper-menu" id="chatWallpaperMenu" hidden role="menu" aria-label="Fondos del chat">
+      <button type="button" data-wallpaper="classic" role="menuitem">WhatsApp clásico</button>
+      <button type="button" data-wallpaper="soft" role="menuitem">WhatsApp suave</button>
+      <button type="button" data-wallpaper="clean" role="menuitem">Fondo limpio</button>
+    </div>
+    <button type="button" class="clear-chat chat-clear-danger" onclick="borrarChatActual()" title="Eliminar chat" aria-label="Eliminar chat">
+      <svg class="app-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 7h16"/><path d="M9 7V4h6v3"/><path d="M7 7l1 14h8l1-14"/><path d="M10 11v6"/><path d="M14 11v6"/></svg>
+    </button>
+  </div>
 </header>
 {% if config_global.tips_visibles %}
 <div id="chatTip" class="chat-tip" hidden>
@@ -45,13 +56,15 @@
 </div>
 <div id="chat" class="history history-empty">
   <div id="chatWelcome" class="welcome">
-    <strong class="sofia-welcome-logo" aria-hidden="true"><img class="sofia-logo-img" src="{{ url_for('static', filename='img/favicon.png', v='20260906-brand') }}" alt=""></strong>
+    <strong class="sofia-welcome-logo" aria-hidden="true"><img class="sofia-logo-img" src="{{ static_asset('img/favicon.png') }}" alt=""></strong>
     <h2>¿Qué necesitás resolver?</h2>
   </div>
 </div>
 <div class="composer-wrap">
   <div id="chatCommandMenu" class="chat-command-menu" hidden role="listbox" aria-label="Comandos del chat"></div>
-  <div id="archivoAdjunto" class="file-attached" hidden><span>📎</span><strong id="archivoNombre"></strong><button type="button" onclick="quitarAdjunto()" title="Quitar archivo">×</button></div>
+  <div id="archivoAdjunto" class="file-attached" hidden aria-live="polite">
+    <div id="archivoListaAdjuntos" class="file-attached-list"></div>
+  </div>
   <div class="notas-toolbar">
     <button type="button" class="notas-btn" id="notasBtn" title="Notas rápidas" aria-label="Notas rápidas" aria-haspopup="true" aria-expanded="false">+</button>
     <div id="notasPanel" class="notas-panel" hidden role="dialog" aria-label="Notas rápidas">
@@ -59,7 +72,7 @@
       <div id="notasLista" class="notas-lista"></div>
     </div>
   </div>
-  <div class="composer"><label class="attach-file" title="Adjuntar archivo">📎<input id="archivoInput" type="file" accept="application/pdf,.pdf,text/plain,.txt,image/png,.png,image/jpeg,.jpg,.jpeg,image/webp,.webp"></label><textarea id="mensaje" rows="1" maxlength="6000" placeholder="Escribí tu consulta o usá / para comandos…"></textarea><button type="button" class="slash-btn" id="slashBtn" title="Comandos" aria-label="Abrir menú de comandos">/</button><button class="send" onclick="enviarMensaje()">↑</button></div>
+  <div class="composer"><label class="attach-file" title="Adjuntar archivo">📎<input id="archivoInput" type="file" multiple accept="application/pdf,.pdf,text/plain,.txt,image/png,.png,image/jpeg,.jpg,.jpeg,image/webp,.webp"></label><textarea id="mensaje" rows="1" maxlength="6000" placeholder="Escribí tu consulta o usá / para comandos…"></textarea><button type="button" class="slash-btn" id="slashBtn" title="Comandos" aria-label="Abrir menú de comandos">/</button><button class="send" onclick="enviarMensaje()">↑</button></div>
 </div>
 
 <div class="modal" id="notaModal" hidden>

@@ -89,6 +89,7 @@ Devolvé ÚNICAMENTE JSON válido, sin markdown ni texto fuera del JSON, con
 esta estructura exacta:
 {
   "asegurado": "",
+  "numero_poliza": "",
   "vehiculo": "",
   "patente": "",
   "compania": "",
@@ -101,25 +102,26 @@ esta estructura exacta:
 REGLAS ESTRICTAS (no las rompas aunque el texto sea ambiguo):
 
 1. "asegurado": nombre o razón social asegurada tal como figura.
-2. "vehiculo": marca/modelo o descripción del vehículo tal como figura.
-3. "patente": patente/dominio, si figura.
-4. "compania": compañía que emitió la póliza.
-5. "medio_pago": devolvé SOLAMENTE una de estas tres categorías:
+2. "numero_poliza": número de póliza principal del frente. No confundir con certificado, endoso, documento, solicitud ni teléfono. Si no es inequívoco, "".
+3. "vehiculo": marca/modelo o descripción del vehículo tal como figura.
+4. "patente": patente/dominio, si figura.
+5. "compania": compañía que emitió la póliza.
+6. "medio_pago": devolvé SOLAMENTE una de estas tres categorías:
    - CUPONERA: cuando la póliza expresa cuponera/cupones o cobranza por cupón.
    - CBU: cuando expresa CBU, débito automático en cuenta, cuenta bancaria o
      equivalente inequívoco.
    - CREDITO: cuando expresa tarjeta de crédito/débito a tarjeta o identifica
      inequívocamente una tarjeta como medio de pago.
    Si no hay evidencia clara, devolvé "". Nunca devuelvas otra etiqueta.
-6. "codigo_postal": solo si aparece explícito o se identifica sin ambigüedad
+7. "codigo_postal": solo si aparece explícito o se identifica sin ambigüedad
    a partir del propio texto. No lo busques externamente.
-7. "emitido": FECHA DE EMISIÓN de la póliza, no inicio de vigencia ni
+8. "emitido": FECHA DE EMISIÓN de la póliza, no inicio de vigencia ni
    vencimiento. Formato DD/MM/AAAA. Si no es confiable, "".
-8. "premio": importe del PREMIO / precio final que figure en la póliza. No
+9. "premio": importe del PREMIO / precio final que figure en la póliza. No
    sumes conceptos ni estimes. Si no hay un importe final identificable, "".
 
 MUY IMPORTANTE:
-- NO extraigas ni devuelvas el número de póliza: OficinaIA no lo usa para el alta.
+- Extraé el número de póliza sólo en ``numero_poliza`` para la salida operativa de Envíos Ya. No modifica la columna NUMERO del Excel histórico.
 - NO extraigas teléfonos del PDF. El teléfono se completa manualmente en la UI.
 - Nunca uses DNI, número de póliza, certificado, endoso u otro número como teléfono.
 - No inventes ningún dato. Un campo incierto queda vacío ("").

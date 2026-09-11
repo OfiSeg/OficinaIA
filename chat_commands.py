@@ -1,13 +1,16 @@
-"""Comandos determinísticos del chat que no necesitan Gemini.
+"""Comandos determinísticos del chat.
 
-V20 Etapa 6: separa parsing/presentación de /envios ya y /guardar asegurado
-fuera de app.py. No conoce Flask, session, DB ni archivos: recibe dependencias.
+Mantiene /envios ya y /guardar asegurado sin Gemini, y agrega ARCA/CUIT
+como flujo determinístico de base interna. No conoce Flask ni escribe sesión:
+recibe historial/contexto/adjuntos como dependencias y devuelve payloads.
 """
 from dataclasses import dataclass, field
 import re
 
 import dispatch_service
+import arca_service
 from companias import normalizar_compania
+from envios_ya_utils import normalizar_patente, normalizar_telefono_argentina, preparar_envios_ya
 
 
 @dataclass
@@ -20,12 +23,9 @@ class CommandResult:
     payload_extra: dict = field(default_factory=dict)
 
 
-def normalizar_patente(valor):
-    return re.sub(r"[^A-Z0-9]", "", str(valor or "").upper())
-
-
 def normalizar_telefono(valor):
-    return re.sub(r"\D", "", str(valor or ""))
+    telefono, _error = normalizar_telefono_argentina(valor)
+    return telefono
 
 
 def buscar_asegurado_por_patente(patente_buscada, *, leer_excel, normalizar_encabezado, libro_id="1"):
@@ -52,28 +52,10 @@ def buscar_asegurado_por_patente(patente_buscada, *, leer_excel, normalizar_enca
     return None
 
 
-def armar_texto_envios_ya(datos, *, normalizar_encabezado):
-    def obtener(*claves):
-        for clave in claves:
-            objetivo = normalizar_encabezado(clave)
-            for k, v in datos.items():
-                if normalizar_encabezado(k) == objetivo and str(v or "").strip():
-                    return str(v).strip()
-        return ""
-
-    nombre = obtener("ASEGURADO", "nombre asegurado")
-    telefono = normalizar_telefono(obtener("TELEFONO", "NUMERO"))
-    vehiculo = obtener("VEHICULO", "marca_modelo", "marca/modelo")
-    patente = obtener("PATENTE", "dominio", "chapa").upper()
-    cia = obtener("CIA", "compañia", "compania")
-    aviso = f" (ojo: tiene {len(telefono)} dígitos, revisá que sea correcto)" if telefono and len(telefono) != 10 else ""
-    return (
-        f"NOMBRE Y APELLIDO: {nombre}\n"
-        f"TELEFONO: {telefono}{aviso}\n"
-        f"VEHICULO: {vehiculo}\n"
-        f"PATENTE: {patente}\n"
-        f"COMPAÑIA: {cia}"
-    )
+def armar_texto_envios_ya(datos, *, normalizar_encabezado=None):
+    # Una sola fuente de verdad para alta individual, comando histórico y masivos.
+    # normalizar_encabezado se conserva en la firma por compatibilidad.
+    return preparar_envios_ya(datos or {}).texto
 
 
 def parsear_envios_ya(mensaje):
@@ -121,7 +103,261 @@ def parsear_guardar_asegurado(mensaje):
     return {"propuesta": propuesta, "libro_id": libro_id, "valida": bool(propuesta["ASEGURADO"] and (propuesta["NUMERO"] or propuesta["PATENTE"]))}
 
 
-def procesar(mensaje, *, leer_excel, normalizar_encabezado, libros_excel):
+
+_ORDINALES = {
+    "primero": 1, "primera": 1, "uno": 1, "un": 1, "1": 1,
+    "segundo": 2, "segunda": 2, "dos": 2, "2": 2,
+    "tercero": 3, "tercera": 3, "tres": 3, "3": 3,
+    "cuarto": 4, "cuarta": 4, "cuatro": 4, "4": 4,
+    "quinto": 5, "quinta": 5, "cinco": 5, "5": 5,
+    "sexto": 6, "sexta": 6, "seis": 6, "6": 6,
+    "septimo": 7, "septima": 7, "séptimo": 7, "séptima": 7, "siete": 7, "7": 7,
+    "octavo": 8, "octava": 8, "ocho": 8, "8": 8,
+    "noveno": 9, "novena": 9, "nueve": 9, "9": 9,
+    "decimo": 10, "decima": 10, "décimo": 10, "décima": 10, "diez": 10, "10": 10,
+}
+
+
+def _norm_chat(texto):
+    import unicodedata
+    t = unicodedata.normalize("NFKD", str(texto or ""))
+    t = "".join(c for c in t if not unicodedata.combining(c))
+    t = t.lower()
+    t = re.sub(r"\s+", " ", t).strip()
+    return t
+
+
+def _historial_texto(historial, limite=6):
+    partes = []
+    for item in list(historial or [])[-limite:]:
+        if isinstance(item, dict):
+            partes.append(str(item.get("contenido") or ""))
+    return "\n".join(partes)
+
+
+def _contexto_es_arca(historial, arca_context=None):
+    if isinstance(arca_context, dict) and arca_context.get("fuente") == "ARCA":
+        return True
+    h = _norm_chat(_historial_texto(historial))
+    return any(x in h for x in ("arca", "cuit", "cuil", "/cuit", "padron"))
+
+
+def _contexto_es_cartera(historial):
+    h = _norm_chat(_historial_texto(historial))
+    return any(x in h for x in ("cartera", "asegurado", "asegurados", "poliza", "polizas", "patente", "vehiculo", "excel", "planilla")) and not any(x in h for x in ("arca", "cuit", "cuil"))
+
+
+def _indice_seleccion(texto):
+    n = _norm_chat(texto).strip(" .")
+    n = re.sub(r"^(?:el|la|los|las)\s+", "", n)
+    return _ORDINALES.get(n)
+
+
+def _parece_dni_aislado(texto):
+    raw = str(texto or "").strip()
+    if not raw:
+        return False
+    # DNI histórico: 1 a 8 dígitos, con puntos opcionales. Evita importes o texto mixto.
+    if not re.fullmatch(r"\d{1,2}(?:\.\d{3}){1,2}|\d{6,8}", raw):
+        return False
+    dig = re.sub(r"\D", "", raw)
+    return 6 <= len(dig) <= 8
+
+
+def _parece_cuit_aislado(texto):
+    raw = str(texto or "").strip()
+    return bool(re.fullmatch(r"\d{11}|\d{2}-\d{8}-\d", raw))
+
+
+def _parece_nombre_persona(texto):
+    raw = str(texto or "").strip()
+    if not raw or len(raw) > 80:
+        return False
+    if re.search(r"[0-9/@]", raw):
+        return False
+    tokens = re.findall(r"[A-Za-zÁÉÍÓÚáéíóúÑñ]{2,}", raw)
+    if len(tokens) < 2 or len(tokens) > 5:
+        return False
+    stop = {"hola", "buen", "buenas", "gracias", "che", "consulta", "poliza", "patente", "asegurado", "seguro"}
+    return not any(t.lower() in stop for t in tokens)
+
+
+def _extraer_objetivo_cuit(texto):
+    raw = str(texto or "").strip()
+    n = _norm_chat(raw)
+    if not any(x in n for x in ("cuit", "cuil", "arca", "padron")):
+        return None
+    # Priorizar DNI explícito en la misma frase.
+    m = re.search(r"(?:dni|documento)\s*(?:de|nro|nº|numero|número)?\s*([0-9.\-]{6,15})", raw, re.I)
+    if m:
+        return {"tipo": "dni", "valor": m.group(1)}
+    cuit = re.search(r"\b\d{2}-?\d{8}-?\d\b", raw)
+    if cuit:
+        return {"tipo": "cuit", "valor": cuit.group(0)}
+    dni = re.search(r"\b\d{1,2}(?:\.\d{3}){1,2}\b|\b\d{6,8}\b", raw)
+    if dni:
+        return {"tipo": "dni", "valor": dni.group(0)}
+    # Sacar palabras de intención y quedarse con el nombre.
+    objetivo = re.sub(r"(?i)\b(?:buscame|buscar|busca|buscá|decime|dame|sacame|saca|sacá|resolver|resolve|resolvé|cuit|cuil|arca|padron|padrón|de|del|la|el|para|por|dni|documento|que|qué|tiene|es)\b", " ", raw)
+    objetivo = re.sub(r"\s+", " ", objetivo).strip(" :;,.¿?¡!")
+    if objetivo:
+        return {"tipo": "nombre", "valor": objetivo}
+    return {"tipo": "archivo", "valor": ""}
+
+
+def _formatear_resultado_arca(resultado, titulo=None):
+    status = (resultado or {}).get("status")
+    if status == "padron_not_loaded":
+        return (
+            "El buscador ARCA está disponible, pero el padrón todavía no fue cargado/actualizado.\n\n"
+            "Para cargarlo, colocá `apellidoNombreDenominacion.zip` en la carpeta de OficinaIA y ejecutá:\n\n"
+            "`python importar_padron_arca.py apellidoNombreDenominacion.zip`"
+        )
+    if status == "invalid":
+        return resultado.get("message") or "No pude interpretar el dato para buscar en ARCA."
+    if status == "not_found":
+        dato = resultado.get("dni_mostrar") or resultado.get("query") or "ese dato"
+        return f"No encontré coincidencias en el padrón ARCA para {dato}. No invento CUIT/CUIL si el padrón no lo devuelve."
+    if status == "found" and resultado.get("cuit"):
+        return (
+            f"CUIT/CUIL encontrado en ARCA:\n\n"
+            f"• Persona: {resultado.get('nombre','')}\n"
+            f"• DNI: {resultado.get('dni_mostrar') or arca_service.formatear_dni(resultado.get('dni'))}\n"
+            f"• CUIT/CUIL: {resultado.get('cuit_formateado') or arca_service.formatear_cuit(resultado.get('cuit'))}\n\n"
+            "Fuente: padrón ARCA interno. Esto no significa que sea asegurado de la oficina."
+        )
+    candidatos = list((resultado or {}).get("candidates") or [])[:10]
+    if candidatos:
+        encabezado = titulo or f"Personas encontradas en ARCA para: \"{resultado.get('query') or resultado.get('dni_mostrar') or ''}\""
+        lineas = [encabezado.strip(), ""]
+        for i, c in enumerate(candidatos, 1):
+            lineas.append(f"{i}. {c.get('nombre','')}")
+            lineas.append(f"   CUIT/CUIL: {c.get('cuit_formateado') or arca_service.formatear_cuit(c.get('cuit'))}")
+            if c.get("dni_mostrar"):
+                lineas.append(f"   DNI: {c.get('dni_mostrar')}")
+        lineas.append("")
+        lineas.append("Cada opción es una persona real del padrón ARCA. Si corresponde, indicame el número de opción.")
+        return "\n".join(lineas)
+    return "No pude obtener resultados de ARCA."
+
+
+def _contexto_desde_resultado(resultado):
+    candidatos = list((resultado or {}).get("candidates") or [])
+    if (resultado or {}).get("status") == "found" and resultado.get("cuit"):
+        candidatos = [resultado]
+    return {"fuente": "ARCA", "candidates": candidatos[:10]} if candidatos else {"fuente": "ARCA"}
+
+
+def _resolver_archivo_para_arca(adjuntos):
+    items = [a for a in (adjuntos or []) if a is not None]
+    if not items:
+        return None, "No recibí un archivo del que pueda extraer DNI para buscar CUIT/CUIL."
+    try:
+        import personal_document_ops
+        for tipo in ("dni", "licencia"):
+            try:
+                resultado_doc = personal_document_ops.procesar_documento_personal(items[:2], tipo_hint=tipo)
+                d = resultado_doc.datos or {}
+                dni = d.get("dni")
+                nombre = " ".join(x for x in (d.get("apellido"), d.get("nombre")) if x).strip()
+                if dni:
+                    return arca_service.resolver_cuit_por_dni(dni, nombre=nombre), None
+            except Exception:
+                continue
+    except Exception as exc:
+        return None, f"No pude leer el DNI del archivo para consultar ARCA en este intento: {exc}"
+    return None, "No pude detectar un DNI legible en el archivo. No hago búsqueda ARCA sólo por nombre si no hay intención y datos suficientes."
+
+
+def parsear_cuit_arca(mensaje, *, historial=None, arca_context=None, adjuntos=None):
+    texto = str(mensaje or "").strip()
+    n = _norm_chat(texto)
+    if not texto:
+        return None
+
+    seleccion = _indice_seleccion(texto)
+    if seleccion and isinstance(arca_context, dict):
+        candidatos = list(arca_context.get("candidates") or [])
+        if 1 <= seleccion <= len(candidatos):
+            elegido = dict(candidatos[seleccion - 1])
+            elegido["status"] = "found"
+            elegido["ok"] = True
+            return {"resultado": elegido, "contexto": {"fuente": "ARCA", "candidates": candidatos}, "seleccion": seleccion}
+
+    m_cmd = re.match(r"^/cuit\b\s*(.*)$", texto, re.I)
+    if m_cmd:
+        resto = m_cmd.group(1).strip()
+        if not resto and adjuntos:
+            resultado, error = _resolver_archivo_para_arca(adjuntos)
+            if error:
+                return {"error": error, "contexto": {"fuente": "ARCA"}}
+            return {"resultado": resultado, "contexto": _contexto_desde_resultado(resultado)}
+        if not resto or resto.lower() in {"estado", "status"}:
+            estado = arca_service.estado_padron()
+            if resto.lower() in {"estado", "status"}:
+                return {"estado": estado, "contexto": {"fuente": "ARCA"}}
+            return {"error": "Usá `/cuit 43384856`, `/cuit Ramiro Herrera` o adjuntá un DNI con `/cuit`.", "contexto": {"fuente": "ARCA"}}
+        if _parece_dni_aislado(resto):
+            resultado = arca_service.resolver_cuit_por_dni(resto)
+        elif _parece_cuit_aislado(resto):
+            c = arca_service.normalizar_cuit(resto)
+            resultado = arca_service.resolver_cuit_por_dni(c[2:10]) if c else {"status": "invalid"}
+        else:
+            resultado = arca_service.buscar_personas_arca(resto, limite=10)
+        return {"resultado": resultado, "contexto": _contexto_desde_resultado(resultado)}
+
+    objetivo = _extraer_objetivo_cuit(texto)
+    if objetivo:
+        if objetivo["tipo"] == "archivo":
+            resultado, error = _resolver_archivo_para_arca(adjuntos)
+            if error:
+                return {"error": error, "contexto": {"fuente": "ARCA"}}
+        elif objetivo["tipo"] in {"dni", "cuit"}:
+            val = objetivo["valor"]
+            if objetivo["tipo"] == "cuit":
+                c = arca_service.normalizar_cuit(val)
+                val = c[2:10] if c else val
+            resultado = arca_service.resolver_cuit_por_dni(val)
+        else:
+            resultado = arca_service.buscar_personas_arca(objetivo["valor"], limite=10)
+        return {"resultado": resultado, "contexto": _contexto_desde_resultado(resultado)}
+
+    if _parece_dni_aislado(texto) and not _contexto_es_cartera(historial):
+        resultado = arca_service.resolver_cuit_por_dni(texto)
+        return {"resultado": resultado, "contexto": _contexto_desde_resultado(resultado)}
+
+    if _parece_nombre_persona(texto):
+        if _contexto_es_arca(historial, arca_context):
+            resultado = arca_service.buscar_personas_arca(texto, limite=10)
+            return {"resultado": resultado, "contexto": _contexto_desde_resultado(resultado)}
+        if not _contexto_es_cartera(historial):
+            return {
+                "pregunta_fuente": True,
+                "respuesta": "¿Querés buscarlo en tu cartera o buscar su CUIT/CUIL en ARCA?\n\n• Mi cartera\n• Padrón ARCA / CUIT",
+                "contexto": {"fuente": "ARCA"},
+            }
+    return None
+
+def procesar(mensaje, *, leer_excel, normalizar_encabezado, libros_excel, historial=None, arca_context=None, adjuntos=None):
+    arca = parsear_cuit_arca(mensaje, historial=historial, arca_context=arca_context, adjuntos=adjuntos)
+    if arca is not None:
+        if arca.get("estado") is not None:
+            e = arca["estado"]
+            respuesta = (
+                f"Estado del padrón ARCA:\n\n"
+                f"• Cargado: {'sí' if e.get('cargado') else 'no'}\n"
+                f"• Registros: {e.get('registros', 0)}\n"
+                f"• Fecha del padrón: {e.get('fecha_padron') or '-'}\n"
+                f"• Backend: {e.get('backend') or '-'}"
+            )
+            return CommandResult(True, respuesta, payload_extra={"arca_context": arca.get("contexto") or {"fuente":"ARCA"}})
+        if arca.get("pregunta_fuente"):
+            return CommandResult(True, arca["respuesta"], payload_extra={"arca_context": arca.get("contexto") or {"fuente":"ARCA"}})
+        if arca.get("error"):
+            return CommandResult(True, arca["error"], payload_extra={"arca_context": arca.get("contexto") or {"fuente":"ARCA"}})
+        respuesta = _formatear_resultado_arca(arca.get("resultado"))
+        return CommandResult(True, respuesta, payload_extra={"arca_context": arca.get("contexto") or _contexto_desde_resultado(arca.get("resultado"))})
+
     despacho = dispatch_service.procesar_comando_explicito(mensaje)
     if despacho is not None:
         return CommandResult(True, despacho.get("respuesta") or "No pude completar el envío.")

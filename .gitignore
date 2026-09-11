@@ -5,3 +5,8 @@ oficina.db
 .venv/
 venv/
 *.db
+apellidoNombreDenominacion.zip
+apellidoNombreDenominacion*.zip
+padron_arca*.zip
+padron_arca*.db
+padron_arca*.sqlite

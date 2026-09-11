@@ -10,6 +10,9 @@ necesita sobrevivir a un redeploy/reinicio de Render vive acá:
 """
 from __future__ import annotations
 
+import runtime_config
+from resilience import call_read_with_resilience, is_transient_error
+
 import os
 from contextlib import closing
 
@@ -140,7 +143,8 @@ CREATE TABLE IF NOT EXISTS eventos_sistema (
     categoria TEXT NOT NULL,
     nivel TEXT NOT NULL,
     mensaje TEXT NOT NULL,
-    detalle_tecnico TEXT
+    detalle_tecnico TEXT,
+    codigo VARCHAR(80)
 );
 CREATE INDEX IF NOT EXISTS idx_eventos_sistema_fecha
     ON eventos_sistema (timestamp DESC);
@@ -154,7 +158,7 @@ PENDIENTES_ESTADOS = {"pendiente", "hecho", "descartado"}
 
 
 def _database_url():
-    value = os.getenv("DATABASE_URL")
+    value = runtime_config.get_text("DATABASE_URL")
     if not value:
         raise RuntimeError(
             "Falta la variable de entorno DATABASE_URL de Neon PostgreSQL."
@@ -163,7 +167,20 @@ def _database_url():
 
 
 def conectar_pg():
-    return psycopg2.connect(_database_url())
+    """Abre conexión a PostgreSQL con retry sólo durante el handshake.
+
+    Repetir el establecimiento de conexión es seguro: todavía no se ejecutó
+    ninguna lectura ni escritura. Las transacciones/INSERT/UPDATE no se
+    reintentan globalmente.
+    """
+    return call_read_with_resilience(
+        lambda: psycopg2.connect(_database_url()),
+        operation="postgres_connect",
+        provider="postgres",
+        attempts=3,
+        delays=(0.0, 0.4, 1.0),
+        retry_if=is_transient_error,
+    )
 
 
 def _json_safe_row(fila: dict) -> dict:
@@ -195,6 +212,7 @@ def inicializar_postgres():
             cursor.execute(CREATE_TABLE_FLOTAS_ACTIVAS_SQL)
             cursor.execute(CREATE_TABLE_PENDIENTES_SQL)
             cursor.execute(CREATE_TABLE_EVENTOS_SISTEMA_SQL)
+            cursor.execute("ALTER TABLE eventos_sistema ADD COLUMN IF NOT EXISTS codigo VARCHAR(80)")
             cursor.execute(
                 """
                 ALTER TABLE metadatos
@@ -218,7 +236,7 @@ def inicializar_postgres():
                 (USUARIO_ADMIN_PRINCIPAL,),
             )
             if cursor.fetchone() is None:
-                initial = (os.getenv("ADMIN_INITIAL_PASSWORD") or "").strip()
+                initial = (runtime_config.get_text("ADMIN_INITIAL_PASSWORD") or "").strip()
                 if not initial or initial == "1234":
                     print(
                         "ADVERTENCIA P0.4: no se crea usuario 'admin' en Neon "

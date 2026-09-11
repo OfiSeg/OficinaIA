@@ -10,12 +10,14 @@ import uuid
 import zipfile
 from contextlib import closing
 from datetime import datetime
+from office_time import office_date_string, office_now
 from pathlib import Path
 
 import fitz
 from google.genai import types
 
 from ai_gateway import begin_request, generate_with_fallback, obtener_cliente_gemini, DEFAULT_MODELS
+from resilience import parse_json_object
 from storage_r2 import subir_pdf as r2_subir_pdf, eliminar_pdf as r2_eliminar_pdf, descargar_pdf_temporal
 
 BASE_DIR = Path(__file__).resolve().parent
@@ -326,7 +328,7 @@ def analizar_pdf(usuario: str, lote_id: str, nombre_archivo: str, datos_pdf: byt
     if cliente is None:
         return _caso_incompleto_por_error(usuario, lote_id, nombre_archivo, storage_key, len(datos_pdf), "Gemini no está configurado en el servidor.")
 
-    hoy = datetime.now().strftime("%d/%m/%Y")
+    hoy = office_date_string()
     prompt = f"""
 MODO ESTUDIO — ANÁLISIS PRELIMINAR DE RECLAMOS DE DAMNIFICADOS
 
@@ -381,6 +383,7 @@ Mantené hechos_documentados, inferencias, puntos_favorables, puntos_desfavorabl
             contents=partes,
             config=types.GenerateContentConfig(temperature=0.05, max_output_tokens=6000, response_mime_type="application/json"),
             log_prefix="GEMINI /ESTUDIO",
+            response_validator=lambda r: parse_json_object(getattr(r, "text", "")),
         )
     except Exception as e:
         ultimo = e
@@ -389,12 +392,9 @@ Mantené hechos_documentados, inferencias, puntos_favorables, puntos_desfavorabl
 
     raw = (getattr(respuesta, "text", None) or "").strip()
     try:
-        data = json.loads(raw)
+        data = parse_json_object(raw)
     except Exception:
-        m = re.search(r"\{.*\}", raw, flags=re.S)
-        if not m:
-            return _caso_incompleto_por_error(usuario, lote_id, nombre_archivo, storage_key, len(datos_pdf), "La respuesta de Gemini no pudo estructurarse. Reintentar este caso.")
-        data = json.loads(m.group(0))
+        return _caso_incompleto_por_error(usuario, lote_id, nombre_archivo, storage_key, len(datos_pdf), "La respuesta de Gemini no pudo estructurarse tras los reintentos automáticos.")
 
     return _guardar_caso_registro(usuario, lote_id, nombre_archivo, storage_key, len(datos_pdf), data)
 
@@ -445,7 +445,7 @@ def construir_txt(lote: dict, casos: list[dict]) -> str:
         "OFICINAIA · ESTUDIO — INFORME DE TRIAGE DE SINIESTROS",
         "="*68,
         f"Lote: {lote.get('titulo') or lote.get('id')}",
-        f"Generado: {datetime.now().strftime('%d/%m/%Y %H:%M')}",
+        f"Generado: {office_now().strftime('%d/%m/%Y %H:%M')}",
         f"Total de PDFs analizados: {len(casos)}",
         f"TOMAR: {counts.get('TOMAR',0)} | REVISAR: {counts.get('REVISAR',0)} | NO TOMAR: {counts.get('NO_TOMAR',0)} | INCOMPLETOS: {counts.get('INCOMPLETO',0)}",
         "",

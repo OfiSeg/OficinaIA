@@ -26,13 +26,15 @@ def extraer_contexto_pdf(datos_pdf: bytes, nombre_archivo: str, *, max_paginas: 
     paginas = []
     total_chars = 0
     procesadas = 0
+    total_paginas = 0
     try:
         documento = fitz.open(stream=datos_pdf, filetype="pdf")
     except Exception as exc:
         raise ChatPdfError(f"No se pudo leer el PDF adjunto: {exc}", 400) from exc
 
     try:
-        limite_paginas = min(documento.page_count, max_paginas)
+        total_paginas = int(documento.page_count)
+        limite_paginas = min(total_paginas, max_paginas)
         for numero in range(limite_paginas):
             if total_chars >= max_chars:
                 break
@@ -54,10 +56,10 @@ def extraer_contexto_pdf(datos_pdf: bytes, nombre_archivo: str, *, max_paginas: 
         documento.close()
 
     if not paginas:
-        raise ChatPdfError(
-            "El PDF parece ser escaneado o no contiene texto seleccionable. En esta versión puedo leer PDFs con texto.",
-            422,
-        )
+        # Un PDF sin texto seleccionable sigue siendo un adjunto válido del chat.
+        # Los flujos multimodales (cédula/póliza/otros scans) lo renderizan a
+        # imagen más adelante. No rechazarlo acá.
+        return "", total_paginas, 0
 
     contexto = (
         "\n\n===== PDF ADJUNTADO EN EL CHAT =====\n"

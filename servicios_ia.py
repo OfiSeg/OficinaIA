@@ -3,6 +3,7 @@ import os
 import time
 import json
 from datetime import datetime, date
+from office_time import office_date_string, office_year
 from pathlib import Path
 from google.genai import types
 from ai_gateway import obtener_cliente_gemini, generate_with_fallback, DEFAULT_MODELS
@@ -17,6 +18,8 @@ from excel_analytics import analizar as analizar_dataset_excel
 import google_sheets_service
 import dispatch_service
 import system_health
+import document_grouping
+import arca_service
 
 
 
@@ -45,7 +48,7 @@ def _texto_fila(fila):
 def _coincidencia_identificador(pregunta, fila):
     """Devuelve True si la consulta contiene un identificador fuerte de esa fila."""
     q = _normalizar_texto(pregunta)
-    for campo in ("PATENTE", "NUMERO", "NRO", "POLIZA", "PÓLIZA"):
+    for campo in ("PATENTE", "DOMINIO", "POLIZA", "PÓLIZA", "NUMERO_POLIZA", "NÚMERO DE PÓLIZA", "NRO POLIZA", "NRO. POLIZA"):
         valor = str(fila.get(campo, "")).strip()
         if valor and _normalizar_texto(valor) in q:
             return True
@@ -87,29 +90,34 @@ def _cargar_excel_interno():
         return datos
     except Exception as error:
         print("ERROR GOOGLE SHEETS IA:", error)
+        codigo = str(getattr(error, "code", "") or "SHEET_READ_ERROR")
         system_health.registrar_evento(
-            "excel", "error", "Sofia no pudo leer Google Sheets", str(error)
+            "excel", "error", "No se pudo leer Google Sheets", str(error), codigo=codigo
         )
         # No convertir una caída/mala configuración de Sheets en un dataset
-        # vacío: eso produciría respuestas falsas del tipo "hay 0". El error
-        # sube hasta el wrapper de herramientas, que lo transforma en un
-        # fallo controlado para que Sofia reconozca que la fuente no estuvo
-        # disponible.
-        raise RuntimeError("No se pudo leer la fuente de Asegurados en Google Sheets.") from error
+        # vacío: eso produciría respuestas falsas del tipo "hay 0". Además se
+        # conserva el código de la causa raíz para que las capas superiores no
+        # lo degraden a "Sofia falló".
+        exc = RuntimeError("No se pudo leer la fuente de Asegurados en Google Sheets.")
+        exc.code = codigo
+        raise exc from error
 
 
 
 def buscar_cliente_exactamente(pregunta, datos):
-    """Devuelve el nombre de CLIENTE cuyo valor completo aparece en la consulta.
+    """Devuelve una persona/cliente/asegurado cuyo valor completo aparece en la consulta.
 
-    La versión original invocaba esta función pero nunca la definía. Se evita
-    adivinar por coincidencias parciales: solo se considera el valor completo
-    normalizado y, si hay más de uno, gana el más largo/específico.
+    No depende de que la planilla se llame exactamente CLIENTE: en la cartera real
+    conviven ASEGURADO, CLIENTE y NOMBRE. Se evita adivinar por coincidencias
+    parciales: sólo se considera el valor completo normalizado y, si hay más de
+    uno, gana el más largo/específico.
     """
     consulta = _normalizar_texto(pregunta)
     candidatos = []
+    aliases_nombre = ("ASEGURADO", "CLIENTE", "NOMBRE", "NOMBRE Y APELLIDO")
     for fila in datos or []:
-        valor = str((fila or {}).get("CLIENTE", "") or "").strip()
+        clave = _campo_por_alias(fila or {}, aliases_nombre)
+        valor = str((fila or {}).get(clave, "") if clave else "").strip()
         normalizado = _normalizar_texto(valor)
         if normalizado and normalizado in consulta:
             candidatos.append((len(normalizado), valor))
@@ -125,7 +133,7 @@ def _buscar_en_registros(pregunta, datos, etiqueta):
     q = _normalizar_texto(pregunta)
     palabras = [p for p in re.findall(r"[a-z0-9]+", q) if len(p) >= 3]
     palabras = list(_expandir_sinonimos_tokens(palabras))
-    cliente_exacto = buscar_cliente_exactamente(pregunta, datos) if any("CLIENTE" in f for f in datos) else None
+    cliente_exacto = buscar_cliente_exactamente(pregunta, datos)
 
     # Identificador fuerte: restringimos el contexto únicamente a las filas
     # que contienen ese identificador. Esto evita mezclar pólizas/patentes.
@@ -137,7 +145,7 @@ def _buscar_en_registros(pregunta, datos, etiqueta):
         cliente_norm = _normalizar_texto(cliente_exacto)
         filas_cliente = [
             f for f in datos
-            if _normalizar_texto(f.get("CLIENTE", "")) == cliente_norm
+            if _normalizar_texto(_valor_campo(f, "ASEGURADO") or _valor_campo(f, "CLIENTE") or _valor_campo(f, "NOMBRE") or "") == cliente_norm
         ]
         if filas_cliente:
             return [(900, f) for f in filas_cliente]
@@ -529,6 +537,106 @@ def _filtrar_filas(
         filtros['campo_fecha'] = campo_fecha or 'EMITIDO DÍA:'
 
     return salida, filtros
+
+
+def _aplicar_filtro_alias(filas, aliases, valor, *, exacto=False):
+    objetivo = _normalizar_texto(valor)
+    if not objetivo:
+        return list(filas)
+    salida = []
+    for fila in filas:
+        clave = _campo_por_alias(fila, aliases)
+        dato = _normalizar_texto(fila.get(clave, "") if clave else "")
+        if not dato:
+            continue
+        if (dato == objetivo) if exacto else (objetivo in dato):
+            salida.append(fila)
+    return salida
+
+
+def buscar_registros_estructurados(
+    compania=None,
+    asegurado=None,
+    nombre=None,
+    patente=None,
+    dominio=None,
+    numero=None,
+    poliza=None,
+    vehiculo=None,
+    campo=None,
+    valor=None,
+    tipo_vehiculo=None,
+    desde=None,
+    hasta=None,
+    campo_fecha=None,
+    limite=50,
+):
+    """Recupera filas reales con los mismos filtros determinísticos que los conteos.
+
+    Esta herramienta NO es búsqueda semántica. Si se pasa un filtro temporal, las
+    filas sin fecha quedan fuera. Por eso una fila histórica real pero sin
+    `EMITIDO DÍA:` nunca puede convertirse en "la de hoy".
+    """
+    datos, fuente = _dataset_estructurado()
+    filas, filtros = _filtrar_filas(
+        datos,
+        compania=compania,
+        campo=campo,
+        valor=valor,
+        tipo_vehiculo=tipo_vehiculo,
+        desde=desde,
+        hasta=hasta,
+        campo_fecha=campo_fecha,
+    )
+
+    if asegurado or nombre:
+        persona = asegurado or nombre
+        filas = _aplicar_filtro_alias(
+            filas,
+            ("ASEGURADO", "CLIENTE", "NOMBRE", "NOMBRE Y APELLIDO"),
+            persona,
+        )
+        filtros["persona"] = str(persona or "").strip()
+
+    if patente or dominio:
+        valor_patente = patente or dominio
+        filas = _aplicar_filtro_alias(filas, ("PATENTE", "DOMINIO"), valor_patente)
+        filtros["patente"] = str(valor_patente or "").strip()
+
+    if poliza:
+        filas = _aplicar_filtro_alias(
+            filas,
+            ("POLIZA", "PÓLIZA", "NUMERO_POLIZA", "NÚMERO DE PÓLIZA", "NRO POLIZA", "NRO. POLIZA"),
+            poliza,
+        )
+        filtros["poliza"] = str(poliza or "").strip()
+
+    if numero:
+        # NUMERO conserva la semántica histórica de teléfono/contacto. No se usa
+        # como sinónimo de DNI ni de póliza.
+        filas = _aplicar_filtro_alias(filas, ("NUMERO", "TEL", "TELEFONO", "TELÉFONO", "CELULAR"), numero)
+        filtros["numero_contacto"] = str(numero or "").strip()
+
+    if vehiculo:
+        filas = _aplicar_filtro_alias(filas, ("VEHICULO", "VEHÍCULO", "MARCA MODELO", "MODELO"), vehiculo)
+        filtros["vehiculo"] = str(vehiculo or "").strip()
+
+    try:
+        limite_int = max(1, min(int(limite or 50), 200))
+    except Exception:
+        limite_int = 50
+
+    return {
+        "ok": True,
+        "fuente": fuente,
+        "cantidad": len(filas),
+        "registros": filas[:limite_int],
+        "truncado": len(filas) > limite_int,
+        "limite": limite_int,
+        "filtros_aplicados": filtros,
+        "dataset_total_filas": len(datos),
+        "nota": "Búsqueda estructurada: no amplía por similitud si los filtros no encuentran resultados.",
+    }
 
 
 def consultar_excel(pregunta_o_filtro):
@@ -1066,7 +1174,7 @@ def _consulta_comparativa_con_historial(pregunta, historial=None):
 def _extraer_anio_vehiculo(consulta):
     """Extrae un año/modelo vehicular razonable para validaciones de antigüedad."""
     texto = _normalizar_texto(consulta)
-    hoy = datetime.now().year
+    hoy = office_year()
 
     # Primero años explícitos de 4 dígitos.
     candidatos = [int(x) for x in re.findall(r"\b(19\d{2}|20\d{2})\b", texto)]
@@ -1120,7 +1228,7 @@ def _evaluar_evidencia_por_antiguedad(consulta, evidencia):
             "detalle": "",
         }
 
-    hoy = datetime.now().year
+    hoy = office_year()
     antiguedad = hoy - anio
     contenido = "\n".join(str(x.get("contenido") or "") for x in evidencia)
     norm = _normalizar_texto(contenido)
@@ -1276,7 +1384,7 @@ def comparar_companias(consulta):
         validacion = _evaluar_evidencia_por_antiguedad(consulta, evidencia) if evidencia else {
             "anio_vehiculo": _extraer_anio_vehiculo(consulta),
             "antiguedad_aprox": (
-                datetime.now().year - _extraer_anio_vehiculo(consulta)
+                office_year() - _extraer_anio_vehiculo(consulta)
                 if _extraer_anio_vehiculo(consulta) else None
             ),
             "estado": "SIN_EVIDENCIA",
@@ -1411,9 +1519,28 @@ def buscar_en_internet(consulta):
         return {"resultado": "No se pudo completar la búsqueda en Internet."}
 
 
+
+
+def resolver_cuit_por_dni(dni, nombre=None):
+    """Tool determinística ARCA: DNI -> CUIT/CUIL. No usa Gemini como base."""
+    return arca_service.resolver_cuit_por_dni(dni, nombre=nombre)
+
+
+def buscar_personas_arca(nombre, limite=10):
+    """Tool determinística ARCA: búsqueda de personas reales por nombre."""
+    return arca_service.buscar_personas_arca(nombre, limite=limite)
+
+
+def estado_padron_arca():
+    return arca_service.estado_padron()
+
 _TOOL_HANDLERS = {
     "consultar_excel": consultar_excel,
     "contar_registros": contar_registros,
+    "buscar_registros_estructurados": buscar_registros_estructurados,
+    "resolver_cuit_por_dni": resolver_cuit_por_dni,
+    "buscar_personas_arca": buscar_personas_arca,
+    "estado_padron_arca": estado_padron_arca,
     "analizar_excel": analizar_excel,
     "buscar_en_manuales": buscar_en_manuales,
     "buscar_en_metadatos": buscar_en_metadatos,
@@ -1443,6 +1570,10 @@ def _ejecutar_tool(nombre, argumentos, cache=None):
         "buscar_en_metadatos",
         "comparar_companias",
         "consultar_excel",
+        "buscar_registros_estructurados",
+        "resolver_cuit_por_dni",
+        "buscar_personas_arca",
+        "estado_padron_arca",
         "analizar_excel",
         "buscar_vehiculos",
         "buscar_en_internet",
@@ -1452,6 +1583,10 @@ def _ejecutar_tool(nombre, argumentos, cache=None):
         "buscar_en_metadatos",
         "comparar_companias",
         "consultar_excel",
+        "buscar_registros_estructurados",
+        "resolver_cuit_por_dni",
+        "buscar_personas_arca",
+        "estado_padron_arca",
         "analizar_excel",
         "buscar_vehiculos",
     }
@@ -1480,10 +1615,26 @@ def _ejecutar_tool(nombre, argumentos, cache=None):
         return resultado
     except Exception as error:
         print(f"ERROR TOOL {nombre}:", error)
+        codigo = str(getattr(error, "code", "") or "")
+        actual = getattr(error, "__cause__", None)
+        while actual is not None and not codigo:
+            codigo = str(getattr(actual, "code", "") or "")
+            actual = getattr(actual, "__cause__", None)
+        fuente_interna = (
+            codigo.startswith("SHEET_")
+            or codigo.startswith("GOOGLE_")
+            or codigo in {
+                "MISSING_SHEET_ID", "EMPTY_SHEET_ID",
+                "MISSING_GOOGLE_CREDENTIALS", "EMPTY_GOOGLE_CREDENTIALS",
+                "INVALID_GOOGLE_CREDENTIALS",
+            }
+        )
         resultado = {
             "error": f"No se pudo ejecutar {nombre}.",
+            "codigo": codigo or "TOOL_ERROR",
             "cantidad": 0,
-            "busqueda_vacia": True,
+            "busqueda_vacia": not fuente_interna,
+            "fuente_no_disponible": bool(fuente_interna),
         }
         if cache is not None and clave_cache is not None:
             cache[clave_cache] = resultado
@@ -1842,7 +1993,21 @@ def _tools_para_plan(plan):
     return salida or TOOL_DEFINITIONS
 
 
-def consultar_gemini(pregunta, contexto="", historial=None, adjunto=None):
+def _mensaje_fuente_interna_no_disponible(error: Exception) -> str | None:
+    codigo = str(getattr(error, "code", "") or "")
+    actual = getattr(error, "__cause__", None)
+    while actual is not None and not codigo:
+        codigo = str(getattr(actual, "code", "") or "")
+        actual = getattr(actual, "__cause__", None)
+    if codigo.startswith("SHEET_") or codigo.startswith("GOOGLE_") or codigo in {
+        "MISSING_SHEET_ID", "EMPTY_SHEET_ID", "MISSING_GOOGLE_CREDENTIALS",
+        "EMPTY_GOOGLE_CREDENTIALS", "INVALID_GOOGLE_CREDENTIALS",
+    }:
+        return "No puedo consultar la planilla de asegurados en este momento porque Google Sheets no está disponible. El resto de OficinaIA sigue funcionando."
+    return None
+
+
+def consultar_gemini(pregunta, contexto="", historial=None, adjunto=None, adjuntos=None):
     cliente = obtener_cliente_gemini()
     if cliente is None:
         return "La IA todavía no está configurada. Falta GEMINI_API_KEY."
@@ -1889,6 +2054,9 @@ def consultar_gemini(pregunta, contexto="", historial=None, adjunto=None):
             contexto_estructurado = _formatear_contexto_estructurado(resultado_estructurado)
         except Exception as error:
             print("ERROR PRECONTEXTO ANALITICO EXCEL:", error)
+            mensaje_fuente = _mensaje_fuente_interna_no_disponible(error)
+            if mensaje_fuente:
+                return mensaje_fuente
 
     if "contar_registros" in (plan.get("fuentes") or []) and plan.get("referente_compania"):
         try:
@@ -1907,6 +2075,9 @@ def consultar_gemini(pregunta, contexto="", historial=None, adjunto=None):
             })
         except Exception as error:
             print("ERROR PRECONTEXTO CONTEO REFERENTE:", error)
+            mensaje_fuente = _mensaje_fuente_interna_no_disponible(error)
+            if mensaje_fuente:
+                return mensaje_fuente
 
     if "buscar_en_metadatos" in (plan.get("fuentes") or []):
         try:
@@ -1927,7 +2098,7 @@ def consultar_gemini(pregunta, contexto="", historial=None, adjunto=None):
         if parte
     )
 
-    fecha_hoy = datetime.now().strftime("%d/%m/%Y")
+    fecha_hoy = office_date_string()
     prompt = build_sofia_prompt(
         fecha_hoy=fecha_hoy,
         plan_texto=_plan_para_prompt(plan),
@@ -1938,19 +2109,68 @@ def consultar_gemini(pregunta, contexto="", historial=None, adjunto=None):
         pregunta=pregunta,
     )
 
-    if adjunto is not None and getattr(adjunto, "tipo", "") == "imagen" and getattr(adjunto, "datos_binarios", None):
-        contents = [types.Content(
-            role="user",
-            parts=[
-                types.Part.from_text(text=prompt),
-                types.Part.from_bytes(
-                    data=adjunto.datos_binarios,
-                    mime_type=adjunto.mime_type,
-                ),
-            ],
-        )]
-    else:
-        contents = [prompt]
+    # El chat maneja adjuntos como colección. Para compatibilidad, callers viejos
+    # pueden seguir pasando sólo ``adjunto``. Cada imagen o PDF escaneado del
+    # mismo mensaje se incluye en el MISMO payload multimodal y el texto de PDFs
+    # digitales/TXT ya viaja dentro de ``contexto``.
+    adjuntos_actuales = [a for a in list(adjuntos or ([] if adjunto is None else [adjunto])) if a is not None]
+    media_parts = [types.Part.from_text(text=prompt)]
+    media_agregada = 0
+    max_media_parts = 8
+    advertencias_multimodal: list[str] = []
+
+    if len(adjuntos_actuales) > 1:
+        try:
+            resumen_coleccion = document_grouping.resumen_coleccion_para_prompt(adjuntos_actuales)
+            media_parts.append(types.Part.from_text(text=resumen_coleccion))
+        except Exception as error:
+            print("AVISO RESUMEN COLECCION DOCUMENTAL:", error)
+
+    for item in adjuntos_actuales:
+        if media_agregada >= max_media_parts:
+            advertencias_multimodal.append("No se enviaron todos los adjuntos visuales a la IA por límite interno de imágenes del turno.")
+            break
+        tipo_item = str(getattr(item, "tipo", "") or "")
+        datos_item = getattr(item, "datos_binarios", None)
+        if tipo_item == "imagen" and datos_item:
+            media_parts.append(types.Part.from_bytes(data=datos_item, mime_type=item.mime_type))
+            media_agregada += 1
+            continue
+        if tipo_item == "pdf" and datos_item and not str(getattr(item, "contexto", "") or "").strip():
+            try:
+                from attachment_vision import renderizar_varios_para_vision_con_reporte
+                restantes = max_media_parts - media_agregada
+                reporte = renderizar_varios_para_vision_con_reporte([item], max_paginas_total=min(3, restantes), escala_pdf=1.8)
+                media_scan = reporte.blobs
+                advertencias_multimodal.extend(reporte.advertencias)
+            except Exception as error:
+                print("ERROR RENDER PDF ESCANEADO PARA SOFIA:", error)
+                media_scan = []
+                advertencias_multimodal.append("No pude renderizar visualmente un PDF escaneado del turno.")
+            for blob in media_scan:
+                if media_agregada >= max_media_parts:
+                    advertencias_multimodal.append("Se alcanzó el límite interno de imágenes del turno antes de incluir todas las páginas del PDF.")
+                    break
+                media_parts.append(types.Part.from_bytes(data=blob.data, mime_type=blob.mime_type))
+                media_agregada += 1
+
+    advertencias_multimodal = list(dict.fromkeys(x for x in advertencias_multimodal if x))
+    if advertencias_multimodal:
+        bloque_advertencia = (
+            "ADVERTENCIA TÉCNICA MULTIMODAL:\n"
+            + "\n".join(f"- {x}" for x in advertencias_multimodal)
+            + "\nNo afirmes que revisaste todos los documentos/páginas si no recibiste todo el contenido visual."
+        )
+        media_parts.append(types.Part.from_text(text=bloque_advertencia))
+        try:
+            system_health.registrar_evento(
+                "ia", "aviso", "Colección multimodal parcialmente enviada",
+                " | ".join(advertencias_multimodal), codigo="MULTIMODAL_TRUNCATED",
+            )
+        except Exception:
+            pass
+
+    contents = [types.Content(role="user", parts=media_parts)] if media_agregada else [prompt]
     propuesta_excel = None
     propuesta_metadato = None
 
@@ -2031,6 +2251,9 @@ def consultar_gemini(pregunta, contexto="", historial=None, adjunto=None):
                 }
             else:
                 resultado = _ejecutar_tool(nombre, argumentos, cache=tool_cache)
+
+            if isinstance(resultado, dict) and resultado.get("fuente_no_disponible"):
+                return "No puedo consultar la planilla de asegurados en este momento porque Google Sheets no está disponible. El resto de OficinaIA sigue funcionando."
 
             if nombre == "proponer_registro_excel":
                 propuesta_excel = (

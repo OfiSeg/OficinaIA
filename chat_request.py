@@ -1,7 +1,7 @@
 """Normalización del request del chat y de sus adjuntos efímeros."""
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 import json
 import os
 from pathlib import Path
@@ -23,6 +23,7 @@ class IncomingChat:
     chat_id: object
     historial: list
     archivo: object = None
+    archivos: list = field(default_factory=list)
     tiene_data: bool = False
 
 
@@ -51,6 +52,24 @@ MAX_ADJUNTO_BYTES = {
     "imagen": 15 * 1024 * 1024,
     "texto": 2 * 1024 * 1024,
 }
+# Colección del compositor del chat. El límite es por mensaje, no por selector:
+# seleccionar A y luego B debe conservar A+B. El total evita cargas accidentales
+# que agoten memoria antes de llegar al procesamiento multimodal.
+MAX_CHAT_ATTACHMENTS = 5
+MAX_CHAT_ATTACHMENTS_TOTAL_BYTES = 40 * 1024 * 1024
+
+
+def _firma_valida(tipo: str, ext: str, datos: bytes) -> bool:
+    if tipo == "pdf":
+        return datos.startswith(b"%PDF")
+    if tipo == "imagen":
+        if ext in {".jpg", ".jpeg"}:
+            return len(datos) >= 3 and datos[:3] == b"\xff\xd8\xff"
+        if ext == ".png":
+            return datos.startswith(b"\x89PNG\r\n\x1a\n")
+        if ext == ".webp":
+            return len(datos) >= 12 and datos[:4] == b"RIFF" and datos[8:12] == b"WEBP"
+    return True
 
 
 def parse_incoming(flask_request):
@@ -61,6 +80,7 @@ def parse_incoming(flask_request):
             chat_id=data.get("chat_id"),
             historial=data.get("historial") or [],
             archivo=None,
+            archivos=[],
             tiene_data=bool(data),
         )
 
@@ -70,12 +90,16 @@ def parse_incoming(flask_request):
         historial = json.loads(historial_raw)
     except Exception:
         historial = []
-    archivo = flask_request.files.get("archivo") or flask_request.files.get("pdf")
+    archivos = [a for a in flask_request.files.getlist("archivo") if a and getattr(a, "filename", "")]
+    if not archivos:
+        archivos = [a for a in flask_request.files.getlist("pdf") if a and getattr(a, "filename", "")]
+    archivo = archivos[0] if archivos else None
     return IncomingChat(
         mensaje=str(data.get("mensaje", "")).strip(),
         chat_id=data.get("chat_id"),
         historial=historial,
         archivo=archivo,
+        archivos=archivos,
         tiene_data=bool(data),
     )
 
@@ -115,6 +139,8 @@ def extract_attachment(archivo, *, max_pdf_bytes, max_pages, max_chars) -> Adjun
     else:
         limite = MAX_ADJUNTO_BYTES[tipo]
     datos = _leer_bytes(archivo, limite)
+    if not _firma_valida(tipo, ext, datos):
+        raise ChatRequestError("El contenido del archivo no coincide con su formato o está dañado.", 400)
 
     if tipo == "pdf":
         try:
@@ -160,3 +186,36 @@ def extract_attachment(archivo, *, max_pdf_bytes, max_pages, max_chars) -> Adjun
         mime_type=mime if mime.startswith("image/") else mime_default,
         datos_binarios=datos,
     )
+
+
+def extract_attachments(
+    archivos, *, max_pdf_bytes, max_pages, max_chars,
+    max_files: int = MAX_CHAT_ATTACHMENTS,
+    max_total_bytes: int = MAX_CHAT_ATTACHMENTS_TOTAL_BYTES,
+) -> list[Adjunto]:
+    """Extrae una colección ordenada de adjuntos del mismo turno.
+
+    ``extract_attachment`` sigue siendo la única validación por archivo. El
+    coordinador conserva el orden de llegada, limita cantidad/tamaño total y no
+    descarta silenciosamente archivos posteriores.
+    """
+    entrada = [a for a in list(archivos or []) if a and getattr(a, "filename", "")]
+    if len(entrada) > max_files:
+        raise ChatRequestError(f"Podés adjuntar hasta {max_files} archivos por mensaje.", 400)
+
+    salida: list[Adjunto] = []
+    total = 0
+    for archivo in entrada:
+        adjunto = extract_attachment(
+            archivo, max_pdf_bytes=max_pdf_bytes, max_pages=max_pages, max_chars=max_chars
+        )
+        if adjunto is None:
+            continue
+        total += len(getattr(adjunto, "datos_binarios", b"") or b"")
+        if total > int(max_total_bytes):
+            raise ChatRequestError(
+                f"El conjunto de adjuntos supera el límite de {int(max_total_bytes) // (1024 * 1024)} MB por mensaje.",
+                413,
+            )
+        salida.append(adjunto)
+    return salida

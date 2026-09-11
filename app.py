@@ -25,9 +25,10 @@ import time
 from contextlib import closing
 from werkzeug.security import generate_password_hash, check_password_hash
 from werkzeug.utils import secure_filename
-from dotenv import load_dotenv
 from openpyxl import Workbook, load_workbook
 from openpyxl.utils import get_column_letter
+
+import runtime_config
 
 import pendientes_ops
 from pending_store import PendingStore
@@ -105,35 +106,41 @@ import chat_special
 import chat_commands
 import chat_ai
 import chat_context_actions
+import alta_context
 from payment_rules import calcular_regla_pago
 from ai_gateway import begin_request
-from chat_request import parse_incoming, extract_attachment, ChatRequestError
+from chat_request import (
+    parse_incoming, extract_attachment, extract_attachments, ChatRequestError,
+    MAX_CHAT_ATTACHMENTS, MAX_CHAT_ATTACHMENTS_TOTAL_BYTES,
+)
 import config_service
 import library_service
 from user_store import UserStore, validar_email
 from office_docs_service import OfficeDocumentsService, limpiar_filas_excel, limpiar_columnas_excel
 import google_sheets_service
 import system_health
+import service_diagnostics
 import dispatch_service
 import chat_attachments
+import excel_conversation_context
 from excel_records import ExcelRecordService, normalizar_encabezado
-from excel_books import obtener_libros_excel
+from envios_ya_utils import preparar_envios_ya
+from excel_books import obtener_catalogo_libros
 
 # ==========================================================
 # CONFIGURACIÓN
 # ==========================================================
 
-BASE_DIR = Path(__file__).resolve().parent
-# load_dotenv ANTES de leer cualquier env (P0.7). En Render las vars del
-# panel ya están en el proceso; en local el .env debe aplicar a secret_key.
-load_dotenv(BASE_DIR / ".env")
+# runtime_config se importa ANTES de los módulos locales y carga .env sólo en
+# desarrollo, con override=False. En Render siempre manda el entorno del proceso.
+BASE_DIR = runtime_config.BASE_DIR
 
 app = Flask(__name__)
 
 # P0.1 — Secret de sesión: en producción (Neon/Render) es obligatorio.
 # El default solo se tolera en desarrollo local sin DATABASE_URL.
-_secret = os.getenv("FLASK_SECRET_KEY")
-_es_produccion = bool(os.getenv("DATABASE_URL") or os.getenv("RENDER"))
+_secret = runtime_config.get_text("FLASK_SECRET_KEY")
+_es_produccion = bool(runtime_config.get_text("DATABASE_URL") or runtime_config.get_text("RENDER"))
 if _es_produccion:
     if not _secret or _secret == "OFICINA_SEGUROS_CAMBIAR_CLAVE":
         raise RuntimeError(
@@ -149,13 +156,25 @@ app.config.update(
     SESSION_COOKIE_HTTPONLY=True,
     SESSION_COOKIE_SAMESITE="Lax",
     SESSION_COOKIE_SECURE=_es_produccion,  # solo HTTPS en prod
-    MAX_CONTENT_LENGTH=20 * 1024 * 1024,
+    MAX_CONTENT_LENGTH=45 * 1024 * 1024,
 )
 
 # P-FIX500 — Logger técnico para excepciones no controladas. Va a stdout,
 # que es lo que Render captura como logs del servicio.
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 logger = logging.getLogger("oficinaia")
+
+# Validación local y segura de configuración. Las integraciones secundarias no
+# impiden arrancar OficinaIA; sólo se informa qué servicio quedará degradado.
+_STARTUP_ENV = runtime_config.validate_environment(production=_es_produccion)
+for _svc, _state in _STARTUP_ENV["services"].items():
+    if not _state["configured"]:
+        logger.warning(
+            "CONFIG servicio=%s faltantes=%s vacias=%s",
+            _svc,
+            ",".join(_state["missing"]) or "-",
+            ",".join(_state["empty"]) or "-",
+        )
 
 
 # P-FIX500 — Red de seguridad global: ninguna excepción no controlada debe
@@ -202,7 +221,7 @@ def _manejar_excepcion_no_controlada(error):
 def _manejar_request_demasiado_grande(error):
     return jsonify({
         "ok": False,
-        "error": "El archivo adjunto es demasiado grande. El máximo permitido es 20 MB.",
+        "error": "El conjunto de adjuntos es demasiado grande. El máximo permitido por mensaje es 40 MB.",
     }), 413
 
 
@@ -212,7 +231,7 @@ NOTAS_FILE = BASE_DIR / "notas.json"
 WORD_FILE = BASE_DIR / "documento_interno.docx"
 
 
-LIBROS_EXCEL = obtener_libros_excel()
+LIBROS_EXCEL = obtener_catalogo_libros()
 
 DOCUMENTOS_DIR.mkdir(
     exist_ok=True
@@ -261,7 +280,7 @@ def _usuarios_usar_pg():
     """True si hay DATABASE_URL (Neon): los usuarios se guardan ahí y
     sobreviven a los redeploys/reinicios de Render. Si no hay Neon
     configurada, se usa SQLite local como respaldo (solo para desarrollo)."""
-    return bool(os.getenv("DATABASE_URL"))
+    return bool(runtime_config.get_text("DATABASE_URL"))
 
 
 # Los chats (conversaciones + mensajes) usan la misma regla que los usuarios:
@@ -316,6 +335,9 @@ def inicializar_base_datos():
             detalle_tecnico TEXT
         )""")
         db.execute("CREATE INDEX IF NOT EXISTS idx_eventos_sistema_fecha ON eventos_sistema(timestamp DESC)")
+        cols_eventos = {fila[1] for fila in db.execute("PRAGMA table_info(eventos_sistema)").fetchall()}
+        if "codigo" not in cols_eventos:
+            db.execute("ALTER TABLE eventos_sistema ADD COLUMN codigo TEXT")
         db.execute("""CREATE TABLE IF NOT EXISTS metadatos (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             usuario TEXT NOT NULL,
@@ -380,6 +402,24 @@ def requiere_admin(func):
         return func(*args, **kwargs)
     return wrapper
 
+
+
+def static_asset(filename: str) -> str:
+    """URL de assets locales con cache-busting automático por mtime.
+
+    Evita versionados manuales olvidables como 20260911-fix-1: si cambia el
+    archivo, cambia la query string servida por Flask y el navegador pide la
+    versión nueva.
+    """
+    nombre = str(filename or "").lstrip("/")
+    kwargs = {"filename": nombre}
+    try:
+        path = BASE_DIR / "static" / nombre
+        kwargs["v"] = str(int(path.stat().st_mtime))
+    except Exception:
+        kwargs["v"] = "dev"
+    return url_for("static", **kwargs)
+
 def _herramientas_legacy_a_lista(visibles=None, urls=None):
     # Compatibilidad de migración: la implementación vive fuera de Flask.
     return config_service.herramientas_legacy_a_lista(visibles, urls)
@@ -399,6 +439,7 @@ def contexto_usuario():
         "usuario_es_admin": bool(u and u["rol"] == "admin"),
         "config_global": config,
         "cias_links": [(c["nombre"], c["url"]) for c in config.get("companias", []) if c.get("visible", True)],
+        "static_asset": static_asset,
     }
 
 app.context_processor(contexto_usuario)
@@ -1365,19 +1406,29 @@ def api_excel_agregar_fila():
     libro_id = str(data.get("libro_id") or session.get("guardar_asegurado_libro_id") or "1")
 
     try:
+        # POLIZA es un dato efímero del alta para Envíos Ya. No debe cambiar
+        # silenciosamente la estructura/semántica del Excel histórico.
+        campos_excel = dict(campos or {}) if isinstance(campos, dict) else campos
+        if isinstance(campos_excel, dict):
+            campos_excel.pop("POLIZA", None)
+            campos_excel.pop("NUMERO_POLIZA", None)
         resultado = _excel_records.agregar(
             libro_id=libro_id,
-            campos=campos,
+            campos=campos_excel,
             filas=filas_propuesta,
             tipo_propuesta=tipo_propuesta,
         )
         session.pop("guardar_asegurado_libro_id", None)
+        session.pop("alta_activa", None)
         texto_envios_ya = None
-        if tipo_propuesta != "flota" and resultado["libro_id"] == "1":
+        envios_advertencias = []
+        envios_telefono_valido = True
+        if tipo_propuesta != "flota" and resultado["libro_id"] == "1" and isinstance(campos, dict):
             try:
-                texto_envios_ya = chat_commands.armar_texto_envios_ya(
-                    campos or {}, normalizar_encabezado=normalizar_encabezado
-                )
+                preparado = preparar_envios_ya(campos)
+                texto_envios_ya = preparado.texto
+                envios_advertencias = preparado.advertencias
+                envios_telefono_valido = preparado.telefono_valido
             except Exception as error:
                 print("ERROR ARMANDO TEXTO ENVIOS YA:", error)
         return jsonify({
@@ -1385,6 +1436,8 @@ def api_excel_agregar_fila():
             "libro_id": resultado["libro_id"],
             "filas_agregadas": resultado["filas_agregadas"],
             "texto_envios_ya": texto_envios_ya,
+            "envios_ya_advertencias": envios_advertencias,
+            "envios_ya_telefono_valido": envios_telefono_valido,
             **resultado["datos"],
         })
     except ValueError as error:
@@ -1393,6 +1446,36 @@ def api_excel_agregar_fila():
         system_health.registrar_evento("excel", "error", "No se pudo agregar una fila desde el chat", str(error))
         print("ERROR AGREGANDO FILA DESDE CHAT:", error)
         return jsonify({"ok": False, "error": "No se pudo agregar el registro a la planilla."}), 500
+
+
+@app.route("/api/alta/preparar-salidas", methods=["POST"])
+@requiere_login
+def api_alta_preparar_salidas():
+    """Tabulado + Envíos Ya desde los inputs ACTUALES, sin guardar primero."""
+    data = request.get_json(silent=True) or {}
+    campos = data.get("campos")
+    if not isinstance(campos, dict):
+        return jsonify({"ok": False, "error": "No se recibieron campos del alta."}), 400
+
+    tabulado = alta_ops.armar_tabulado_desde_campos(campos)
+    envios = preparar_envios_ya(campos)
+
+    chat_id = data.get("chat_id")
+    try:
+        chat_id = int(chat_id) if chat_id else None
+    except (TypeError, ValueError):
+        chat_id = None
+    if chat_id and _validar_chat(chat_id, session["usuario"]):
+        session["alta_activa"] = {"chat_id": chat_id, "campos": dict(campos)}
+
+    return jsonify({
+        "ok": True,
+        "tabulado_alta_asegurado": tabulado,
+        "texto_envios_ya": envios.texto,
+        "envios_ya_advertencias": envios.advertencias,
+        "envios_ya_telefono_valido": envios.telefono_valido,
+        "envios_ya_campos": envios.campos,
+    })
 
 
 # V20 Etapa 5 — dominio /flota movido a flota_ops.py.
@@ -1462,14 +1545,14 @@ def _envolver_chat_con_manejo_de_errores(func):
             logger.info("CHAT[%s] fin %.2fs", request_id, time.monotonic() - inicio)
             return respuesta
         except Exception as error:
-            system_health.registrar_evento("ia", "error", "Sofia no pudo responder", str(error))
+            system_health.registrar_evento("ia", "error", "No se pudo responder", str(error))
             logger.exception(
                 "CHAT[%s] excepción no controlada tras %.2fs: %s",
                 request_id,
                 time.monotonic() - inicio,
                 error,
             )
-            # El frontend lo muestra dentro de la burbuja de Sofia, sin una
+            # El frontend lo muestra dentro de la burbuja del asistente, sin una
             # página/estado HTTP 500. El detalle técnico queda sólo en Render.
             return jsonify({
                 "ok": False,
@@ -1489,7 +1572,7 @@ def chat():
 
     # V20: cada turno recibe estado efímero propio para timeout/circuit breaker.
     # El historial conversacional sigue persistiendo por separado.
-    begin_request()
+    begin_request(request_id=getattr(g, "chat_request_id", None))
 
     # El chat acepta JSON para consultas normales y multipart/form-data con
     # un adjunto efímero (PDF, TXT o imagen). El archivo no se incorpora a la
@@ -1499,9 +1582,24 @@ def chat():
     mensaje = entrada.mensaje
     chat_id = entrada.chat_id
     historial = entrada.historial
-    archivo = entrada.archivo
+    archivos = list(getattr(entrada, "archivos", None) or ([entrada.archivo] if entrada.archivo else []))
+    archivo = archivos[0] if archivos else None
 
-    if not entrada.tiene_data and not archivo:
+    # Los adjuntos operativos pueden requerir clasificación + varias lecturas
+    # visuales independientes (especialmente una cédula). El presupuesto normal
+    # de 75s era demasiado justo y podía cortar la verificación después de haber
+    # reconocido correctamente el documento. Seguimos muy por debajo del timeout
+    # de Gunicorn (180s) y el valor puede ajustarse por entorno.
+    if archivos:
+        try:
+            # Frente+dorso suma lecturas visuales; damos un poco más de margen
+            # sin acercarnos al timeout de Gunicorn.
+            presupuesto_docs = 145.0 if len(archivos) > 1 else 125.0
+            begin_request(runtime_config.get_float("GEMINI_DOCUMENT_BUDGET_SECONDS", presupuesto_docs), request_id=getattr(g, "chat_request_id", None))
+        except Exception:
+            begin_request(125, request_id=getattr(g, "chat_request_id", None))
+
+    if not entrada.tiene_data and not archivos:
         return jsonify({"respuesta": "No recibí ningún mensaje."})
 
     # El libro de un /guardar asegurado queda pendiente sólo para su confirmación
@@ -1538,42 +1636,58 @@ def chat():
 
     _asignar_tipo_chat(chat_id, session["usuario"], mensaje)
 
-    adjunto_actual = None
-    if archivo and archivo.filename:
-        logger.info("CHAT[%s] etapa=adjunto_inicio", getattr(g, "chat_request_id", "-"))
+    adjuntos_actuales = []
+    # Guardamos una referencia al adjunto inmediatamente anterior ANTES de
+    # reemplazar el cache. Sólo se usa como candidato frente/dorso; el extractor
+    # debe confirmar que pertenece al mismo documento/titular.
+    adjunto_anterior_candidato = chat_attachments.obtener(chat_id) if archivos else None
+    if archivos:
+        logger.info("CHAT[%s] etapa=adjunto_inicio cantidad=%s", getattr(g, "chat_request_id", "-"), len(archivos))
         try:
-            adjunto_actual = extract_attachment(
-                archivo,
+            adjuntos_actuales = extract_attachments(
+                archivos,
                 max_pdf_bytes=MAX_PDF_FILE_SIZE_BYTES,
                 max_pages=MAX_PDF_PAGES_CHAT,
                 max_chars=MAX_PDF_TEXT_CHARS_CHAT,
+                max_files=MAX_CHAT_ATTACHMENTS,
+                max_total_bytes=MAX_CHAT_ATTACHMENTS_TOTAL_BYTES,
             )
         except ChatRequestError as exc:
             return jsonify({"ok": False, "error": str(exc)}), exc.status_code
-        chat_attachments.guardar(chat_id, adjunto_actual)
+        # Compatibilidad: el primer adjunto sigue siendo ``adjunto_actual`` para
+        # flujos históricos que sólo esperan un archivo. Los lectores nuevos
+        # reciben la lista completa.
+        adjunto_actual = adjuntos_actuales[0] if adjuntos_actuales else None
+        if adjuntos_actuales:
+            chat_attachments.guardar(chat_id, adjuntos_actuales[-1])
         logger.info(
-            "CHAT[%s] etapa=adjunto_extraido tipo=%s chars=%s",
-            getattr(g, "chat_request_id", "-"), adjunto_actual.tipo, adjunto_actual.chars
+            "CHAT[%s] etapa=adjunto_extraido tipos=%s",
+            getattr(g, "chat_request_id", "-"),
+            ",".join(a.tipo for a in adjuntos_actuales),
         )
+    else:
+        adjunto_actual = None
 
-    # El adjunto actual y el anterior se mantienen separados. Un mail/WhatsApp
-    # nuevo sólo usa el archivo cargado en ESTE turno. El adjunto anterior queda
-    # disponible únicamente durante este request para una referencia explícita
-    # del usuario (por ejemplo: "reenviá ese archivo").
+    # Para envío por mail/WhatsApp sólo cuentan los adjuntos explícitos del turno.
+    # El anterior se expone al dispatcher únicamente cuando NO llegó uno nuevo,
+    # preservando la política de seguridad existente.
     adjunto_anterior = None
-    if adjunto_actual is None:
+    if not adjuntos_actuales:
         adjunto_anterior = chat_attachments.obtener(chat_id)
         if adjunto_anterior is not None:
-            # Después de este turno deja de ser "el inmediatamente anterior".
             chat_attachments.limpiar(chat_id)
-    dispatch_service.set_turn_attachments([adjunto_actual] if adjunto_actual else [])
+    dispatch_service.set_turn_attachments(adjuntos_actuales)
     dispatch_service.set_previous_attachments([adjunto_anterior] if adjunto_anterior else [])
 
-    contexto_adjunto = adjunto_actual.contexto if adjunto_actual else ""
-    nombre_adjunto = adjunto_actual.nombre if adjunto_actual else ""
+    contextos = [a.contexto for a in adjuntos_actuales if getattr(a, "contexto", "")]
+    contexto_adjunto = "\n\n".join(contextos)
+    nombres_adjuntos = [a.nombre for a in adjuntos_actuales if getattr(a, "nombre", "")]
+    nombre_adjunto = ", ".join(nombres_adjuntos)
 
     if not mensaje and adjunto_actual:
-        if adjunto_actual.tipo == "pdf":
+        if len(adjuntos_actuales) > 1:
+            mensaje = "Procesá estos documentos y combiná frente/dorso sólo si corresponden al mismo documento."
+        elif adjunto_actual.tipo == "pdf":
             mensaje = _MENSAJE_PDF_POR_DEFECTO
         elif adjunto_actual.tipo == "imagen":
             mensaje = "Analizá esta imagen según su contenido."
@@ -1589,9 +1703,57 @@ def chat():
 
     mensaje_guardado = mensaje
     if nombre_adjunto:
-        mensaje_guardado = f"[Adjunto: {nombre_adjunto}]\n{mensaje}"
+        etiqueta = "Adjuntos" if len(nombres_adjuntos) > 1 else "Adjunto"
+        mensaje_guardado = f"[{etiqueta}: {nombre_adjunto}]\n{mensaje}"
     _guardar_mensaje(chat_id, "user", mensaje_guardado)
     logger.info("CHAT[%s] mensaje usuario guardado chat_id=%s", getattr(g, "chat_request_id", "-"), chat_id)
+
+    # ======================================================
+    # CONTEXTO DETERMINÍSTICO DE CARTERA — referencias y fechas
+    # ======================================================
+    # Antes de delegar en Gemini, resolvemos consultas donde los datos
+    # estructurados mandan: "hoy", "ayer", "este mes" y follow-ups como
+    # "decime sus detalles". Esto evita que un registro real pero sin fecha
+    # sea presentado como "el de hoy" por una búsqueda aproximada.
+    if not adjuntos_actuales:
+        try:
+            respuesta_contexto = excel_conversation_context.responder_followup_registro(
+                mensaje, session_obj=session, chat_id=chat_id
+            )
+            if respuesta_contexto is None:
+                respuesta_contexto = excel_conversation_context.responder_conteo_temporal(
+                    mensaje, session_obj=session, chat_id=chat_id
+                )
+            if respuesta_contexto is not None:
+                _guardar_mensaje(chat_id, "assistant", str(respuesta_contexto))
+                return jsonify({
+                    "respuesta": respuesta_contexto,
+                    "chat_id": chat_id,
+                    "archivo_adjunto": nombre_adjunto or None,
+                    "propuesta_excel": None,
+                    "propuesta_metadato": None,
+                })
+        except Exception as error:
+            logger.warning(
+                "CHAT[%s] contexto_cartera_no_resuelto: %s",
+                getattr(g, "chat_request_id", "-"),
+                error,
+            )
+            mensaje_fuente = None
+            try:
+                import servicios_ia as _servicios_ia
+                mensaje_fuente = _servicios_ia._mensaje_fuente_interna_no_disponible(error)
+            except Exception:
+                mensaje_fuente = None
+            if mensaje_fuente:
+                _guardar_mensaje(chat_id, "assistant", mensaje_fuente)
+                return jsonify({
+                    "respuesta": mensaje_fuente,
+                    "chat_id": chat_id,
+                    "archivo_adjunto": nombre_adjunto or None,
+                    "propuesta_excel": None,
+                    "propuesta_metadato": None,
+                })
 
     # ======================================================
     # HANDLERS ESPECIALES — /coti, /flota, /alta
@@ -1599,16 +1761,27 @@ def chat():
     def _log_stage(stage):
         logger.info("CHAT[%s] etapa=%s", getattr(g, "chat_request_id", "-"), stage)
 
+    # Un adjunto nuevo invalida el alta conversacional previa. Si el nuevo
+    # archivo es póliza, el handler establece inmediatamente la nueva.
+    if adjunto_actual is not None:
+        session.pop("alta_activa", None)
+
     especial = chat_special.procesar(
         chat_id=chat_id,
         mensaje=mensaje,
-        contexto_pdf=contexto_adjunto if (adjunto_actual and adjunto_actual.tipo == "pdf") else "",
+        contexto_pdf=contexto_adjunto if any(a.tipo == "pdf" for a in adjuntos_actuales) else "",
         flota_store=_flota_store,
+        adjunto=adjunto_actual,
+        adjuntos=adjuntos_actuales,
+        adjunto_anterior=adjunto_anterior_candidato,
         on_stage=_log_stage,
     )
     if especial.atendido:
         if especial.handler == "alta":
             logger.info("CHAT[%s] etapa=alta_resuelta", getattr(g, "chat_request_id", "-"))
+            campos_alta = especial.payload_extra.get("campos_guardar_alta_asegurado")
+            if isinstance(campos_alta, dict):
+                session["alta_activa"] = {"chat_id": chat_id, "campos": dict(campos_alta)}
         _guardar_mensaje(chat_id, "assistant", str(especial.respuesta))
         return jsonify({
             "respuesta": especial.respuesta,
@@ -1627,12 +1800,17 @@ def chat():
         leer_excel=leer_excel_interno,
         normalizar_encabezado=normalizar_encabezado,
         libros_excel=LIBROS_EXCEL,
+        historial=historial,
+        arca_context=session.get("arca_context"),
+        adjuntos=adjuntos_actuales,
     )
     if comando.atendido:
         if comando.libro_id:
             # Compatibilidad con el endpoint de confirmación existente.
             # El destino vive sólo hasta el próximo turno.
             session["guardar_asegurado_libro_id"] = comando.libro_id
+        if isinstance(comando.payload_extra, dict) and comando.payload_extra.get("arca_context"):
+            session["arca_context"] = comando.payload_extra.get("arca_context")
         _guardar_mensaje(chat_id, "assistant", str(comando.respuesta))
         return jsonify({
             "respuesta": comando.respuesta,
@@ -1643,6 +1821,34 @@ def chat():
             "texto_envios_ya": comando.texto_envios_ya,
             **comando.payload_extra,
         })
+
+    # ======================================================
+    # ALTA ACTIVA — correcciones contextuales del mismo registro
+    # ======================================================
+    alta_activa = session.get("alta_activa") or {}
+    if (
+        adjunto_actual is None
+        and int(alta_activa.get("chat_id") or 0) == int(chat_id or 0)
+        and isinstance(alta_activa.get("campos"), dict)
+    ):
+        actualizacion_alta = alta_context.aplicar_actualizacion(alta_activa["campos"], mensaje)
+        if actualizacion_alta.actualizado:
+            session["alta_activa"] = {"chat_id": chat_id, "campos": actualizacion_alta.campos}
+            tabulado_actual = alta_ops.armar_tabulado_desde_campos(actualizacion_alta.campos)
+            preparado_envios = preparar_envios_ya(actualizacion_alta.campos)
+            respuesta_actualizacion = "Actualicé " + ", ".join(actualizacion_alta.cambios) + " en el alta actual."
+            _guardar_mensaje(chat_id, "assistant", respuesta_actualizacion)
+            return jsonify({
+                "respuesta": respuesta_actualizacion,
+                "chat_id": chat_id,
+                "propuesta_excel": None,
+                "propuesta_metadato": None,
+                "actualizacion_alta_asegurado": actualizacion_alta.campos,
+                "tabulado_alta_asegurado": tabulado_actual,
+                "texto_envios_ya": preparado_envios.texto,
+                "envios_ya_advertencias": preparado_envios.advertencias,
+                "envios_ya_telefono_valido": preparado_envios.telefono_valido,
+            })
 
     # ======================================================
     # ACCIONES CONTEXTUALES — referencias al contenido anterior
@@ -1676,13 +1882,15 @@ def chat():
     propuesta_metadato = None
     try:
         logger.info("CHAT[%s] Gemini inicio", getattr(g, "chat_request_id", "-"))
-        resultado_ia = chat_ai.responder(mensaje, contexto, historial, adjunto=adjunto_actual)
+        resultado_ia = chat_ai.responder(
+            mensaje, contexto, historial, adjunto=adjunto_actual, adjuntos=adjuntos_actuales
+        )
         respuesta = resultado_ia.respuesta
         propuesta_excel = resultado_ia.propuesta_excel
         propuesta_metadato = resultado_ia.propuesta_metadato
         logger.info("CHAT[%s] Gemini fin %.2fs", getattr(g, "chat_request_id", "-"), resultado_ia.elapsed)
     except Exception as error:
-        system_health.registrar_evento("ia", "error", "Sofia no pudo responder", str(error))
+        system_health.registrar_evento("ia", "error", "No se pudo responder", str(error))
         print("ERROR CHAT GEMINI:", error)
         if contexto:
             respuesta = (
@@ -1714,11 +1922,21 @@ def chat():
 @app.route("/salud")
 @requiere_admin
 def salud_sistema():
+    vista = str(request.args.get("vista") or "eventos").strip().lower()
+    if vista not in {"eventos", "servicios"}:
+        vista = "eventos"
     categoria = str(request.args.get("categoria") or "").strip() or None
     nivel = str(request.args.get("nivel") or "").strip() or None
     eventos = system_health.listar_eventos(categoria=categoria, nivel=nivel, dias=7)
     ultimas_24h = system_health.listar_eventos(nivel="error", dias=1)
     errores_ia_24h = sum(1 for e in ultimas_24h if e.get("categoria") == "ia")
+    servicios_iniciales = None
+    if vista == "servicios":
+        # Sólo validación local al renderizar HTML. La comprobación real de red
+        # se hace vía API después de cargar la vista y queda cacheada brevemente.
+        servicios_iniciales = service_diagnostics.run_health_checks(
+            probe_external=False, use_cache=True
+        )
     return render_template(
         "salud.html",
         eventos=eventos,
@@ -1726,7 +1944,21 @@ def salud_sistema():
         nivel=nivel or "",
         errores_ia_24h=errores_ia_24h,
         errores_24h=len(ultimas_24h),
+        vista= vista,
+        servicios_iniciales=servicios_iniciales,
     )
+
+
+@app.route("/api/system/health", methods=["GET"])
+@requiere_admin
+def api_system_health():
+    probe = str(request.args.get("probe") or "1").strip().lower() not in {"0", "false", "no"}
+    refresh = str(request.args.get("refresh") or "0").strip().lower() in {"1", "true", "si", "yes"}
+    resultado = service_diagnostics.run_health_checks(
+        probe_external=probe,
+        use_cache=not refresh,
+    )
+    return jsonify({"ok": True, **resultado})
 
 
 @app.route("/manuales")
@@ -2064,7 +2296,7 @@ PLANTILLAS_METADATO = [
 
 def _pendientes_usar_pg():
     """Con Neon los pendientes viven en Postgres y sobreviven redeploy."""
-    return bool(os.getenv("DATABASE_URL"))
+    return bool(runtime_config.get_text("DATABASE_URL"))
 
 
 def _pending_store():
