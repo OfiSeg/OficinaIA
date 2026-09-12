@@ -401,6 +401,19 @@ def _formatear_ficha_operativa(ficha):
     return f"Ficha de {nombre}: {total} registro{'s' if total != 1 else ''} y {veh} vehículo{'s' if veh != 1 else ''} relacionado{'s' if veh != 1 else ''}."
 
 def procesar(mensaje, *, leer_excel, normalizar_encabezado, libros_excel, historial=None, arca_context=None, adjuntos=None):
+    texto_inicial = str(mensaje or "").strip()
+    m_patente = re.match(r"^/patente\b\s*(.*)$", texto_inicial, re.I)
+    if m_patente:
+        patente = normalizar_patente(m_patente.group(1))
+        if not patente:
+            return CommandResult(True, "Usá `/patente ABC123` para consultar el vehículo en tu cartera.")
+        ficha = insured_profile.construir_ficha(patente, leer_excel)
+        return CommandResult(
+            True,
+            _formatear_ficha_operativa(ficha),
+            payload_extra={"ficha_operativa_asegurado": ficha},
+        )
+
     ficha_req = parsear_ficha_operativa(mensaje)
     if ficha_req is not None:
         if ficha_req.get("error"):

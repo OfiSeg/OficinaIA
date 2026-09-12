@@ -20,6 +20,26 @@ DEFAULT_CIAS_LINKS = [
 ]
 
 
+SIDEBAR_ORDER_DEFAULT = [
+    "chat", "companies", "excel", "pending", "estudio", "manuals", "salud"
+]
+
+
+def _normalizar_sidebar_order(value):
+    """Normaliza el orden visual de los módulos principales sin aceptar claves arbitrarias."""
+    validos = list(SIDEBAR_ORDER_DEFAULT)
+    entrada = value if isinstance(value, list) else []
+    salida = []
+    for item in entrada:
+        clave = str(item or "").strip().lower()
+        if clave in validos and clave not in salida:
+            salida.append(clave)
+    for clave in validos:
+        if clave not in salida:
+            salida.append(clave)
+    return salida
+
+
 def companias_sidebar_default():
     salida = []
     for i, (nombre, url) in enumerate(DEFAULT_CIAS_LINKS):
@@ -83,6 +103,7 @@ def default_config():
         "color_botones": "#122033",
         "herramientas": [],
         "companias": companias_sidebar_default(),
+        "sidebar_order": list(SIDEBAR_ORDER_DEFAULT),
         "tips_visibles": True,
         "excel_visible": True,
     }
@@ -111,6 +132,7 @@ def cargar_configuracion(*, usar_pg: bool, pg_obtener: Callable[[], dict | None]
             if not isinstance(companias_cfg, list):
                 companias_cfg = companias_sidebar_default()
             config["companias"] = _normalizar_items(companias_cfg, "compania")
+            config["sidebar_order"] = _normalizar_sidebar_order(config.get("sidebar_order"))
             config["excel_visible"] = bool(config.get("excel_visible", True))
             config["tips_visibles"] = bool(config.get("tips_visibles", True))
     except Exception:
@@ -156,6 +178,7 @@ def validar_y_construir_config(data: dict, config_actual: dict):
     config["notificaciones"] = bool(data.get("notificaciones", config.get("notificaciones", True)))
     config["herramientas"] = herramientas
     config["companias"] = companias
+    config["sidebar_order"] = _normalizar_sidebar_order(data.get("sidebar_order", config.get("sidebar_order")))
     config["tips_visibles"] = bool(data.get("tips_visibles", config.get("tips_visibles", True)))
     config["excel_visible"] = bool(data.get("excel_visible", config.get("excel_visible", True)))
     config.pop("herramientas_visibles", None)

@@ -1,1 +1,50 @@
-<!doctype html><html lang="es"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Acceso · {{config_global.nombre_oficina}}</title><link rel="preconnect" href="https://fonts.googleapis.com"><link rel="preconnect" href="https://fonts.gstatic.com" crossorigin><link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Sora:wght@600;700&display=swap" rel="stylesheet"><link rel="stylesheet" href="{{ static_asset('css/login.css') }}"></head><body><main><section><div class="brand"><b>✦</b><span><strong>{{config_global.nombre_oficina}}</strong><small>Acceso</small></span></div><span class="eyebrow">ACCESO PRIVADO</span><h1>Bienvenido de nuevo</h1><p>Ingresá para consultar la información de tu oficina.</p><form method="POST"><label>Usuario<input name="usuario" autocomplete="username" required autofocus placeholder="Ingresá tu usuario"></label><label>Contraseña<input name="password" type="password" autocomplete="current-password" required placeholder="Ingresá tu contraseña"></label>{%if error%}<div class="error">{{error}}</div>{%endif%}<button>Iniciar sesión <span>→</span></button></form><small class="security">● Sistema privado · Acceso autorizado únicamente</small></section></main></body></html>
+<!doctype html>
+<html lang="es">
+<head>
+  <script>
+  (()=>{try{const stored=localStorage.getItem('oficinaia_theme');const theme=(stored==='light'||stored==='dark')?stored:(window.matchMedia&&window.matchMedia('(prefers-color-scheme:dark)').matches?'dark':'light');document.documentElement.setAttribute('data-theme',theme);document.documentElement.style.colorScheme=theme}catch(_){}})();
+  </script>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>Acceso · {{config_global.nombre_oficina}}</title>
+  <link rel="icon" type="image/png" href="{{ static_asset('img/favicon.png') }}">
+  <link rel="stylesheet" href="{{ static_asset('css/login.css') }}">
+</head>
+<body>
+  <main class="login-page">
+    <section class="login-shell" aria-labelledby="loginTitle">
+      <div class="login-brand-panel">
+        <div class="login-brand">
+          <span class="login-brand-icon"><img src="{{ static_asset('img/favicon.png') }}" alt=""></span>
+          <div><strong>{{config_global.nombre_oficina}}</strong><small>OficinaIA</small></div>
+        </div>
+        <div class="login-brand-copy">
+          <span class="login-eyebrow">ACCESO PRIVADO</span>
+          <h1 id="loginTitle">Tu oficina, en un solo lugar.</h1>
+          <p>Ingresá para trabajar con cartera, documentación, cotizaciones y herramientas internas.</p>
+        </div>
+        <div class="login-product-mark"><span></span><small>Sistema interno protegido</small></div>
+      </div>
+
+      <div class="login-form-panel">
+        <div class="login-form-head">
+          <span class="login-eyebrow">INICIAR SESIÓN</span>
+          <h2>Bienvenido de nuevo</h2>
+          <p>Usá tus credenciales de OficinaIA.</p>
+        </div>
+        <form method="POST" class="login-form">
+          <label for="loginUsuario">Usuario</label>
+          <input id="loginUsuario" name="usuario" autocomplete="username" required autofocus placeholder="Ingresá tu usuario">
+
+          <label for="loginPassword">Contraseña</label>
+          <input id="loginPassword" name="password" type="password" autocomplete="current-password" required placeholder="Ingresá tu contraseña">
+
+          {% if error %}<div class="login-error" role="alert">{{error}}</div>{% endif %}
+          <button type="submit" class="login-submit">Iniciar sesión <span aria-hidden="true">→</span></button>
+        </form>
+        <p class="login-security">Acceso autorizado únicamente.</p>
+      </div>
+    </section>
+  </main>
+</body>
+</html>

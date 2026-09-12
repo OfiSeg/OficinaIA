@@ -117,20 +117,22 @@ def enviar_por_canal(canal: str, destinatario: str = "", texto: str = "",
 
 def parsear_comando_explicito(mensaje: str):
     texto = str(mensaje or "").strip()
-    m = re.match(r"^/(mail|whatsapp)\b\s*(.*)$", texto, re.IGNORECASE | re.DOTALL)
+    m = re.match(r"^/(mail|m|whatsapp)\b\s*(.*)$", texto, re.IGNORECASE | re.DOTALL)
     if not m:
         return None
     canal = m.group(1).lower()
+    if canal == "m":
+        canal = "mail"
     resto = m.group(2).strip()
     if not resto:
         if canal == "mail":
-            return {"error": "Usá /mail destinatario@correo.com asunto Asunto mensaje Mensaje."}
+            return {"error": "Usá /m destinatario@correo.com asunto: Asunto mensaje: Mensaje."}
         return {"error": f"Usá /{canal} destinatario texto."}
 
     if canal == "mail" and "|" in resto:
         partes_mail = [parte.strip() for parte in resto.split("|", 2)]
         if len(partes_mail) != 3:
-            return {"error": "Usá /mail destinatario@correo.com asunto Asunto mensaje Mensaje."}
+            return {"error": "Usá /m destinatario@correo.com asunto: Asunto mensaje: Mensaje."}
         destinatario, asunto, cuerpo = partes_mail
         if not destinatario:
             return {"error": "Falta el destinatario del mail."}
@@ -150,7 +152,7 @@ def parsear_comando_explicito(mensaje: str):
     # /mail correo titulo Mi título mensaje Hola mundo
     if canal == "mail":
         m_mail = re.match(
-            r"^(?P<destinatario>\S+)\s+(?:asunto|t[ií]tulo)\s+(?P<asunto>.+?)\s+mensaje\s+(?P<cuerpo>.+)$",
+            r"^(?P<destinatario>\S+)\s+(?:asunto|t[ií]tulo)\s*:?\s*(?P<asunto>.+?)\s+mensaje\s*:?\s*(?P<cuerpo>.+)$",
             resto,
             flags=re.IGNORECASE | re.DOTALL,
         )

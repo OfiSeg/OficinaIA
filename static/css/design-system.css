@@ -134,13 +134,6 @@ body .sidebar .nav-item,body .sidebar .nav-toggle{
   font-weight:560!important;
   color:var(--oi-muted)!important;
 }
-body .sidebar .nav-item:hover,body .sidebar .nav-toggle:hover{background:var(--oi-surface-muted)!important;color:var(--oi-text)!important}
-body .sidebar .nav-item.active{
-  background:var(--oi-accent-soft)!important;
-  color:var(--oi-accent)!important;
-  font-weight:680!important;
-  box-shadow:inset 3px 0 0 var(--oi-accent);
-}
 body .sidebar .nav-ico{
   width:25px!important;height:25px!important;min-width:25px!important;
   border-radius:8px!important;display:grid!important;place-items:center!important;
@@ -158,9 +151,8 @@ body .sidebar .quickaccess{
 body .sidebar .quickaccess-grid{display:grid!important;grid-template-columns:repeat(4,1fr)!important;gap:7px!important;padding:0!important}
 body .sidebar .quickaccess-item{
   width:34px!important;height:34px!important;border:0!important;border-radius:9px!important;
-  background:var(--oi-surface-muted)!important;box-shadow:none!important;margin:auto!important;
+  background:var(--oi-surface-muted)!important;margin:auto!important;
 }
-body .sidebar .quickaccess-item:hover{background:var(--oi-accent-soft)!important;transform:translateY(-1px)}
 body .sidebar .quickaccess-item img,
 body .sidebar .quickaccess-item img[src*="gmail.png"],
 body .sidebar .quickaccess-item img[src*="datacar.png"],
@@ -171,9 +163,8 @@ body .sidebar .quickaccess-item img[src*="envios_ya.png"]{width:26px!important;h
   left:calc(var(--oi-sidebar-open) - 14px)!important;
   top:18px!important;width:28px!important;height:28px!important;
   background:var(--oi-surface)!important;border:1px solid var(--oi-line)!important;
-  color:var(--oi-muted)!important;box-shadow:0 3px 12px rgba(26,43,58,.10)!important;
+  color:var(--oi-muted)!important;
 }
-.sidebar-toggle:hover{color:var(--oi-accent)!important;border-color:var(--oi-line-strong)!important}
 html[data-sidebar="collapsed"] .sidebar{width:var(--oi-sidebar-compact)!important;padding:12px 8px!important}
 html[data-sidebar="collapsed"] .main{margin-left:var(--oi-sidebar-compact)!important}
 html[data-sidebar="collapsed"] .sidebar-toggle{left:calc(var(--oi-sidebar-compact) - 14px)!important}
@@ -255,14 +246,7 @@ body.chat-layout .chat>header{min-height:52px!important;padding:8px 12px!importa
 body.chat-layout .chat>header>strong{width:32px!important;height:32px!important;border-radius:9px!important;background:var(--oi-accent-soft)!important}
 body.chat-layout .chat>header>strong img{width:25px!important;height:25px!important;object-fit:contain!important}
 body.chat-layout .chat>header .chat-header-actions{gap:6px!important}
-body.chat-layout .chat>header .chat-visual-btn,.clear-chat{
-  width:34px!important;height:34px!important;border-radius:10px!important;border:1px solid var(--oi-line)!important;
-  background:var(--oi-surface-soft)!important;color:var(--oi-muted)!important;
-}
-body.chat-layout .chat>header .chat-visual-btn:hover{background:var(--oi-surface-muted)!important;color:var(--oi-accent)!important}
 body.chat-layout .history{padding:26px clamp(22px,4vw,58px)!important;background:var(--oi-bg)!important}
-body.chat-layout .history[data-wallpaper="soft"]{background-color:var(--oi-bg)!important}
-body.chat-layout .history[data-wallpaper="clean"]{background:var(--oi-bg)!important}
 
 /* Empty state útil, no océano vacío */
 .welcome{max-width:720px!important;margin:clamp(42px,8vh,92px) auto 0!important;text-align:center!important}
@@ -491,29 +475,6 @@ html[data-theme="dark"] .send{color:#fff!important}
   .atm-coti-card.atm-coti-card-wide{overflow:auto!important}
 }
 
-/* El wallpaper conserva el selector/función, pero la paleta deja atrás el beige. */
-body.chat-layout .chat[data-wallpaper="classic"] .history,
-body.chat-layout .chat[data-wallpaper="soft"] .history,
-body.chat-layout .chat[data-wallpaper="clean"] .history,
-body.chat-layout .chat:not([data-wallpaper]) .history{
-  background-color:var(--oi-bg)!important;
-  background-image:
-    radial-gradient(circle at 18px 18px,rgba(23,107,145,.026) 0 1px,transparent 1.2px),
-    radial-gradient(circle at 54px 46px,rgba(23,107,145,.018) 0 1px,transparent 1.2px)!important;
-  background-size:78px 78px,96px 96px!important;
-}
-body.chat-layout .chat[data-wallpaper="clean"] .history{background-image:none!important}
-html[data-theme="dark"] body.chat-layout .chat[data-wallpaper="classic"] .history,
-html[data-theme="dark"] body.chat-layout .chat[data-wallpaper="soft"] .history,
-html[data-theme="dark"] body.chat-layout .chat[data-wallpaper="clean"] .history,
-html[data-theme="dark"] body.chat-layout .chat:not([data-wallpaper]) .history{
-  background-color:var(--oi-bg)!important;
-  background-image:
-    radial-gradient(circle at 18px 18px,rgba(88,169,203,.035) 0 1px,transparent 1.2px),
-    radial-gradient(circle at 54px 46px,rgba(88,169,203,.025) 0 1px,transparent 1.2px)!important;
-}
-html[data-theme="dark"] body.chat-layout .chat[data-wallpaper="clean"] .history{background-image:none!important}
-
 /* ========================================================================== */
 /* Cotización ATM · cierre operativo final                                   */
 /* Una fila, sin Auto/Moto, descuento manual y propuesta comercial clara.    */
@@ -620,4 +581,1050 @@ html[data-theme="dark"] body.chat-layout .chat[data-wallpaper="clean"] .history{
   .atm-code-matrix{grid-template-columns:repeat(7,minmax(0,1fr))!important}
   .atm-selected-summary{grid-template-columns:repeat(2,minmax(0,1fr))!important}
   .atm-coti-common.atm-coti-common-compact.atm-coti-discountbar{grid-template-columns:1fr!important}
+}
+
+/* ========================================================================== */
+/* Cotización ATM · extensión MOTOS                                           */
+/* Fila separada RP/RC/RC1/A/A1 sin alterar la matriz existente de AUTOS.     */
+/* ========================================================================== */
+.atm-moto-coverage-row{
+  display:grid!important;
+  grid-template-columns:58px minmax(0,1fr)!important;
+  align-items:stretch!important;
+  gap:5px!important;
+  margin-top:1px!important;
+}
+.atm-moto-row-label{
+  min-height:40px!important;
+  display:flex!important;
+  align-items:center!important;
+  justify-content:center!important;
+  border:1px solid var(--oi-line)!important;
+  border-radius:9px!important;
+  background:var(--oi-surface-muted)!important;
+  color:var(--oi-muted)!important;
+  font-size:9.5px!important;
+  font-weight:800!important;
+  letter-spacing:.05em!important;
+}
+.atm-moto-code-grid{
+  display:grid!important;
+  grid-template-columns:repeat(5,minmax(0,1fr))!important;
+  gap:5px!important;
+  min-width:0!important;
+}
+.atm-code-cell.atm-moto-code-cell{
+  min-height:40px!important;
+  height:40px!important;
+  display:flex!important;
+  flex-direction:column!important;
+  align-items:center!important;
+  justify-content:center!important;
+  gap:1px!important;
+  line-height:1.05!important;
+}
+.atm-moto-code-cell>span{font-size:11.5px!important;font-weight:850!important}
+.atm-moto-code-cell>small{
+  display:block!important;
+  max-width:100%!important;
+  overflow:hidden!important;
+  text-overflow:ellipsis!important;
+  white-space:nowrap!important;
+  font-size:8px!important;
+  line-height:1!important;
+  font-weight:850!important;
+  letter-spacing:.01em!important;
+  color:#a45c1d!important;
+}
+.atm-moto-code-cell.active>small{color:inherit!important}
+.atm-coti-presets button:disabled{
+  opacity:.36!important;
+  cursor:not-allowed!important;
+  filter:none!important;
+}
+html[data-theme="dark"] .atm-moto-code-cell>small{color:#e4a55f!important}
+html[data-theme="dark"] .atm-moto-code-cell.active>small{color:inherit!important}
+
+@media(max-width:900px){
+  .atm-moto-coverage-row{grid-template-columns:52px minmax(0,1fr)!important}
+  .atm-moto-code-grid{gap:3px!important}
+  .atm-moto-code-cell>small{font-size:6.5px!important}
+}
+
+
+/* Cotizaciones multicompañía: el scroll vive en .quotes-scroll-body, no en el marco. */
+.atm-coti-card.atm-coti-card-wide.quotes-card{overflow:hidden!important;max-height:calc(100vh - 28px)!important}
+@media(max-width:800px){.atm-coti-card.atm-coti-card-wide.quotes-card{overflow:hidden!important;max-height:calc(100vh - 16px)!important}}
+
+/* ======================================================================
+   OficinaIA · sistema canónico de iconografía / sidebar / header
+   2026-09-12 — capa final. Sin halos, blur, sombras ni efecto de presión.
+   ====================================================================== */
+.app-icon{
+  width:1em;height:1em;display:block;overflow:visible;
+  color:currentColor;--oia-icon-accent:var(--oi-accent,#2f8cff);
+  flex:0 0 auto;
+}
+button .app-icon,a .app-icon,summary .app-icon,label .app-icon{pointer-events:none}
+
+/* Sidebar: reconstrucción visual desde cero. Mantiene navegación, no el look heredado. */
+body .sidebar .nav-item,
+body .sidebar .nav-toggle,
+body .sidebar .nav-subitem{
+  background:transparent!important;
+  box-shadow:none!important;
+  text-shadow:none!important;
+  filter:none!important;
+  backdrop-filter:none!important;
+  -webkit-backdrop-filter:none!important;
+  transform:none!important;
+  outline:0;
+  transition:color .10s ease,border-color .10s ease,opacity .10s ease!important;
+}
+body .sidebar .nav-item,
+body .sidebar .nav-toggle{
+  border:0!important;
+  border-left:2px solid transparent!important;
+  border-radius:0!important;
+  color:var(--oi-muted)!important;
+}
+body .sidebar .nav-item::before,
+body .sidebar .nav-item::after,
+body .sidebar .nav-toggle::before,
+body .sidebar .nav-toggle::after{content:none!important;display:none!important}
+body .sidebar .nav-item:hover,
+body .sidebar .nav-toggle:hover{
+  background:transparent!important;
+  color:var(--oi-ink)!important;
+  box-shadow:none!important;
+  filter:none!important;
+  transform:none!important;
+}
+body .sidebar .nav-item:active,
+body .sidebar .nav-toggle:active{
+  background:transparent!important;
+  box-shadow:none!important;
+  filter:none!important;
+  transform:none!important;
+}
+body .sidebar .nav-item.active,
+body .sidebar .nav-item[aria-current="page"]{
+  background:transparent!important;
+  color:var(--oi-accent)!important;
+  border-left-color:var(--oi-accent)!important;
+  font-weight:680!important;
+  box-shadow:none!important;
+  filter:none!important;
+  transform:none!important;
+}
+body .sidebar .nav-item:focus-visible,
+body .sidebar .nav-toggle:focus-visible,
+body .sidebar .nav-subitem:focus-visible{
+  outline:1px solid color-mix(in srgb,var(--oi-accent) 65%,transparent)!important;
+  outline-offset:2px!important;
+  box-shadow:none!important;
+}
+body .sidebar .nav-ico{
+  width:24px!important;height:24px!important;min-width:24px!important;
+  border:0!important;border-radius:0!important;background:transparent!important;
+  box-shadow:none!important;filter:none!important;
+  color:currentColor!important;
+}
+body .sidebar .nav-ico .app-icon{width:21px!important;height:21px!important}
+body .sidebar .nav-chevron,
+body .sidebar .nav-chevron .app-icon{
+  transition:none!important;transform:none!important;box-shadow:none!important;filter:none!important;
+}
+body .sidebar .nav-subitem:hover,
+body .sidebar .nav-subitem.active{
+  background:transparent!important;color:var(--oi-accent)!important;box-shadow:none!important;transform:none!important;
+}
+
+/* Favicons externos: se conserva identidad de marca; sin animación/halo del sistema viejo. */
+body .sidebar .quickaccess-item,
+body .sidebar .quickaccess-item:hover,
+body .sidebar .quickaccess-item:active{
+  background:transparent!important;border-color:transparent!important;
+  box-shadow:none!important;filter:none!important;transform:none!important;
+  transition:opacity .10s ease!important;
+}
+body .sidebar .quickaccess-item:hover{opacity:.78!important}
+body .sidebar .quickaccess-item:focus-visible{outline:1px solid var(--oi-line-strong)!important;outline-offset:2px!important}
+
+/* Control de contraer/expandir: icono estable, sin círculo ni animación de presión. */
+.sidebar-toggle,
+.sidebar-toggle:hover,
+.sidebar-toggle:active{
+  background:var(--oi-surface)!important;
+  color:var(--oi-muted)!important;
+  border:1px solid var(--oi-line)!important;
+  border-radius:6px!important;
+  box-shadow:none!important;
+  filter:none!important;
+  transform:none!important;
+  transition:color .10s ease,border-color .10s ease!important;
+}
+.sidebar-toggle:hover{color:var(--oi-accent)!important;border-color:var(--oi-line-strong)!important}
+.sidebar-toggle-icon,.sidebar-toggle-icon .app-icon,
+html[data-sidebar="collapsed"] .sidebar-toggle-icon{
+  transform:none!important;transition:none!important;
+}
+
+/* Header global: compacto y contra el borde derecho. */
+.global-actions{
+  right:4px!important;
+  gap:5px!important;
+}
+body.chat-layout .global-actions{right:4px!important}
+.global-action,.theme-toggle{
+  box-shadow:none!important;
+  filter:none!important;
+  transform:none!important;
+}
+.global-action:hover,.theme-toggle:hover,
+.global-action:active,.theme-toggle:active{
+  box-shadow:none!important;filter:none!important;transform:none!important;
+}
+.global-settings{color:var(--oi-muted)!important}
+.global-settings:hover{color:var(--oi-accent)!important}
+.global-logout{
+  color:#d94848!important;
+  --oia-icon-accent:#d94848;
+  border-color:color-mix(in srgb,#d94848 28%,var(--oi-line) 72%)!important;
+  background:transparent!important;
+}
+.global-logout:hover{
+  color:#c73535!important;
+  --oia-icon-accent:#c73535;
+  background:color-mix(in srgb,#d94848 8%,transparent)!important;
+  border-color:color-mix(in srgb,#d94848 42%,var(--oi-line) 58%)!important;
+}
+
+/* Switch claro/oscuro tipo iPhone. Reutiliza el botón y lógica existentes. */
+.theme-switch{
+  position:relative!important;
+  width:58px!important;height:28px!important;flex-basis:58px!important;
+  padding:0!important;border-radius:999px!important;
+  display:flex!important;align-items:center!important;justify-content:space-between!important;
+  gap:0!important;background:var(--oi-surface-muted)!important;
+  border:1px solid var(--oi-line-strong)!important;
+  color:var(--oi-soft)!important;overflow:hidden!important;
+}
+.theme-switch-icon{position:relative;z-index:2;width:14px;height:14px;display:grid;place-items:center}
+.theme-switch-icon .app-icon{width:14px!important;height:14px!important}
+.theme-switch-sun{margin-left:6px}.theme-switch-moon{margin-right:6px}
+.theme-switch-knob{
+  position:absolute;z-index:1;left:3px;top:3px;width:20px;height:20px;border-radius:50%;
+  background:var(--oi-surface)!important;border:1px solid var(--oi-line-strong)!important;
+  box-shadow:none!important;transform:translateX(0);transition:transform .14s ease!important;
+}
+.theme-switch[data-theme="dark"] .theme-switch-knob{transform:translateX(30px)}
+.theme-switch[data-theme="light"] .theme-switch-sun{color:#d58a17}
+.theme-switch[data-theme="dark"] .theme-switch-moon{color:#8fb9ff}
+html[data-theme="dark"] .theme-switch{background:#14222b!important;border-color:#3b4d58!important}
+@media(max-width:760px){
+  .global-actions{right:3px!important}
+  body.chat-layout .global-actions{right:3px!important}
+  .theme-switch{width:54px!important;flex-basis:54px!important;height:27px!important}
+  .theme-switch-knob{width:19px;height:19px;top:3px}
+  .theme-switch[data-theme="dark"] .theme-switch-knob{transform:translateX(27px)}
+}
+
+/* Íconos dentro de acciones pequeñas. */
+.chat-item-actions .app-icon,.file-attached-remove .app-icon,.quote-source-remove .app-icon,
+.nota-orden .app-icon,.nota-edit .app-icon,.icon-button .app-icon,.modal-close .app-icon,
+.cot-del .app-icon,.meta-delete .app-icon,.delete-policy .app-icon{
+  width:16px!important;height:16px!important;
+}
+.welcome-icon{display:inline-grid!important;place-items:center!important;color:var(--oi-accent)!important}
+.welcome-icon .app-icon{width:23px!important;height:23px!important}
+
+/* Menú de comandos /: mismo lenguaje visual. */
+.chat-command-icon{width:25px;height:25px;display:grid;place-items:center;color:var(--oi-muted)}
+.chat-command-icon .app-icon{width:20px;height:20px}
+.chat-command-copy{min-width:0;display:grid;gap:1px}
+.chat-command-item:hover .chat-command-icon,.chat-command-item.is-active .chat-command-icon{color:var(--oi-accent)}
+
+/* Cotizaciones: jerarquía sin quitar información ni alterar scroll. */
+.quote-source{
+  border-color:var(--oi-line-strong)!important;
+  background:var(--oi-surface)!important;
+  padding:10px 11px!important;
+}
+.quote-source + .quote-source{margin-top:2px}
+.quote-source-head{
+  margin-bottom:8px!important;padding-bottom:7px!important;
+  border-bottom:1px solid var(--oi-line)!important;
+}
+.quote-source-head b{font-size:12.5px!important;font-weight:760!important;color:var(--oi-ink)!important;letter-spacing:-.01em}
+.quote-source-head small{font-size:9px!important;color:var(--oi-soft)!important}
+.quote-subsection-title{
+  margin:8px 0 5px!important;
+  font-size:8px!important;font-weight:800!important;letter-spacing:.085em!important;text-transform:uppercase!important;
+  color:var(--oi-soft)!important;
+}
+.quote-selected-label{margin-top:10px!important;padding-top:8px!important;border-top:1px solid var(--oi-line)!important}
+.atm-code-cell.active,.atm-franchise-chip.active,.mercantil-code-cell.active{
+  border-color:color-mix(in srgb,var(--oi-accent) 70%,var(--oi-line) 30%)!important;
+  background:color-mix(in srgb,var(--oi-accent) 12%,var(--oi-surface) 88%)!important;
+  color:var(--oi-accent)!important;font-weight:800!important;
+  box-shadow:none!important;filter:none!important;transform:none!important;
+}
+.atm-code-cell:hover,.atm-franchise-chip:hover,.mercantil-code-cell:hover{box-shadow:none!important;transform:none!important}
+.atm-selected-item,.mercantil-selected-item{
+  border-color:var(--oi-line)!important;
+  background:var(--oi-surface-soft)!important;
+  box-shadow:none!important;
+}
+.atm-selected-item small,.mercantil-price small,.mercantil-discount small{
+  color:var(--oi-soft)!important;font-size:7.5px!important;font-weight:700!important;letter-spacing:.02em!important;text-transform:none!important;
+}
+.atm-selected-item strong,.mercantil-price strong{
+  color:var(--oi-ink)!important;font-size:11.5px!important;font-weight:800!important;line-height:1.05!important;
+}
+.mercantil-selected-info>b,.atm-selected-item>b{font-weight:800!important;color:var(--oi-ink)!important}
+.quotes-footer>span{color:var(--oi-soft)!important;font-weight:650!important}
+.quotes-footer .atm-coti-submit{font-weight:800!important}
+.quotes-clear-btn{background:transparent!important;color:var(--oi-soft)!important;border-color:var(--oi-line)!important;font-weight:650!important}
+.quotes-clear-btn:hover{color:var(--oi-ink)!important;background:var(--oi-surface-muted)!important}
+.quotes-whatsapp-copy{
+  width:36px!important;min-width:36px!important;height:36px!important;padding:6px!important;
+  display:grid!important;place-items:center!important;border-radius:9px!important;
+  border:1px solid color-mix(in srgb,#25D366 35%,var(--oi-line) 65%)!important;
+  background:transparent!important;
+}
+.quotes-whatsapp-copy img{width:23px!important;height:23px!important;display:block!important;object-fit:contain!important}
+.quotes-whatsapp-copy:hover{background:color-mix(in srgb,#25D366 9%,transparent)!important}
+.quote-source-remove{display:grid!important;place-items:center!important}
+
+/* Tabs con iconos canónicos. */
+.library-tab .app-icon,.workspace-tab .app-icon{width:17px;height:17px;display:inline-block;vertical-align:-3px;margin-right:5px}
+.file-type-icon{display:grid!important;place-items:center!important;width:28px!important;height:28px!important;background:transparent!important;color:var(--oi-muted)!important}
+.file-type-icon .app-icon{width:24px!important;height:24px!important}
+/* Papelera del chat: sobria en reposo; rojo sólo como affordance destructiva al hover/focus. */
+body.chat-layout .chat>header .chat-clear-danger.clear-chat{
+  width:34px!important;height:34px!important;min-width:34px!important;padding:0!important;
+  display:grid!important;place-items:center!important;
+  border:1px solid var(--oi-line)!important;border-radius:8px!important;
+  background:transparent!important;color:var(--oi-muted)!important;
+  box-shadow:none!important;filter:none!important;transform:none!important;
+}
+body.chat-layout .chat>header .chat-clear-danger.clear-chat:hover,
+body.chat-layout .chat>header .chat-clear-danger.clear-chat:focus-visible{
+  color:#c73535!important;
+  border-color:color-mix(in srgb,#d94848 38%,var(--oi-line) 62%)!important;
+  background:color-mix(in srgb,#d94848 7%,transparent)!important;
+  box-shadow:none!important;outline:1px solid transparent!important;
+}
+body.chat-layout .chat>header .chat-clear-danger .app-icon{width:18px!important;height:18px!important}
+
+/* ========================================================================== */
+/* OficinaIA · GLOBAL UI / PRODUCT POLISH FINAL                              */
+/* 2026-09-12 — escala canónica, legibilidad y detalle SaaS en TODO el sistema */
+/* ========================================================================== */
+:root{
+  /* Escala tipográfica: no volver a resolver jerarquía con texto microscópico. */
+  --oi-font-micro:12.5px;
+  --oi-font-meta:13px;
+  --oi-font-sm:13.5px;
+  --oi-font-base:14.5px;
+  --oi-font-control:14px;
+  --oi-font-subtitle:16px;
+  --oi-font-title:19px;
+  --oi-font-page:24px;
+
+  /* Escala de spacing deliberada. */
+  --oi-space-1:4px;
+  --oi-space-2:8px;
+  --oi-space-3:12px;
+  --oi-space-4:16px;
+  --oi-space-5:20px;
+  --oi-space-6:24px;
+  --oi-space-7:32px;
+
+  /* Escala iconográfica. Los complejos pueden excederla ópticamente. */
+  --oi-icon-sm:20px;
+  --oi-icon-md:24px;
+  --oi-icon-lg:28px;
+  --oi-control-h:40px;
+
+  /* Mantener presencia en 1366x768: reflow antes que miniaturización. */
+  --oi-sidebar-open:196px;
+  --oi-sidebar-compact:64px;
+  --oi-chat-list:236px;
+}
+
+html{--font-scale:1!important;--viewport-density:1!important}
+body{font-size:var(--oi-font-base)!important;line-height:1.45}
+.app{font-size:var(--oi-font-base)}
+.app small{font-size:var(--oi-font-meta)!important;line-height:1.4!important}
+.app label{font-size:var(--oi-font-sm)!important;line-height:1.4}
+.app button,.app input,.app textarea,.app select{font-size:var(--oi-font-control)!important;line-height:1.4}
+.app input:not([type="checkbox"]):not([type="radio"]),.app select{min-height:40px}
+.app textarea{line-height:1.5}
+
+/* Iconografía propia: tamaño base con peso visual real. */
+.app .app-icon{width:var(--oi-icon-md);height:var(--oi-icon-md)}
+.app button .app-icon,.app a .app-icon,.app summary .app-icon{display:block}
+.app .primary .app-icon,.app .secondary .app-icon,.app .btn-primary .app-icon,.app .btn-soft .app-icon{width:20px;height:20px}
+
+/* Estructura general y encabezados. */
+.page{padding:26px 30px 44px!important}
+.page>.top{margin-bottom:20px!important}
+.page>.top h1,.clean-page-head h1{font-size:var(--oi-font-page)!important;line-height:1.16!important;font-weight:740!important;letter-spacing:-.026em!important}
+.page>.top p,.section-head p{font-size:var(--oi-font-sm)!important;line-height:1.55!important}
+.section-head h2,.workspace-head h2,.health-panel h2,.estudio-card-head h2,.envios-card-head h2{font-size:var(--oi-font-title)!important;line-height:1.22!important;letter-spacing:-.015em}
+.section-head>div>span,.top>div>span{font-size:var(--oi-font-micro)!important;letter-spacing:.075em!important}
+.count,.saved,.top time{font-size:var(--oi-font-meta)!important;padding:8px 12px!important}
+
+/* Componentes base: misma geometría y estados en toda la app. */
+.primary,button.primary,.btn-primary,.atm-coti-submit{
+  min-height:40px!important;padding-inline:15px!important;border-radius:11px!important;
+  font-size:var(--oi-font-control)!important;font-weight:700!important;
+}
+.secondary,button.secondary,.btn-soft{
+  min-height:40px!important;padding-inline:14px!important;border-radius:11px!important;
+  font-size:var(--oi-font-control)!important;font-weight:640!important;
+}
+.compact{min-height:36px!important}
+.panel,.settings-card,.estudio-card,.envios-card,.health-panel,.workspace-panel{
+  border-color:var(--oi-line)!important;border-radius:var(--oi-r-lg)!important;background:var(--oi-surface)!important;
+}
+.empty,.settings-empty,.health-empty,.envios-empty{font-size:var(--oi-font-sm)!important;line-height:1.55!important;color:var(--oi-muted)!important}
+.empty b,.settings-empty b,.health-empty b,.envios-empty b{font-size:var(--oi-font-base)!important;color:var(--oi-text)!important}
+
+/* Tablas y listas: información secundaria sigue siendo legible. */
+.app table{font-size:var(--oi-font-sm)!important}
+.app th{font-size:var(--oi-font-meta)!important;font-weight:720!important}
+.app td{font-size:var(--oi-font-sm)!important;line-height:1.42!important}
+.app .search input{font-size:var(--oi-font-base)!important}
+.files strong,.companies strong,.tool-grid strong{font-size:var(--oi-font-base)!important}
+.files small,.companies small,.tool-grid small{font-size:var(--oi-font-meta)!important}
+
+/* Sidebar: no microcompactar, peso óptico equivalente y sin decoración gratuita. */
+body .sidebar{padding:15px 12px 14px!important}
+body .sidebar .brand{min-height:54px!important;padding:8px 7px!important;margin-bottom:9px!important}
+body .sidebar .brand .logo,body .sidebar .brand .favicon-brand-shell{width:36px!important;height:36px!important;min-width:36px!important}
+body .sidebar .brand .favicon-brand-img{width:28px!important;height:28px!important}
+body .sidebar .brand-text b,#appNameDisplay{font-size:15px!important;font-weight:740!important}
+body .sidebar .main-nav{gap:3px!important}
+body .sidebar .nav-item,body .sidebar .nav-toggle{min-height:43px!important;padding:8px 8px!important;gap:11px!important;font-size:14px!important}
+body .sidebar .nav-text{font-size:14px!important;line-height:1.25!important}
+body .sidebar .nav-ico{width:28px!important;height:28px!important;min-width:28px!important}
+body .sidebar .nav-ico .app-icon{width:24px!important;height:24px!important}
+body .sidebar .nav-chevron .app-icon{width:18px!important;height:18px!important}
+body .sidebar .nav-submenu{padding-left:37px!important}
+body .sidebar .nav-subitem{min-height:35px!important;padding:6px 8px!important;font-size:13.5px!important;gap:8px!important}
+body .sidebar .company-favicon{width:20px!important;height:20px!important}
+.nav-badge{font-size:11.5px!important;min-width:20px!important;height:20px!important;padding:0 6px!important}
+.sidebar-toggle{width:32px!important;height:32px!important;left:calc(var(--oi-sidebar-open) - 16px)!important}
+.sidebar-toggle .app-icon{width:19px!important;height:19px!important}
+
+/* Favicons externos: conservar marca, pero que SE VEAN. */
+body .sidebar .quickaccess{padding:12px 3px 0!important}
+body .sidebar .quickaccess-grid{gap:8px!important}
+body .sidebar .quickaccess-item{width:40px!important;height:40px!important;display:grid!important;place-items:center!important}
+body .sidebar .quickaccess-item img{width:30px!important;height:30px!important;max-width:30px!important;max-height:30px!important;object-fit:contain!important}
+html[data-sidebar="collapsed"] .quickaccess-item{width:42px!important;height:42px!important;flex-basis:42px!important}
+html[data-sidebar="collapsed"] .quickaccess-item img{width:31px!important;height:31px!important}
+
+/* Header global: un conjunto alineado, del mismo alto y pegado al borde. */
+.global-actions{top:10px!important;right:8px!important;gap:7px!important;align-items:center!important;min-height:40px!important}
+body.chat-layout .global-actions{right:8px!important}
+.global-date{font-size:13px!important;line-height:1.2!important;font-weight:620!important;margin-right:3px!important}
+.global-action,.theme-toggle{height:40px!important;min-height:40px!important;border-radius:11px!important}
+.global-action{width:40px!important;min-width:40px!important;flex-basis:40px!important;display:grid!important;place-items:center!important;padding:0!important}
+.global-action .app-icon{width:22px!important;height:22px!important}
+.theme-switch{width:68px!important;min-width:68px!important;flex-basis:68px!important;height:40px!important;padding:0 7px!important}
+.theme-switch-icon{width:17px!important;height:17px!important}
+.theme-switch-icon .app-icon{width:17px!important;height:17px!important}
+.theme-switch-sun{margin-left:0!important}.theme-switch-moon{margin-right:0!important}
+.theme-switch-knob{width:26px!important;height:26px!important;left:6px!important;top:6px!important}
+.theme-switch[data-theme="dark"] .theme-switch-knob{transform:translateX(29px)!important}
+.global-logout{color:#d94848!important;--oia-icon-accent:#d94848}
+
+/* Chat: escala cómoda, sin componentes diminutos. */
+.chat-window-bar{min-height:48px!important;flex-basis:48px!important;padding-left:10px!important}
+.chat-list-toggle{height:36px!important;padding:0 11px!important;font-size:13.5px!important}
+.chat-list-toggle .app-icon{width:19px!important;height:19px!important}
+.chat-list-head{min-height:60px!important;padding:11px 13px!important}
+.chat-list-head b{font-size:15px!important}
+.chat-list-head button{width:38px!important;height:38px!important}
+.chat-list-head button .app-icon{width:21px!important;height:21px!important}
+.chat-item{padding:10px 11px!important}
+.chat-item b{font-size:13.5px!important}
+.chat-item small{font-size:12.5px!important}
+body.chat-layout .chat>header{min-height:58px!important;padding:9px 14px!important}
+body.chat-layout .chat>header>strong{width:38px!important;height:38px!important}
+body.chat-layout .chat>header>strong img{width:30px!important;height:30px!important}
+body.chat-layout .chat>header .chat-clear-danger.clear-chat{width:38px!important;height:38px!important;min-width:38px!important;border-radius:10px!important}
+body.chat-layout .chat>header .chat-clear-danger .app-icon{width:21px!important;height:21px!important}
+.welcome>strong,.sofia-welcome-logo{width:60px!important;height:60px!important}
+.welcome h2{font-size:26px!important}
+.welcome p{font-size:14px!important}
+.workflow-card{min-height:96px!important;padding:16px!important}
+.workflow-card b{font-size:14.5px!important}.workflow-card small{font-size:13px!important}
+body.chat-layout .history .msg .bubble{font-size:14.5px!important;line-height:1.55!important;padding:11px 14px!important}
+
+/* Composer: maduro, legible y único punto visual del drag & drop. */
+body.chat-layout .composer-wrap{padding:11px 14px 14px!important}
+body.chat-layout .composer{min-height:58px!important;padding:7px 8px!important;gap:7px!important;border-radius:17px!important;transition:border-color var(--oi-ease),background var(--oi-ease),box-shadow var(--oi-ease)!important}
+body.chat-layout .composer textarea{min-height:42px!important;padding:10px 6px!important;font-size:14.5px!important;line-height:1.48!important}
+.composer-action-btn,.dictation-btn,.send{width:42px!important;height:42px!important;min-width:42px!important}
+.composer-action-btn .app-icon,.dictation-btn .app-icon,.send .app-icon{width:22px!important;height:22px!important}
+body.chat-layout .composer.is-file-dragging{
+  border-color:var(--oi-accent)!important;
+  background:var(--oi-accent-faint)!important;
+  box-shadow:0 0 0 3px color-mix(in srgb,var(--oi-accent-soft) 82%,transparent 18%)!important;
+}
+body.chat-layout .composer.is-file-dragging textarea::placeholder{color:var(--oi-accent)!important;opacity:1!important;font-weight:680!important}
+.chat-drop-overlay{display:none!important}
+
+/* Adjuntos del composer y del historial: iconos con lectura real. */
+.file-attached{margin-bottom:8px!important}
+.file-attached-list{gap:7px!important}
+.file-attached-item,.wa-composer-attachment{min-height:48px!important;padding:7px 9px!important;border-radius:11px!important}
+.wa-attachment-icon,.file-type-icon{width:34px!important;height:34px!important;min-width:34px!important}
+.wa-attachment-icon .app-icon,.file-type-icon .app-icon{width:27px!important;height:27px!important}
+.wa-attachment-text b,.wa-attachment-text strong{font-size:13.5px!important}
+.wa-attachment-text small{font-size:12.5px!important}
+.file-attached-remove{width:32px!important;height:32px!important}
+.file-attached-remove .app-icon{width:18px!important;height:18px!important}
+
+/* Menú +: escala óptica. El contenedor deja de tragarse al icono. */
+.chat-action-menu{left:16px!important;bottom:80px!important;width:310px!important;max-height:min(560px,calc(100vh - 150px))!important;padding:8px!important;border-radius:18px!important}
+.chat-action-item{min-height:58px!important;padding:8px 9px!important;gap:12px!important;border-radius:12px!important}
+.chat-action-icon{width:42px!important;height:42px!important;min-width:42px!important;flex-basis:42px!important;border-radius:11px!important;display:grid!important;place-items:center!important}
+.chat-action-icon .app-icon{width:27px!important;height:27px!important}
+/* Optical sizing para pictogramas con más detalle. */
+.chat-action-item[data-chat-action="patente"] .chat-action-icon .app-icon,
+.chat-action-item[data-chat-action="cedula"] .chat-action-icon .app-icon,
+.chat-action-item[data-chat-action="cuit"] .chat-action-icon .app-icon,
+.chat-action-item[data-chat-action="alta"] .chat-action-icon .app-icon,
+.chat-action-item[data-chat-action="atm"] .chat-action-icon .app-icon{width:30px!important;height:30px!important}
+.chat-action-item b{font-size:14px!important;line-height:1.2!important}
+.chat-action-item small{font-size:12.5px!important;line-height:1.3!important;margin-top:2px!important}
+
+/* Comandos /: icono y texto con el mismo estándar, no mini UI. */
+.chat-command-item{min-height:50px!important;padding:8px 10px!important}
+.chat-command-icon{width:32px!important;height:32px!important}
+.chat-command-icon .app-icon{width:25px!important;height:25px!important}
+.chat-command-copy strong{font-size:13.5px!important}.chat-command-copy small{font-size:12.5px!important}
+
+/* Settings premium + Organizar interfaz. */
+.settings-page{max-width:1040px!important;padding-top:30px!important}
+.settings-shell{grid-template-columns:220px minmax(0,1fr)!important;border-radius:18px!important;box-shadow:0 8px 28px rgba(26,43,58,.06)!important}
+.settings-shell .settings-nav{padding:15px 11px!important;border-radius:18px 0 0 18px!important}
+.settings-shell .settings-nav button{min-height:44px!important;padding:9px 11px!important;border-radius:10px!important;font-size:14px!important}
+.settings-shell .settings-content{padding:24px 26px 26px!important}
+.settings-section-head{margin-bottom:18px!important}
+.settings-section-head h2,.settings-title-row h2{font-size:21px!important}
+.settings-section-head p{margin:5px 0 0!important;font-size:13.5px!important;color:var(--oi-muted)!important;line-height:1.5!important}
+.setting-row{min-height:58px!important;padding:12px 14px!important;font-size:14px!important}
+.setting-row b{font-size:14px!important}
+.field-row input,.setting-row select{height:42px!important;font-size:14px!important}
+.switch{width:46px!important;height:26px!important}.switch span:after{width:20px!important;height:20px!important}.switch input:checked+span:after{transform:translateX(20px)!important}
+.tool-editor-row,.user-row{min-height:58px!important;padding:9px 10px!important;border-radius:11px!important}
+.tool-favicon{width:30px!important;height:30px!important;object-fit:contain!important}
+.user-avatar{width:38px!important;height:38px!important;font-size:14px!important}
+.user-main b{font-size:14px!important}.user-main small{font-size:12.5px!important}.user-role{font-size:12.5px!important}
+
+.organize-grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:14px;align-items:start}
+.organize-card{min-width:0;border:1px solid var(--oi-line);border-radius:15px;background:var(--oi-surface);overflow:hidden}
+.organize-card-head{min-height:72px;padding:14px 15px;display:flex;align-items:center;gap:12px;border-bottom:1px solid var(--oi-line);background:var(--oi-surface-soft)}
+.organize-card-head>div{min-width:0;flex:1}.organize-card-head b{display:block;font-size:14.5px;color:var(--oi-ink)}.organize-card-head small{display:block;margin-top:3px;font-size:12.5px!important;color:var(--oi-muted)}
+.organize-card-head>.app-icon{width:26px!important;height:26px!important;color:var(--oi-accent)}
+.organize-list{padding:8px;display:grid;gap:5px;min-height:62px}
+.organize-item{min-height:48px;padding:7px 9px;display:grid;grid-template-columns:28px 32px minmax(0,1fr);gap:8px;align-items:center;border:1px solid transparent;border-radius:11px;background:var(--oi-surface);cursor:grab;user-select:none;transition:background var(--oi-ease),border-color var(--oi-ease),opacity var(--oi-ease)}
+.organize-item:hover{background:var(--oi-surface-muted);border-color:var(--oi-line)}
+.organize-item:active{cursor:grabbing}.organize-item.is-dragging{opacity:.42;border-color:var(--oi-accent);background:var(--oi-accent-faint)}
+.organize-handle{width:28px;height:28px;display:grid;place-items:center;color:var(--oi-soft)}.organize-handle .app-icon{width:20px!important;height:20px!important}
+.organize-item-icon{width:32px;height:32px;display:grid;place-items:center;color:var(--oi-text)}.organize-item-icon .app-icon{width:25px!important;height:25px!important}
+.organize-item b{font-size:13.5px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.organize-empty{padding:16px;font-size:13px;color:var(--oi-muted);text-align:center}
+.organize-footer{display:flex!important;align-items:center!important;gap:8px!important;flex-wrap:wrap!important}
+.settings-reset-order{margin:0!important}
+
+/* Modal system: jerarquía común, blur sólo donde crea foco. */
+.modal,.atm-coti-modal{background:rgba(14,24,33,.38)!important;backdrop-filter:blur(8px)!important;-webkit-backdrop-filter:blur(8px)!important}
+.modal>div{padding:24px!important;border-radius:20px!important;box-shadow:var(--oi-shadow-modal)!important}
+.modal h2{font-size:21px!important;margin-bottom:16px!important}
+.modal form label{font-size:13.5px!important}.modal form input,.modal form select,.modal form textarea{font-size:14px!important}
+.modal-close,.atm-coti-close{width:38px!important;height:38px!important;display:grid!important;place-items:center!important}
+.modal-close .app-icon,.atm-coti-close .app-icon{width:20px!important;height:20px!important}
+
+/* Cotizaciones: aplicar el sistema global sin tocar su scroll validado. */
+.atm-coti-card.atm-coti-card-wide{width:min(940px,calc(100vw - 34px))!important;padding:18px 19px!important}
+.atm-coti-head small{font-size:12.5px!important}.atm-coti-head h2{font-size:22px!important}.atm-coti-head p{font-size:13.5px!important;line-height:1.45!important}
+.quotes-composer{padding:10px!important;border-radius:13px!important}
+.quotes-composer textarea{font-size:14px!important;line-height:1.45!important;min-height:42px!important}
+.quotes-composer-hint{font-size:12.5px!important}
+.quotes-attach-btn,.quotes-calculator-btn{width:40px!important;height:40px!important;min-width:40px!important}.quotes-attach-btn .app-icon,.quotes-calculator-btn .app-icon{width:23px!important;height:23px!important}
+.quotes-send-btn{min-height:38px!important;padding:0 14px!important;font-size:13.5px!important}
+.quote-source{padding:13px 14px!important;border-radius:13px!important}
+.quote-source-head{margin-bottom:10px!important;padding-bottom:9px!important}
+.quote-source-head b{font-size:15px!important;font-weight:760!important}
+.quote-source-head small{font-size:13px!important;line-height:1.35!important}
+.quote-subsection-title{margin:11px 0 7px!important;font-size:12.5px!important;letter-spacing:.065em!important}
+.quote-selected-label{margin-top:12px!important;padding-top:10px!important}
+.atm-code-cell,.atm-franchise-chip,.mercantil-code-cell{height:38px!important;min-height:38px!important;font-size:13px!important;border-radius:9px!important}
+.atm-moto-row-label{min-height:44px!important;font-size:12.5px!important}
+.atm-code-cell.atm-moto-code-cell{min-height:44px!important;height:44px!important}
+.atm-moto-code-cell>span{font-size:13px!important}.atm-moto-code-cell>small{font-size:11.5px!important}
+.atm-selected-item{min-height:48px!important;padding:7px 8px!important;grid-template-columns:52px 1fr 1fr!important}
+.atm-selected-item>b,.atm-selected-item strong,.mercantil-price strong{font-size:14px!important;line-height:1.15!important}
+.atm-selected-item small,.mercantil-price small,.mercantil-discount small{font-size:12.5px!important;line-height:1.25!important}
+.quotes-footer>span{font-size:13px!important}.quotes-whatsapp-copy{width:40px!important;min-width:40px!important;height:40px!important}.quotes-whatsapp-copy img{width:26px!important;height:26px!important}
+.quote-source-remove{width:34px!important;height:34px!important}.quote-source-remove .app-icon{width:19px!important;height:19px!important}
+
+/* Pendientes / Estudio / Salud / Envíos: misma presencia tipográfica. */
+.pend-filter{min-height:38px!important;font-size:13px!important}.pend-card{padding:14px 16px!important}.pend-card header strong{font-size:14.5px!important}.pend-card header small{font-size:12.5px!important}.pend-tag{font-size:11.5px!important}.pend-preview{font-size:13.5px!important;line-height:1.48!important}.pend-actions .primary,.pend-actions .secondary{height:38px!important;min-height:38px!important;font-size:13px!important}
+.estudio-page,.envios-page,.health-page{font-size:var(--oi-font-base)!important}
+.estudio-card p,.envios-card p,.health-panel p,.health-services-note{font-size:13.5px!important;line-height:1.5!important}
+.estudio-tabs button,.health-tab,.workspace-tab,.library-tab{font-size:13.5px!important;min-height:38px!important}
+.estudio-drop,.envios-drop,.example-pdf-drop{font-size:13.5px!important}
+
+/* Scrollbars discretas y utilizables. No cambia el contenedor de scroll de Cotizaciones. */
+.app *{scrollbar-width:thin;scrollbar-color:color-mix(in srgb,var(--oi-muted) 42%,transparent) transparent}
+.app *::-webkit-scrollbar{width:9px;height:9px}.app *::-webkit-scrollbar-track{background:transparent}.app *::-webkit-scrollbar-thumb{background:color-mix(in srgb,var(--oi-muted) 34%,transparent);border:2px solid transparent;background-clip:padding-box;border-radius:999px}.app *::-webkit-scrollbar-thumb:hover{background:color-mix(in srgb,var(--oi-muted) 52%,transparent);border:2px solid transparent;background-clip:padding-box}
+
+/* 1366x768: mantener escala; reorganizar antes que achicar. */
+@media (min-width:1050px) and (max-width:1539px){
+  :root{--oi-sidebar-open:190px;--oi-sidebar-compact:62px;--oi-chat-list:228px}
+  .page{padding:22px 24px 36px!important}
+  body .sidebar{padding:13px 10px 13px!important}
+  body .sidebar .nav-item,body .sidebar .nav-toggle{min-height:41px!important;padding:7px 8px!important;font-size:14px!important}
+  body .sidebar .nav-text{font-size:14px!important}
+  body .sidebar .brand-text b,#appNameDisplay{font-size:14.5px!important}
+  .global-action,.theme-toggle{height:38px!important;min-height:38px!important}
+  .global-action{width:38px!important;min-width:38px!important;flex-basis:38px!important}
+  .theme-switch{width:66px!important;min-width:66px!important;flex-basis:66px!important;height:38px!important}
+  .theme-switch-knob{width:24px!important;height:24px!important;top:6px!important}
+  .theme-switch[data-theme="dark"] .theme-switch-knob{transform:translateX(29px)!important}
+  .atm-coti-card.atm-coti-card-wide{width:min(910px,calc(100vw - 30px))!important}
+}
+@media (min-width:1050px) and (max-width:1279px){
+  :root{--oi-sidebar-open:186px;--oi-chat-list:218px}
+  .settings-shell{grid-template-columns:205px minmax(0,1fr)!important}
+  .organize-grid{grid-template-columns:1fr!important}
+  .atm-code-matrix{grid-template-columns:repeat(7,minmax(0,1fr))!important}
+}
+@media(max-width:900px){
+  .organize-grid{grid-template-columns:1fr!important}
+  .chat-action-menu{width:min(310px,calc(100vw - 24px))!important;left:12px!important}
+  .atm-moto-code-cell>small{font-size:11px!important}
+}
+@media(max-width:760px){
+  .global-actions{right:5px!important}.theme-switch{width:62px!important;min-width:62px!important;flex-basis:62px!important;height:36px!important}.theme-switch-knob{width:22px!important;height:22px!important;top:6px!important}.theme-switch[data-theme="dark"] .theme-switch-knob{transform:translateX(27px)!important}
+}
+
+/* Cierre de auditoría: componentes históricos que todavía declaraban 7–12px. */
+.health-service-state-icon{width:24px!important;height:24px!important;font-size:13px!important}
+.health-service-code,.health-event-code{font-size:12.5px!important;padding:3px 7px!important}
+.health-service-check{font-size:13px!important;line-height:1.4!important}
+
+.insured-profile-header small,.insured-profile-fact span,.insured-profile-section-title,.insured-profile-vehicle-main small{font-size:13px!important;line-height:1.4!important}
+.insured-profile-badge{font-size:12px!important;padding:4px 8px!important}
+
+.envios-chat-stat span,.envios-chat-map b,.envios-chat-map label,.envios-chat-map select,.envios-chat-actions button,.envios-chat-actions a{font-size:13px!important}
+.envios-chat-stat strong{font-size:15px!important}
+
+.atm-coti-form label,.atm-coti-field,.atm-coti-help,.atm-coti-error,.atm-coti-result-head>span,.atm-capture-drop span,.atm-capture-status,.atm-coverage-main small,.atm-coverage-price input,.atm-coverage-final,.atm-coverage-final strong,.atm-franchise,.atm-franchise input,.atm-proposal label,.atm-proposal textarea{font-size:13px!important}
+.atm-coti-kicker,.atm-coti-badge-inline{font-size:12.5px!important}
+.atm-coti-final-price span{font-size:12.5px!important}.atm-coti-final-price strong{font-size:16px!important}
+.atm-coti-presets button,.atm-coti-tabs button,.atm-coti-common .atm-coti-segmented button{font-size:13px!important;min-height:34px!important}
+.atm-coti-common .atm-coti-field>span,.atm-coti-common .atm-coti-percent-wrap>span{font-size:12.5px!important}
+.atm-coti-common .atm-coti-percent-wrap input{font-size:14px!important}
+.atm-capture-drop-compact b{font-size:13.5px!important}.atm-capture-drop-compact small{font-size:12.5px!important}
+.atm-proposal-compact textarea{font-size:13px!important}.atm-proposal-compact label{font-size:12.5px!important}.atm-proposal-compact .secondary{font-size:13px!important}
+.atm-coti-manual-compact label,.atm-coti-manual-compact input,.atm-coti-manual-compact .atm-coti-submit,.atm-coti-manual-compact .atm-coti-error{font-size:13px!important}
+.atm-coti-result-compact .atm-coti-final-price span{font-size:12.5px!important}
+
+.quote-inline-field{font-size:12.5px!important}.quote-inline-field input{font-size:13.5px!important}
+.quotes-presets button{font-size:12.5px!important;min-height:32px!important}
+.quotes-global-status{font-size:12.5px!important;line-height:1.4!important}
+.mercantil-selected-info b{font-size:14px!important}.mercantil-selected-info small{font-size:12.5px!important}
+.mercantil-discount input{font-size:13.5px!important}.mercantil-discount span{font-size:12.5px!important}
+.manual-quote-select{font-size:13.5px!important}
+.quotes-footer .atm-coti-submit{font-size:13.5px!important}
+.quotes-calculator-head b{font-size:14.5px!important}
+.quotes-calc-grid label{font-size:12.5px!important}.quotes-calc-grid input,.quotes-calc-grid select{font-size:13.5px!important}
+.quotes-calc-result small{font-size:12.5px!important}.quotes-calc-result strong{font-size:15px!important}
+.quotes-atm-quick>b{font-size:13px!important}.quotes-calc-grid-atm .atm-coti-submit{font-size:13px!important}
+
+/* Cédulas/documentos: conservar la tarjeta aprobada, elevar únicamente escala tipográfica. */
+.cedula-card:not(.personal-document-card) .cedula-summary-item span,
+.cedula-card:not(.personal-document-card) .cedula-identifier-head strong{font-size:12.5px!important}
+.cedula-card:not(.personal-document-card) .cedula-summary-item strong{font-size:14px!important}
+.cedula-card:not(.personal-document-card) .cedula-status{font-size:12px!important;padding:4px 7px!important}
+.cedula-card:not(.personal-document-card) .cedula-doubt,
+.cedula-card:not(.personal-document-card) .cedula-crop-details summary,
+.cedula-card:not(.personal-document-card) .cedula-warning{font-size:12.5px!important}
+.cedula-card:not(.personal-document-card) .cedula-identifier>.alta-secondary-btn,
+.cedula-card:not(.personal-document-card) .cedula-copy-actions .alta-secondary-btn{font-size:13px!important;min-height:38px!important}
+
+/* Notas, biblioteca, metadata y archivos. */
+.nota-item,.meta-item,.policy-row,.manual-files,.workspace-panel{font-size:13.5px!important}
+.nota-info b,.meta-item-title,.policy-row strong,.manual-grid strong{font-size:14px!important}
+.nota-info small,.meta-item-date,.policy-row small,.manual-grid small{font-size:12.5px!important}
+.nota-orden,.nota-edit,.icon-button,.meta-delete,.delete-policy,.cot-del{min-width:34px!important;min-height:34px!important}
+.nota-orden .app-icon,.nota-edit .app-icon,.icon-button .app-icon,.meta-delete .app-icon,.delete-policy .app-icon,.cot-del .app-icon{width:19px!important;height:19px!important}
+
+/* Estados y textos auxiliares recurrentes. */
+.save-state,.upload-status,.excel-status,.word-status,.estudio-progress,.envios-progress{font-size:12.5px!important;line-height:1.4!important}
+.toast{font-size:13.5px!important;line-height:1.4!important;border-radius:12px!important;padding:10px 13px!important}
+
+/* No animar geometría en acciones normales: sensación estable de producto. */
+.app button:hover,.app a:hover{transform:none}
+.settings-reset-order.is-confirming{color:var(--oi-danger)!important;border-color:color-mix(in srgb,var(--oi-danger) 34%,var(--oi-line))!important;background:color-mix(in srgb,var(--oi-danger) 7%,var(--oi-surface))!important}
+
+/* Especificidad final: el chat tenía reglas heredadas más específicas que miniaturizaban el header. */
+body.chat-layout .global-actions{top:10px!important;right:8px!important;min-height:40px!important;gap:7px!important;transform:none!important}
+body.chat-layout .global-date{font-size:13px!important;line-height:1.2!important;margin-right:3px!important}
+body.chat-layout .global-action{width:40px!important;height:40px!important;min-width:40px!important;flex-basis:40px!important;border-radius:11px!important}
+body.chat-layout .theme-toggle.theme-switch{width:68px!important;height:40px!important;min-width:68px!important;flex-basis:68px!important;border-radius:999px!important}
+body.chat-layout .global-action .app-icon{width:22px!important;height:22px!important}
+body.chat-layout .theme-switch-icon .app-icon{width:17px!important;height:17px!important}
+.page>.top{padding-right:min(300px,38vw)!important}
+@media(max-width:900px){.page>.top{padding-right:118px!important}}
+@media(max-width:760px){
+  body.chat-layout .global-actions{top:6px!important;right:5px!important;min-height:36px!important;gap:5px!important}
+  body.chat-layout .global-date{display:none!important}
+  body.chat-layout .global-action{width:36px!important;height:36px!important;min-width:36px!important;flex-basis:36px!important}
+  body.chat-layout .theme-toggle.theme-switch{width:62px!important;height:36px!important;min-width:62px!important;flex-basis:62px!important}
+}
+
+/* === Incremental premium integration: header/sidebar/quotes 2026-09-12 ===
+   Corrección puntual sobre PRODUCT_POLISH_FINAL. Esta capa no cambia escala
+   global: integra controles en su componente, restaura herramientas al pie y
+   normaliza la fila comercial de Mercantil. === */
+
+/* Herramientas externas: vuelven a ser un bloque propio al pie del sidebar. */
+body .sidebar>.quickaccess{
+  margin-top:auto!important;
+  padding:10px 4px 0!important;
+  border-top:1px solid var(--oi-line)!important;
+  width:100%!important;
+  min-width:0!important;
+  overflow:visible!important;
+}
+body .sidebar>.quickaccess .quickaccess-grid{
+  display:grid!important;
+  grid-template-columns:repeat(4,minmax(0,1fr))!important;
+  gap:6px!important;
+  padding:0!important;
+  overflow:visible!important;
+}
+body .sidebar>.quickaccess .quickaccess-item{
+  width:38px!important;height:38px!important;min-width:0!important;
+  margin:auto!important;padding:0!important;
+  display:grid!important;place-items:center!important;
+  border:0!important;border-radius:9px!important;background:transparent!important;
+  box-shadow:none!important;transform:none!important;filter:none!important;
+}
+body .sidebar>.quickaccess .quickaccess-item img{
+  width:30px!important;height:30px!important;max-width:30px!important;max-height:30px!important;
+  object-fit:contain!important;border-radius:5px!important;
+}
+body .sidebar>.quickaccess .quickaccess-item:hover{opacity:.78!important}
+html[data-sidebar="collapsed"] body .sidebar>.quickaccess .quickaccess-grid{
+  display:flex!important;flex-direction:column!important;align-items:center!important;gap:5px!important;
+}
+html[data-sidebar="collapsed"] body .sidebar>.quickaccess .quickaccess-item{width:38px!important;height:38px!important;flex:0 0 38px!important}
+html[data-sidebar="collapsed"] body .sidebar>.quickaccess .quickaccess-item img{width:31px!important;height:31px!important;max-width:31px!important;max-height:31px!important}
+
+/* El control del sidebar conserva una hit-area cómoda, pero visualmente es sólo icono. */
+.sidebar-toggle,.sidebar-toggle:hover,.sidebar-toggle:active{
+  width:30px!important;height:30px!important;
+  background:transparent!important;border:0!important;border-radius:0!important;
+  box-shadow:none!important;filter:none!important;transform:none!important;
+  color:var(--oi-muted)!important;
+}
+.sidebar-toggle .app-icon{width:19px!important;height:19px!important;filter:drop-shadow(0 1px 1px rgba(18,32,51,.16))}
+.sidebar-toggle:hover{color:var(--oi-accent)!important}
+.sidebar-toggle:focus-visible{outline:1px solid color-mix(in srgb,var(--oi-accent) 55%,transparent)!important;outline-offset:-2px!important;border-radius:7px!important}
+
+/* Controles globales: hit-area invisible, iconos limpios. */
+.global-actions{
+  display:flex!important;align-items:center!important;justify-content:flex-end!important;
+  gap:7px!important;min-height:32px!important;
+}
+.global-date{margin:0 2px 0 0!important;font-size:11.5px!important;line-height:1.2!important;color:var(--oi-soft)!important;white-space:nowrap!important}
+.appearance-controls{display:flex!important;align-items:center!important;height:32px!important}
+.global-action,.theme-toggle{
+  width:30px!important;height:30px!important;min-width:30px!important;min-height:30px!important;flex:0 0 30px!important;
+  padding:0!important;margin:0!important;display:grid!important;place-items:center!important;
+  border:0!important;border-radius:8px!important;background:transparent!important;
+  box-shadow:none!important;transform:none!important;filter:none!important;
+  color:var(--oi-muted)!important;
+}
+.global-action .app-icon,.theme-toggle .app-icon{
+  width:19px!important;height:19px!important;
+  filter:drop-shadow(0 1px 1px rgba(18,32,51,.14))!important;
+}
+.global-action:hover,.theme-toggle:hover,.global-action:active,.theme-toggle:active{
+  background:transparent!important;border:0!important;box-shadow:none!important;transform:none!important;
+  color:var(--oi-accent)!important;
+}
+.global-action:focus-visible,.theme-toggle:focus-visible{
+  outline:1px solid color-mix(in srgb,var(--oi-accent) 55%,transparent)!important;
+  outline-offset:-2px!important;
+}
+.global-settings{color:var(--oi-muted)!important}
+.global-logout,.global-logout:hover{
+  color:#d94848!important;--oia-icon-accent:#d94848!important;
+  background:transparent!important;border:0!important;
+}
+.global-logout:hover{color:#c73535!important;--oia-icon-accent:#c73535!important}
+
+/* Tema: ya no se dibuja una cápsula. Se muestra únicamente el icono del estado. */
+.theme-switch{
+  position:relative!important;overflow:visible!important;
+  width:30px!important;height:30px!important;min-width:30px!important;flex-basis:30px!important;
+  display:grid!important;place-items:center!important;gap:0!important;
+}
+.theme-switch-knob{display:none!important}
+.theme-switch-icon{
+  position:static!important;z-index:auto!important;width:19px!important;height:19px!important;
+  margin:0!important;display:grid!important;place-items:center!important;
+}
+.theme-switch-icon .app-icon{width:19px!important;height:19px!important}
+html[data-theme="light"] .theme-switch-moon{display:none!important}
+html[data-theme="dark"] .theme-switch-sun{display:none!important}
+html[data-theme="light"] .theme-switch-sun{color:#d38a19!important}
+html[data-theme="dark"] .theme-switch-moon{color:#8fb9ff!important}
+html[data-theme="dark"] .theme-switch{background:transparent!important;border:0!important}
+
+/* Chat: fecha/tema/ajustes/salir son parte estructural de la MISMA barra Conversaciones. */
+body.chat-layout .chat-window-bar{
+  min-height:44px!important;flex-basis:44px!important;
+  padding:0 10px 0 8px!important;
+  display:flex!important;align-items:center!important;gap:8px!important;
+}
+body.chat-layout .chat-window-bar .global-actions.global-actions-inline{
+  position:static!important;inset:auto!important;top:auto!important;right:auto!important;left:auto!important;bottom:auto!important;
+  margin-left:auto!important;padding:0!important;z-index:auto!important;
+  min-height:32px!important;flex:0 0 auto!important;
+}
+body.chat-layout .chat-list-toggle{
+  min-height:34px!important;height:34px!important;padding:0 7px!important;
+  display:inline-flex!important;align-items:center!important;gap:8px!important;
+  border:0!important;border-radius:8px!important;background:transparent!important;
+  box-shadow:none!important;color:var(--oi-muted)!important;
+  font-size:13.5px!important;font-weight:650!important;line-height:1!important;
+}
+body.chat-layout .chat-list-toggle:hover{background:var(--oi-surface-muted)!important;color:var(--oi-ink)!important}
+body.chat-layout .chat-list-toggle-icon{width:20px!important;height:20px!important;display:grid!important;place-items:center!important}
+body.chat-layout .chat-list-toggle-icon .app-icon{width:19px!important;height:19px!important;filter:drop-shadow(0 1px 1px rgba(18,32,51,.12))}
+body.chat-layout .chat-list-toggle-label{line-height:1!important}
+
+/* Cotizaciones: herramientas y cierre son dos acciones diferenciadas dentro del header. */
+.quotes-head{padding-right:0!important;display:flex!important;align-items:flex-start!important;gap:16px!important}
+.quotes-head>div:first-child{min-width:0;flex:1 1 auto!important}
+.quotes-head-actions{
+  flex:0 0 auto!important;display:flex!important;align-items:center!important;gap:12px!important;
+  padding-top:0!important;margin-left:auto!important;
+}
+.quotes-head-actions .quotes-calculator-btn,
+.quotes-head-actions .atm-coti-close{
+  position:static!important;inset:auto!important;right:auto!important;top:auto!important;
+  margin:0!important;float:none!important;
+}
+.quotes-head-actions .quotes-calculator-btn{
+  width:38px!important;height:38px!important;min-width:38px!important;
+  border:1px solid var(--oi-line)!important;border-radius:10px!important;
+  background:var(--oi-surface)!important;color:var(--oi-ink)!important;
+}
+.quotes-head-actions .quotes-calculator-btn:hover{background:var(--oi-surface-muted)!important;border-color:var(--oi-line-strong)!important}
+.quotes-head-actions .atm-coti-close{
+  width:38px!important;height:38px!important;min-width:38px!important;
+  border:0!important;border-radius:10px!important;background:var(--oi-surface-muted)!important;color:var(--oi-muted)!important;
+}
+.quotes-head-actions .atm-coti-close:hover{background:color-mix(in srgb,var(--oi-surface-muted) 72%,var(--oi-line) 28%)!important;color:var(--oi-ink)!important}
+.quotes-head-actions .quotes-calculator-btn .app-icon,.quotes-head-actions .atm-coti-close .app-icon{width:20px!important;height:20px!important}
+
+/* Mercantil: Cotizado / Bonificación / Final comparten exactamente la misma lectura vertical. */
+.mercantil-selected-item{
+  grid-template-columns:minmax(150px,1fr) minmax(112px,124px) minmax(112px,124px) minmax(120px,134px)!important;
+  gap:10px!important;align-items:end!important;
+}
+.mercantil-price,.mercantil-discount{
+  min-height:52px!important;
+  align-self:end!important;
+}
+.mercantil-price{
+  display:grid!important;grid-template-rows:18px 30px!important;gap:4px!important;text-align:right!important;
+}
+.mercantil-price small,.mercantil-discount small{
+  font-size:12.5px!important;line-height:18px!important;text-transform:none!important;
+  color:var(--oi-muted)!important;font-weight:600!important;
+}
+.mercantil-price strong{
+  grid-row:2!important;min-height:30px!important;display:flex!important;align-items:center!important;justify-content:flex-end!important;
+  font-size:14px!important;line-height:1.1!important;font-weight:720!important;color:var(--oi-ink)!important;
+}
+.mercantil-price-final strong{font-weight:800!important}
+.mercantil-discount{
+  display:grid!important;grid-template-columns:minmax(0,1fr) auto!important;grid-template-rows:18px 30px!important;
+  gap:4px 5px!important;align-items:center!important;
+}
+.mercantil-discount small{grid-column:1/-1!important;grid-row:1!important;align-self:end!important}
+.mercantil-discount input{
+  grid-column:1!important;grid-row:2!important;width:100%!important;height:30px!important;min-height:30px!important;
+  padding:0 8px!important;font-size:13.5px!important;text-align:right!important;
+}
+.mercantil-discount span{grid-column:2!important;grid-row:2!important;align-self:center!important;font-size:12.5px!important;color:var(--oi-muted)!important}
+
+@media(max-width:760px){
+  body.chat-layout .chat-window-bar .global-date{display:none!important}
+  body.chat-layout .chat-window-bar{padding-right:7px!important}
+  .mercantil-selected-item{grid-template-columns:repeat(3,minmax(0,1fr))!important}
+  .mercantil-selected-info{grid-column:1/-1!important}
+}
+@media(max-width:480px){
+  .mercantil-selected-item{grid-template-columns:1fr!important}
+  .mercantil-selected-info{grid-column:1!important}
+  .mercantil-price{text-align:left!important}
+  .mercantil-price strong{justify-content:flex-start!important}
+}
+
+
+
+/* === Incremental correction: ATM action row + chat welcome shortcuts 2026-09-12 ===
+   Scope intentionally limited to the two requested UI adjustments. === */
+
+/* Cálculo rápido ATM: tres campos arriba; acción en una fila propia, abajo a la derecha. */
+.quotes-calc-grid-atm{
+  grid-template-columns:minmax(0,1.35fr) minmax(82px,.75fr) minmax(104px,.9fr)!important;
+  gap:8px 10px!important;
+  align-items:end!important;
+}
+.quotes-calc-grid-atm>label{
+  min-width:0!important;
+}
+.quotes-calc-grid-atm>label input,
+.quotes-calc-grid-atm>label select{
+  width:100%!important;
+  min-width:0!important;
+  box-sizing:border-box!important;
+}
+.quotes-calc-atm-actions{
+  grid-column:1/-1!important;
+  display:flex!important;
+  align-items:center!important;
+  justify-content:flex-end!important;
+  width:100%!important;
+  padding-top:2px!important;
+}
+.quotes-calc-grid-atm .quotes-calc-atm-actions .atm-coti-submit{
+  width:auto!important;
+  min-width:118px!important;
+  height:34px!important;
+  padding:0 14px!important;
+  margin:0!important;
+  justify-self:auto!important;
+  white-space:nowrap!important;
+}
+@media(max-width:520px){
+  .quotes-calc-grid-atm{
+    grid-template-columns:minmax(0,1fr) minmax(0,1fr)!important;
+  }
+  .quotes-calc-grid-atm>label:first-child{
+    grid-column:1/-1!important;
+  }
+  .quotes-calc-atm-actions{
+    grid-column:1/-1!important;
+  }
+}
+
+/* Chat nuevo: accesos operativos principales, no sugerencias genéricas. */
+.workflow-grid{
+  grid-template-columns:repeat(2,minmax(0,1fr))!important;
+  gap:12px!important;
+  width:min(650px,100%)!important;
+  max-width:650px!important;
+  margin:22px auto 0!important;
+}
+.workflow-card.workflow-shortcut{
+  min-height:98px!important;
+  padding:16px 17px!important;
+  display:flex!important;
+  align-items:center!important;
+  gap:14px!important;
+  text-align:left!important;
+  border-radius:14px!important;
+  border:1px solid var(--oi-line)!important;
+  background:var(--oi-surface)!important;
+  box-shadow:0 2px 8px rgba(18,32,51,.045)!important;
+  transform:none!important;
+}
+.workflow-card.workflow-shortcut:hover{
+  border-color:color-mix(in srgb,var(--oi-accent) 34%,var(--oi-line))!important;
+  background:color-mix(in srgb,var(--oi-accent) 3%,var(--oi-surface))!important;
+  box-shadow:0 8px 22px rgba(18,32,51,.08)!important;
+  transform:none!important;
+}
+.workflow-shortcut-icon{
+  width:52px!important;
+  height:52px!important;
+  flex:0 0 52px!important;
+  display:grid!important;
+  place-items:center!important;
+  border-radius:13px!important;
+  background:var(--oi-surface-muted)!important;
+  color:var(--oi-accent)!important;
+}
+.workflow-shortcut-icon .app-icon{
+  width:32px!important;
+  height:32px!important;
+}
+.workflow-card[data-chat-action="patente"] .workflow-shortcut-icon .app-icon,
+.workflow-card[data-chat-action="cedula"] .workflow-shortcut-icon .app-icon,
+.workflow-card[data-chat-action="alta"] .workflow-shortcut-icon .app-icon{
+  width:35px!important;
+  height:35px!important;
+}
+.workflow-shortcut-copy{
+  min-width:0!important;
+  display:block!important;
+}
+.workflow-card.workflow-shortcut b{
+  margin:0!important;
+  font-size:15px!important;
+  line-height:1.2!important;
+  font-weight:720!important;
+  color:var(--oi-ink)!important;
+}
+.workflow-card.workflow-shortcut small{
+  margin-top:5px!important;
+  font-size:13px!important;
+  line-height:1.35!important;
+  color:var(--oi-muted)!important;
+}
+html[data-theme="dark"] .workflow-card.workflow-shortcut{
+  background:var(--oi-surface)!important;
+  border-color:var(--oi-line)!important;
+}
+html[data-theme="dark"] .workflow-shortcut-icon{
+  background:var(--oi-surface-muted)!important;
+}
+@media(max-width:620px){
+  .workflow-grid{
+    grid-template-columns:1fr!important;
+    width:min(420px,100%)!important;
+    gap:9px!important;
+  }
+  .workflow-card.workflow-shortcut{
+    min-height:82px!important;
+    padding:13px 14px!important;
+  }
+  .workflow-shortcut-icon{
+    width:46px!important;height:46px!important;flex-basis:46px!important;
+  }
+  .workflow-shortcut-icon .app-icon{width:29px!important;height:29px!important}
+  .workflow-card[data-chat-action="patente"] .workflow-shortcut-icon .app-icon,
+  .workflow-card[data-chat-action="cedula"] .workflow-shortcut-icon .app-icon,
+  .workflow-card[data-chat-action="alta"] .workflow-shortcut-icon .app-icon{
+    width:31px!important;height:31px!important;
+  }
 }

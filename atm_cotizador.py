@@ -12,11 +12,14 @@ import unicodedata
 
 getcontext().prec = 28
 
-ATM_FACTOR_ADHESION = Decimal(5) / Decimal(6)
+ATM_FACTOR_ADHESION = Decimal(5) / Decimal(6)  # AUTOS: cuponera / 1.20
+ATM_FACTOR_ADHESION_MOTO = Decimal(1) / Decimal("1.225")
 ATM_DESCUENTO_AUTO = Decimal("50")
 ATM_DESCUENTO_MOTO = Decimal("30")
-ATM_DESCUENTO_MIN = Decimal("1")
+ATM_DESCUENTO_MIN = Decimal("0")
 ATM_DESCUENTO_MAX = Decimal("50")
+ATM_DESCUENTO_MOTO_MIN = Decimal("0")
+ATM_DESCUENTO_MOTO_MAX = Decimal("30")
 
 
 def _normalizar_texto(valor: str) -> str:
@@ -49,33 +52,41 @@ def _decimal_precio(valor) -> Decimal:
     return numero
 
 
-def _decimal_descuento(valor) -> Decimal:
+def _decimal_descuento(valor, *, tipo: str | None = None) -> Decimal:
     texto = str(valor if valor is not None else "").strip().replace("%", "").replace(",", ".")
+    t = _normalizar_texto(tipo)
+    minimo = ATM_DESCUENTO_MOTO_MIN if t == "moto" else ATM_DESCUENTO_MIN
+    maximo = ATM_DESCUENTO_MOTO_MAX if t == "moto" else ATM_DESCUENTO_MAX
+    rango = "0 y 30" if t == "moto" else "0 y 50"
     try:
         porcentaje = Decimal(texto)
     except (InvalidOperation, ValueError) as exc:
-        raise ValueError("El descuento debe ser un número entre 1 y 50.") from exc
-    if porcentaje < ATM_DESCUENTO_MIN or porcentaje > ATM_DESCUENTO_MAX:
-        raise ValueError("El descuento debe estar entre 1% y 50%.")
+        raise ValueError(f"El descuento debe ser un número entre {rango}.") from exc
+    if porcentaje < minimo or porcentaje > maximo:
+        if t == "moto":
+            raise ValueError("En motos, el descuento debe estar entre 0% y 30%.")
+        raise ValueError("El descuento debe estar entre 0% y 50%.")
     return porcentaje
 
 
 def resolver_descuento(*, tipo: str | None = None, descuento=None) -> tuple[Decimal, str]:
     """Devuelve (porcentaje, origen). El manual siempre tiene prioridad."""
-    if descuento is not None and str(descuento).strip() != "":
-        return _decimal_descuento(descuento), "manual"
     t = _normalizar_texto(tipo)
+    if descuento is not None and str(descuento).strip() != "":
+        return _decimal_descuento(descuento, tipo=t or None), "manual"
     if t == "auto":
         return ATM_DESCUENTO_AUTO, "preset_auto"
     if t == "moto":
         return ATM_DESCUENTO_MOTO, "preset_moto"
-    raise ValueError("Ingresá un descuento manual entre 1% y 50%.")
+    raise ValueError("Ingresá un descuento manual entre 0% y 50%.")
 
 
-def calcular_atm(precio_base, porcentaje_descuento) -> dict:
+def calcular_atm(precio_base, porcentaje_descuento, *, tipo: str | None = None) -> dict:
     base = _decimal_precio(precio_base)
-    descuento = _decimal_descuento(porcentaje_descuento)
-    adherido = base * ATM_FACTOR_ADHESION
+    t = _normalizar_texto(tipo)
+    descuento = _decimal_descuento(porcentaje_descuento, tipo=t or None)
+    factor_adhesion = ATM_FACTOR_ADHESION_MOTO if t == "moto" else ATM_FACTOR_ADHESION
+    adherido = base * factor_adhesion
     factor_descuento = Decimal(1) - (descuento / Decimal(100))
     base_descuento = base * factor_descuento
     adherido_descuento = adherido * factor_descuento
@@ -85,6 +96,7 @@ def calcular_atm(precio_base, porcentaje_descuento) -> dict:
         "descuento": descuento,
         "precio_base_descuento": base_descuento,
         "precio_adherido_descuento": adherido_descuento,
+        "factor_adhesion": factor_adhesion,
     }
 
 
@@ -131,14 +143,14 @@ def serializar_resultado(resultado: dict, *, tipo: str | None = None, origen_des
         "descuento_formateado": _porcentaje_visible(resultado["descuento"]) + "%",
         "tipo": (_normalizar_texto(tipo) or None),
         "origen_descuento": origen_descuento,
-        "factor_adhesion": str(ATM_FACTOR_ADHESION),
+        "factor_adhesion": str(resultado.get("factor_adhesion", ATM_FACTOR_ADHESION)),
     }
 
 
 def cotizar_atm(precio_base, *, tipo: str | None = None, descuento=None) -> dict:
     porcentaje, origen = resolver_descuento(tipo=tipo, descuento=descuento)
     return serializar_resultado(
-        calcular_atm(precio_base, porcentaje), tipo=tipo, origen_descuento=origen
+        calcular_atm(precio_base, porcentaje, tipo=tipo), tipo=tipo, origen_descuento=origen
     )
 
 
@@ -211,8 +223,11 @@ def respuesta_chat_atm(texto: str):
 
 
 __all__ = [
-    "ATM_FACTOR_ADHESION", "ATM_DESCUENTO_AUTO", "ATM_DESCUENTO_MOTO",
-    "ATM_DESCUENTO_MIN", "ATM_DESCUENTO_MAX", "calcular_atm", "cotizar_atm",
+    "ATM_FACTOR_ADHESION", "ATM_FACTOR_ADHESION_MOTO",
+    "ATM_DESCUENTO_AUTO", "ATM_DESCUENTO_MOTO",
+    "ATM_DESCUENTO_MIN", "ATM_DESCUENTO_MAX",
+    "ATM_DESCUENTO_MOTO_MIN", "ATM_DESCUENTO_MOTO_MAX",
+    "calcular_atm", "cotizar_atm",
     "parsear_consulta_atm", "respuesta_chat_atm", "formatear_pesos",
     "redondear_comercial_miles", "formatear_comercial_miles",
 ]

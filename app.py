@@ -103,6 +103,9 @@ import envios_masivos
 import atm_cotizador
 import atm_quote_service
 import atm_coberturas
+import mercantil_quote_service
+import mercantil_cotizador
+import federacion_quote_service
 import alta_ops
 from flota_store import FlotaStore
 from chat_store import ChatStore
@@ -449,6 +452,7 @@ def contexto_usuario():
         "usuario_es_admin": bool(u and u["rol"] == "admin"),
         "config_global": config,
         "cias_links": [(c["nombre"], c["url"]) for c in config.get("companias", []) if c.get("visible", True)],
+        "cias_sidebar": [c for c in config.get("companias", []) if c.get("visible", True)],
         "static_asset": static_asset,
     }
 
@@ -923,7 +927,7 @@ def notas():
 @app.route("/api/atm/catalogo", methods=["GET"])
 @requiere_login
 def api_atm_catalogo():
-    return jsonify({"ok": True, "coberturas": atm_coberturas.catalogo_publico()})
+    return jsonify({"ok": True, "coberturas": atm_coberturas.catalogo_publico(), "coberturas_motos": atm_coberturas.catalogo_motos_publico()})
 
 
 @app.route("/api/atm/cotizar", methods=["POST"])
@@ -974,6 +978,119 @@ def api_atm_leer_captura():
     except Exception as error:
         logger.exception("Error leyendo captura ATM: %s", error)
         return jsonify({"ok": False, "error": "No pude leer la captura ATM en este intento. Reintentá o cargá el precio manualmente."}), 500
+
+
+@app.route("/api/mercantil/leer-pdf", methods=["POST"])
+@requiere_login
+def api_mercantil_leer_pdf():
+    archivo = request.files.get("pdf") or request.files.get("archivo")
+    if not archivo or not getattr(archivo, "filename", ""):
+        return jsonify({"ok": False, "error": "Adjuntá el PDF de la cotización de Mercantil Andina."}), 400
+    nombre = str(getattr(archivo, "filename", "") or "").lower()
+    if not nombre.endswith(".pdf"):
+        return jsonify({"ok": False, "error": "Mercantil se procesa desde un archivo PDF."}), 400
+    try:
+        contenido = archivo.read()
+        if not contenido:
+            raise ValueError("El PDF está vacío.")
+        if len(contenido) > MAX_PDF_FILE_SIZE_BYTES:
+            return jsonify({"ok": False, "error": "El PDF supera el tamaño máximo permitido."}), 413
+        resultado = mercantil_quote_service.extraer_cotizacion_mercantil(contenido)
+        if not resultado.get("es_mercantil"):
+            return jsonify({"ok": False, "error": "No pude identificar este PDF como una cotización de Mercantil Andina."}), 422
+        if not resultado.get("coberturas"):
+            return jsonify({"ok": False, "error": "Identifiqué Mercantil Andina, pero no pude extraer coberturas y precios."}), 422
+        return jsonify({"ok": True, **resultado})
+    except ValueError as error:
+        return jsonify({"ok": False, "error": str(error)}), 400
+    except Exception as error:
+        logger.exception("Error leyendo PDF Mercantil: %s", error)
+        return jsonify({"ok": False, "error": "No pude leer el PDF de Mercantil en este intento."}), 500
+
+
+
+
+@app.route("/api/federacion/leer-pdf", methods=["POST"])
+@requiere_login
+def api_federacion_leer_pdf():
+    archivo = request.files.get("pdf") or request.files.get("archivo")
+    if not archivo or not getattr(archivo, "filename", ""):
+        return jsonify({"ok": False, "error": "Adjuntá el PDF de la cotización de Federación Patronal."}), 400
+    nombre = str(getattr(archivo, "filename", "") or "").lower()
+    if not nombre.endswith(".pdf"):
+        return jsonify({"ok": False, "error": "Federación Patronal se procesa desde un archivo PDF."}), 400
+    try:
+        contenido = archivo.read()
+        if not contenido:
+            raise ValueError("El PDF está vacío.")
+        if len(contenido) > MAX_PDF_FILE_SIZE_BYTES:
+            return jsonify({"ok": False, "error": "El PDF supera el tamaño máximo permitido."}), 413
+        resultado = federacion_quote_service.extraer_cotizacion_federacion(contenido)
+        if not resultado.get("es_federacion"):
+            return jsonify({"ok": False, "error": "No pude identificar este PDF como una cotización de Federación Patronal."}), 422
+        if not resultado.get("codigo") or not resultado.get("precio_cuota"):
+            return jsonify({"ok": False, "error": "Identifiqué Federación Patronal, pero no pude extraer plan y precio por cuota."}), 422
+        return jsonify({"ok": True, **resultado})
+    except ValueError as error:
+        return jsonify({"ok": False, "error": str(error)}), 400
+    except Exception as error:
+        logger.exception("Error leyendo PDF Federación Patronal: %s", error)
+        return jsonify({"ok": False, "error": "No pude leer el PDF de Federación Patronal en este intento."}), 500
+
+
+@app.route("/api/cotizaciones/leer-pdf", methods=["POST"])
+@requiere_login
+def api_cotizaciones_leer_pdf():
+    """Detecta PDFs de cotización conocidos sin obligar al frontend a adivinar compañía."""
+    archivo = request.files.get("pdf") or request.files.get("archivo")
+    if not archivo or not getattr(archivo, "filename", ""):
+        return jsonify({"ok": False, "error": "Adjuntá un PDF de cotización."}), 400
+    nombre = str(getattr(archivo, "filename", "") or "").lower()
+    if not nombre.endswith(".pdf"):
+        return jsonify({"ok": False, "error": "Este lector acepta cotizaciones en PDF."}), 400
+    try:
+        contenido = archivo.read()
+        if not contenido:
+            raise ValueError("El PDF está vacío.")
+        if len(contenido) > MAX_PDF_FILE_SIZE_BYTES:
+            return jsonify({"ok": False, "error": "El PDF supera el tamaño máximo permitido."}), 413
+
+        mercantil = mercantil_quote_service.extraer_cotizacion_mercantil(contenido)
+        if mercantil.get("es_mercantil"):
+            if not mercantil.get("coberturas"):
+                return jsonify({"ok": False, "error": "Identifiqué Mercantil Andina, pero no pude extraer coberturas y precios."}), 422
+            return jsonify({"ok": True, "tipo": "mercantil", **mercantil})
+
+        federacion = federacion_quote_service.extraer_cotizacion_federacion(contenido)
+        if federacion.get("es_federacion"):
+            if not federacion.get("codigo") or not federacion.get("precio_cuota"):
+                return jsonify({"ok": False, "error": "Identifiqué Federación Patronal, pero no pude extraer plan y precio por cuota."}), 422
+            return jsonify({"ok": True, "tipo": "federacion", **federacion})
+
+        return jsonify({"ok": False, "error": "No pude identificar el PDF como una cotización compatible de Mercantil Andina o Federación Patronal."}), 422
+    except ValueError as error:
+        return jsonify({"ok": False, "error": str(error)}), 400
+    except Exception as error:
+        logger.exception("Error detectando PDF de cotización: %s", error)
+        return jsonify({"ok": False, "error": "No pude leer el PDF de cotización en este intento."}), 500
+
+
+@app.route("/api/mercantil/cotizar", methods=["POST"])
+@requiere_login
+def api_mercantil_cotizar():
+    data = request.get_json(silent=True) or {}
+    try:
+        resultado = mercantil_cotizador.calcular_descuento(
+            data.get("precio_base"),
+            data.get("descuento"),
+            data.get("max_descuento", 35),
+        )
+        return jsonify({"ok": True, **resultado})
+    except ValueError as error:
+        return jsonify({"ok": False, "error": str(error)}), 400
+    except Exception as error:
+        logger.exception("Error calculando bonificación Mercantil: %s", error)
+        return jsonify({"ok": False, "error": "No se pudo calcular la bonificación de Mercantil."}), 500
 
 
 @app.route("/api/excel", methods=["GET"])

@@ -14,7 +14,7 @@ from google.genai import types
 
 from ai_gateway import DEFAULT_MODELS, generate_with_fallback, obtener_cliente_gemini
 from attachment_vision import renderizar_para_vision
-from atm_coberturas import enriquecer_cobertura
+from atm_coberturas import enriquecer_cobertura, enriquecer_cobertura_moto
 from resilience import RecoverablePayloadError
 
 
@@ -26,6 +26,7 @@ NO expliques coberturas. NO inventes importes. NO completes texto cortado.
 Devolvé SOLO JSON válido con este formato:
 {
   "es_cotizacion_atm": true,
+  "tipo_cotizacion": "auto|moto|desconocido",
   "coberturas": [
     {
       "titulo": "texto visible de la cobertura",
@@ -40,6 +41,9 @@ Devolvé SOLO JSON válido con este formato:
 
 Reglas:
 - Si la imagen no es una pantalla/listado de cotización ATM, es_cotizacion_atm=false.
+- Indicá tipo_cotizacion="moto" si la pantalla corresponde a motos y "auto" si corresponde a autos. Si no podés determinarlo, "desconocido".
+- Para motos podés encontrar títulos como ROBO PREMIUM MOTOS, ROBO PREMIUM, ROBO TOTAL CLASICO MOTOS, ROBO CLASICO, ROBO TOTAL CLASICO MOTOS SIN ASISTENCIA y ROBO CLASICO SIN ASISTENCIA.
+- Si la pantalla es de motos, buscá explícitamente las cinco familias posibles: Responsabilidad Civil, Responsabilidad Civil sin asistencia, Robo Clásico, Robo Clásico sin asistencia y Robo Premium. No omitas las filas de robo si tienen precio visible.
 - Un precio argentino como $ 198.375,98 debe devolverse como "198375.98".
 - Cada precio debe asociarse únicamente a su título visible.
 - Si dice "SIN ASISTENCIA", sin_asistencia=true.
@@ -100,27 +104,45 @@ def _franquicia(valor, titulo: str = "") -> str:
     return str(int(n)) if n == n.to_integral_value() else format(n.normalize(), "f")
 
 
+def _tipo_cotizacion(dato: dict, items: list[dict]) -> str:
+    # Primero usamos señales determinísticas del título. Gemini no decide el mapeo.
+    titulos = " | ".join(str(x.get("titulo") or "") for x in items if isinstance(x, dict)).upper()
+    if re.search(r"\bMOTOS?\b|ROBO\s+(?:TOTAL\s+)?CLASICO|ROBO\s+PREMIUM", titulos, re.I):
+        return "moto"
+    if re.search(r"TERCEROS\s+COMPLETOS|TODO\s+RIESGO|ROBO\s+E\s+INCENDIO", titulos, re.I):
+        return "auto"
+    declarado = str(dato.get("tipo_cotizacion") or "").strip().lower()
+    if declarado in {"auto", "moto"}:
+        return declarado
+    # Compatibilidad histórica: si no hay evidencia suficiente, conserva la ruta AUTO.
+    return "auto"
+
+
 def _normalizar_salida(dato: dict) -> dict:
     es_atm = bool(dato.get("es_cotizacion_atm"))
+    items = [x for x in (dato.get("coberturas") or []) if isinstance(x, dict)]
+    tipo_cotizacion = _tipo_cotizacion(dato, items)
     coberturas = []
-    for idx, item in enumerate(dato.get("coberturas") or []):
-        if not isinstance(item, dict):
-            continue
+    for idx, item in enumerate(items):
         titulo = re.sub(r"\s+", " ", str(item.get("titulo") or "")).strip()
         precio = _precio_decimal(item.get("precio"))
         if not titulo or not precio:
             continue
         sin_asistencia = bool(item.get("sin_asistencia")) or bool(re.search(r"SIN\s+ASISTENCIA", titulo, re.I))
-        catalogo = enriquecer_cobertura(titulo, sin_asistencia=sin_asistencia)
+        if tipo_cotizacion == "moto":
+            catalogo = enriquecer_cobertura_moto(titulo, sin_asistencia=sin_asistencia)
+        else:
+            catalogo = enriquecer_cobertura(titulo, sin_asistencia=sin_asistencia)
         confianza = str(item.get("confianza") or "media").strip().lower()
         if confianza not in {"alta", "media", "baja"}:
             confianza = "media"
         franquicia = _franquicia(item.get("franquicia_pct"), titulo)
         coberturas.append({
-            "uid": f"atm-{idx+1}",
+            "uid": f"atm-{tipo_cotizacion}-{idx+1}",
             "titulo_leido": titulo,
             "precio_base": precio,
             "franquicia_pct": franquicia,
+            "tipo_vehiculo": tipo_cotizacion,
             "confianza": confianza,
             "requiere_revision": confianza == "baja" or not catalogo.get("catalogada"),
             **catalogo,
@@ -130,6 +152,7 @@ def _normalizar_salida(dato: dict) -> dict:
         advertencias.append("Detecté la pantalla de ATM, pero no pude confirmar ningún precio.")
     return {
         "es_cotizacion_atm": es_atm,
+        "tipo_cotizacion": tipo_cotizacion,
         "coberturas": coberturas,
         "advertencias": list(dict.fromkeys(advertencias)),
     }

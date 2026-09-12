@@ -1,4 +1,5 @@
 {% extends 'base.html' %}
+{% from "_icons.html" import icon %}
 {% block title %}Estudio · {{config_global.nombre_oficina}}{% endblock %}
 {% block content %}
 <div class="page estudio-page">
@@ -15,7 +16,7 @@
       <div class="estudio-card-head"><div><h2>Nuevo análisis</h2></div></div>
       <label class="estudio-drop" id="estudioDrop">
         <input id="estudioFiles" type="file" accept="application/pdf,.pdf" multiple hidden>
-        <span class="drop-pdf-mark" aria-hidden="true">PDF</span><b>Arrastrá los PDFs acá</b><span>o hacé clic para seleccionarlos</span>
+        <span class="drop-pdf-mark" aria-hidden="true">{{ icon('pdf') }}</span><b>Arrastrá los PDFs acá</b><span>o hacé clic para seleccionarlos</span>
       </label>
       <div class="estudio-file-summary" id="estudioFileSummary">Todavía no seleccionaste archivos.</div>
       <div class="estudio-actions"><button class="primary" id="estudioStart" type="button" disabled>Analizar lote</button><button class="secondary" id="estudioClear" type="button">Limpiar</button></div>
@@ -42,10 +43,10 @@
           <span class="example-label">PDF del caso </span>
           <label class="example-pdf-drop" id="examplePdfDrop">
             <input id="ejemploPdf" type="file" accept="application/pdf,.pdf" hidden>
-            <span class="drop-pdf-mark" aria-hidden="true">PDF</span>
+            <span class="drop-pdf-mark" aria-hidden="true">{{ icon('pdf') }}</span>
             <span><b>Arrastrá el PDF acá</b></span>
           </label>
-          <div class="example-pdf-selected" id="examplePdfSelected" hidden><div><b id="examplePdfName"></b><small id="examplePdfMeta"></small></div><button type="button" class="icon-button" id="examplePdfClear" aria-label="Quitar PDF" title="Quitar PDF">×</button></div>
+          <div class="example-pdf-selected" id="examplePdfSelected" hidden><div><b id="examplePdfName"></b><small id="examplePdfMeta"></small></div><button type="button" class="icon-button" id="examplePdfClear" aria-label="Quitar PDF" title="Quitar PDF">{{ icon('close') }}</button></div>
         </div>
         <div class="example-form-footer"><button class="primary" type="submit">Guardar ejemplo</button><span id="ejemploEstado"></span></div>
       </form>

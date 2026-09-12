@@ -9,6 +9,7 @@
   <div class="settings-shell">
     <nav class="settings-nav" aria-label="Secciones de configuración">
       <button class="active" data-settings-tab="general">General</button>
+      <button data-settings-tab="organizar">Organizar interfaz</button>
       <button data-settings-tab="herramientas">Herramientas</button>
       <button data-settings-tab="companias">Compañías</button>
       <button data-settings-tab="usuarios">Usuarios</button>
@@ -25,6 +26,31 @@
           <div class="setting-row"><span><b>Mostrar “¿Sabías que...?”</b></span><label class="switch"><input id="tipsVisibles" type="checkbox" {% if config.tips_visibles %}checked{% endif %}><span></span></label></div>
         </div>
         <div class="settings-footer"><button class="primary settings-save" type="button" onclick="guardarConfiguracion()">Guardar cambios</button><span class="save-state" id="estadoConfig"></span></div>
+      </section>
+
+      <section class="settings-section" data-settings-panel="organizar">
+        <div class="settings-section-head organize-head">
+          <div><h2>Organizar interfaz</h2><p>Arrastrá cada elemento para definir el orden en que aparece en OficinaIA.</p></div>
+        </div>
+        <div class="organize-grid">
+          <article class="organize-card">
+            <div class="organize-card-head"><div><b>Módulos principales</b><small>Chat, cartera y áreas de trabajo</small></div>{{ icon('drag-drop') }}</div>
+            <div class="organize-list" id="organizeModules" aria-label="Orden de módulos principales"></div>
+          </article>
+          <article class="organize-card">
+            <div class="organize-card-head"><div><b>Compañías</b><small>Orden dentro del menú Compañías</small></div>{{ icon('company') }}</div>
+            <div class="organize-list" id="organizeCompanies" aria-label="Orden de compañías"></div>
+          </article>
+          <article class="organize-card">
+            <div class="organize-card-head"><div><b>Herramientas</b><small>Orden de los accesos externos</small></div>{{ icon('external-link') }}</div>
+            <div class="organize-list" id="organizeTools" aria-label="Orden de herramientas"></div>
+          </article>
+        </div>
+        <div class="settings-footer organize-footer">
+          <button class="primary settings-save" type="button" onclick="guardarConfiguracion()">Guardar orden</button>
+          <button class="secondary settings-reset-order" type="button" id="resetInterfaceOrder">Restaurar orden predeterminado</button>
+          <span class="save-state" id="estadoOrganizar"></span>
+        </div>
       </section>
 
       <section class="settings-section" data-settings-panel="herramientas">
@@ -53,7 +79,7 @@
             <button class="secondary compact user-edit" type="button" onclick='editarUsuario({{u.id}},{{u.usuario|tojson}},{{u.email|tojson}},{{u.rol|tojson}},{{"true" if u.protegido else "false"}})'>Editar</button>
             {% if not u.protegido %}
             <details class="user-more">
-              <summary aria-label="Más acciones" title="Más acciones">•••</summary>
+              <summary aria-label="Más acciones" title="Más acciones">{{ icon('more') }}</summary>
               <div class="user-menu-pop"><button type="button" class="danger-text" onclick='eliminarUsuario({{u.id}},{{u.usuario|tojson}})'>Eliminar usuario</button></div>
             </details>
             {% else %}<span class="user-more-spacer"></span>{% endif %}
@@ -89,6 +115,10 @@
 
   let tools = {{ (config.herramientas or [])|tojson }};
   let companies = {{ (config.companias or [])|tojson }};
+  const DEFAULT_SIDEBAR_ORDER=['chat','companies','excel','pending','estudio','manuals','salud'];
+  let sidebarOrder = {{ (config.sidebar_order or ['chat','companies','excel','pending','estudio','manuals','salud'])|tojson }};
+  let companyOrder = companies.map(x=>x.id);
+  let toolOrder = tools.map(x=>x.id);
   const editor = document.getElementById('toolsEditor');
   const companiesEditor = document.getElementById('companiesEditor');
   const esc = s => String(s ?? '').replace(/[&<>'"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;',"'":'&#39;','"':'&quot;'}[c]));
@@ -106,10 +136,10 @@
     editor.querySelectorAll('.tool-editor-row').forEach(row=>{
       const i=Number(row.dataset.index), url=row.querySelector('.tool-url'), img=row.querySelector('.tool-favicon');
       url.addEventListener('change',()=>img.src=favicon(url.value.trim()));
-      row.querySelector('.tool-remove').onclick=()=>{tools.splice(i,1);renderTools()};
+      row.querySelector('.tool-remove').onclick=()=>{tools.splice(i,1);toolOrder=tools.map(x=>x.id);renderTools();renderOrganize()};
     });
   }
-  document.getElementById('addTool').onclick=()=>{tools.push({id:'herramienta-'+Date.now(),nombre:'',url:'',visible:true});renderTools(); const rows=editor.querySelectorAll('.tool-editor-row'); rows[rows.length-1]?.querySelector('.tool-name')?.focus();};
+  document.getElementById('addTool').onclick=()=>{tools.push({id:'herramienta-'+Date.now(),nombre:'',url:'',visible:true});toolOrder=tools.map(x=>x.id);renderTools();renderOrganize(); const rows=editor.querySelectorAll('.tool-editor-row'); rows[rows.length-1]?.querySelector('.tool-name')?.focus();};
   renderTools();
 
   function renderCompanies(){
@@ -124,15 +154,90 @@
     companiesEditor.querySelectorAll('.tool-editor-row').forEach(row=>{
       const i=Number(row.dataset.index), url=row.querySelector('.company-url'), img=row.querySelector('.tool-favicon');
       url.addEventListener('change',()=>img.src=favicon(url.value.trim()));
-      row.querySelector('.company-remove').onclick=()=>{companies.splice(i,1);renderCompanies()};
+      row.querySelector('.company-remove').onclick=()=>{companies.splice(i,1);companyOrder=companies.map(x=>x.id);renderCompanies();renderOrganize()};
     });
   }
-  document.getElementById('addCompany').onclick=()=>{companies.push({id:'compania-'+Date.now(),nombre:'',url:'',visible:true});renderCompanies(); const rows=companiesEditor.querySelectorAll('.tool-editor-row'); rows[rows.length-1]?.querySelector('.company-name')?.focus();};
+  document.getElementById('addCompany').onclick=()=>{companies.push({id:'compania-'+Date.now(),nombre:'',url:'',visible:true});companyOrder=companies.map(x=>x.id);renderCompanies();renderOrganize(); const rows=companiesEditor.querySelectorAll('.tool-editor-row'); rows[rows.length-1]?.querySelector('.company-name')?.focus();};
   renderCompanies();
+
+  const moduleMeta={
+    chat:{label:'Chat IA',icon:'chat'},
+    companies:{label:'Compañías',icon:'company'},
+    excel:{label:'Excel',icon:'excel'},
+    pending:{label:'Pendientes',icon:'pending'},
+    estudio:{label:'Estudio',icon:'estudio'},
+    manuals:{label:'Manuales',icon:'manuals'},
+    salud:{label:'Salud',icon:'salud'}
+  };
+  const ordered=(items,ids)=>{
+    const byId=new Map(items.map(x=>[String(x.id),x]));
+    const out=[];
+    ids.forEach(id=>{const item=byId.get(String(id));if(item){out.push(item);byId.delete(String(id))}});
+    byId.forEach(item=>out.push(item));
+    return out;
+  };
+  const sortableItem=(key,label,icon)=>`<div class="organize-item" draggable="true" data-order-key="${esc(key)}">
+    <span class="organize-handle" aria-hidden="true">${window.oiaIconHtml?window.oiaIconHtml('drag-drop'):''}</span>
+    <span class="organize-item-icon" aria-hidden="true">${window.oiaIconHtml?window.oiaIconHtml(icon||'drag-drop'):''}</span>
+    <b>${esc(label)}</b>
+  </div>`;
+
+  function wireSortable(container,onChange){
+    if(!container||container.dataset.sortableWired==='1')return;
+    container.dataset.sortableWired='1';
+    let dragging=null;
+    container.addEventListener('dragstart',e=>{
+      const item=e.target.closest('.organize-item');if(!item)return;
+      dragging=item;item.classList.add('is-dragging');
+      if(e.dataTransfer){e.dataTransfer.effectAllowed='move';try{e.dataTransfer.setData('text/plain',item.dataset.orderKey||'')}catch(_){}}
+    });
+    container.addEventListener('dragover',e=>{
+      if(!dragging)return;e.preventDefault();
+      const candidates=[...container.querySelectorAll('.organize-item:not(.is-dragging)')];
+      const after=candidates.reduce((closest,child)=>{const box=child.getBoundingClientRect();const offset=e.clientY-box.top-box.height/2;return offset<0&&offset>closest.offset?{offset,el:child}:closest},{offset:Number.NEGATIVE_INFINITY,el:null}).el;
+      if(after)container.insertBefore(dragging,after);else container.appendChild(dragging);
+    });
+    container.addEventListener('drop',e=>{if(!dragging)return;e.preventDefault();});
+    container.addEventListener('dragend',()=>{
+      if(!dragging)return;dragging.classList.remove('is-dragging');dragging=null;
+      onChange([...container.querySelectorAll('.organize-item')].map(x=>x.dataset.orderKey));
+    });
+  }
+
+  function renderOrganize(){
+    const modules=document.getElementById('organizeModules');
+    const cias=document.getElementById('organizeCompanies');
+    const toolsEl=document.getElementById('organizeTools');
+    sidebarOrder=[...sidebarOrder.filter(x=>moduleMeta[x]),...DEFAULT_SIDEBAR_ORDER.filter(x=>!sidebarOrder.includes(x))];
+    if(modules){modules.innerHTML=sidebarOrder.map(key=>sortableItem(key,moduleMeta[key].label,moduleMeta[key].icon)).join('');wireSortable(modules,ids=>{sidebarOrder=ids})}
+    const companyView=ordered(companies,companyOrder);companyOrder=companyView.map(x=>x.id);
+    if(cias){cias.innerHTML=companyView.length?companyView.map(x=>sortableItem(x.id,x.nombre||'Compañía','company')).join(''):'<div class="organize-empty">No hay compañías configuradas.</div>';wireSortable(cias,ids=>{companyOrder=ids;companies=ordered(companies,ids);renderCompanies()})}
+    const toolView=ordered(tools,toolOrder);toolOrder=toolView.map(x=>x.id);
+    if(toolsEl){toolsEl.innerHTML=toolView.length?toolView.map(x=>sortableItem(x.id,x.nombre||'Herramienta','external-link')).join(''):'<div class="organize-empty">No hay herramientas configuradas.</div>';wireSortable(toolsEl,ids=>{toolOrder=ids;tools=ordered(tools,ids);renderTools()})}
+  }
+  renderOrganize();
+
+  (()=>{
+    const reset=document.getElementById('resetInterfaceOrder');if(!reset)return;
+    let armed=false,timer=null;
+    reset.addEventListener('click',()=>{
+      if(!armed){
+        armed=true;reset.classList.add('is-confirming');reset.textContent='Confirmar restauración';
+        clearTimeout(timer);timer=setTimeout(()=>{armed=false;reset.classList.remove('is-confirming');reset.textContent='Restaurar orden predeterminado'},4200);
+        return;
+      }
+      clearTimeout(timer);armed=false;reset.classList.remove('is-confirming');reset.textContent='Restaurar orden predeterminado';
+      sidebarOrder=[...DEFAULT_SIDEBAR_ORDER];
+      companyOrder=companies.map(x=>x.id);
+      toolOrder=tools.map(x=>x.id);
+      renderOrganize();
+      const e=document.getElementById('estadoOrganizar');if(e)e.textContent='Orden predeterminado preparado. Guardá para aplicarlo.';
+    });
+  })();
 
   window.guardarConfiguracion = async function(){
     const active = document.querySelector('[data-settings-panel].active')?.dataset.settingsPanel;
-    const e = active==='herramientas' ? document.getElementById('estadoHerramientas') : (active==='companias' ? document.getElementById('estadoCompanias') : document.getElementById('estadoConfig'));
+    const e = active==='herramientas' ? document.getElementById('estadoHerramientas') : (active==='companias' ? document.getElementById('estadoCompanias') : (active==='organizar' ? document.getElementById('estadoOrganizar') : document.getElementById('estadoConfig')));
     if(e)e.textContent='Guardando...';
     tools=[...editor.querySelectorAll('.tool-editor-row')].map((row,i)=>({
       id: tools[i]?.id || 'herramienta-'+Date.now()+'-'+i,
@@ -140,28 +245,31 @@
       url: row.querySelector('.tool-url').value.trim(),
       visible: row.querySelector('.tool-visible').checked
     })).filter(t=>t.nombre||t.url);
+    tools=ordered(tools,toolOrder);toolOrder=tools.map(x=>x.id);
     companies=[...companiesEditor.querySelectorAll('.tool-editor-row')].map((row,i)=>({
       id: companies[i]?.id || 'compania-'+Date.now()+'-'+i,
       nombre: row.querySelector('.company-name').value.trim(),
       url: row.querySelector('.company-url').value.trim(),
       visible: row.querySelector('.company-visible').checked
     })).filter(c=>c.nombre||c.url);
+    companies=ordered(companies,companyOrder);companyOrder=companies.map(x=>x.id);
     const payload={
       nombre_oficina:document.getElementById('nombreOficina').value.trim(),
       excel_visible:document.getElementById('excelVisible').checked,
       tips_visibles:document.getElementById('tipsVisibles').checked,
       herramientas:tools,
       companias:companies,
+      sidebar_order:sidebarOrder,
       color_principal:'#122033',color_acento:'#0D8B7C',color_fondo:'#F7F9FB',color_sidebar:'#FFFFFF',color_botones:'#122033'
     };
     try{
       const r=await fetch('/api/configuracion',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)});
       const d=await r.json(); if(!r.ok||!d.ok){if(e)e.textContent=d.error||'No se pudo guardar';return}
-      tools=d.config.herramientas||tools; companies=d.config.companias||companies; renderTools(); renderCompanies(); document.querySelectorAll('[data-app-name]').forEach(x=>x.textContent=d.config.nombre_oficina); if(e)e.textContent='Guardado'; setTimeout(()=>{if(e)e.textContent=''},1800);
+      tools=d.config.herramientas||tools; companies=d.config.companias||companies; sidebarOrder=d.config.sidebar_order||sidebarOrder; companyOrder=companies.map(x=>x.id); toolOrder=tools.map(x=>x.id); renderTools(); renderCompanies(); renderOrganize(); document.querySelectorAll('[data-app-name]').forEach(x=>x.textContent=d.config.nombre_oficina); if(e)e.textContent='Guardado'; setTimeout(()=>{if(e)e.textContent=''},1800);
     }catch(_){if(e)e.textContent='No se pudo guardar'}
   };
 
-  const modal=document.createElement('div');modal.className='modal';modal.hidden=true;modal.innerHTML=`<div><button class="modal-close" onclick="cerrarUsuarioModal()">×</button><h2 id="mt">Nuevo usuario</h2><form id="uf"><input type="hidden" id="uid"><label>Usuario<input id="nu" required></label><label>Contraseña<input id="np" type="password"></label><label>Confirmar contraseña<input id="cp" type="password"></label><label>Correo<input id="ne" type="email"></label><label>Rol<select id="nr"><option value="usuario">Usuario</option><option value="admin">Administrador</option></select></label><p id="ue"></p><button class="primary">Guardar</button></form></div>`;document.body.appendChild(modal);
+  const modal=document.createElement('div');modal.className='modal';modal.hidden=true;modal.innerHTML=`<div><button class="modal-close" onclick="cerrarUsuarioModal()" aria-label="Cerrar" title="Cerrar">${window.oiaIconHtml?window.oiaIconHtml('close'):'Cerrar'}</button><h2 id="mt">Nuevo usuario</h2><form id="uf"><input type="hidden" id="uid"><label>Usuario<input id="nu" required></label><label>Contraseña<input id="np" type="password"></label><label>Confirmar contraseña<input id="cp" type="password"></label><label>Correo<input id="ne" type="email"></label><label>Rol<select id="nr"><option value="usuario">Usuario</option><option value="admin">Administrador</option></select></label><p id="ue"></p><button class="primary">Guardar</button></form></div>`;document.body.appendChild(modal);
   const uf=document.getElementById('uf'),uid=document.getElementById('uid'),mt=document.getElementById('mt'),nu=document.getElementById('nu'),np=document.getElementById('np'),cp=document.getElementById('cp'),ne=document.getElementById('ne'),nr=document.getElementById('nr'),ue=document.getElementById('ue');
   window.abrirUsuarioModal=()=>{uf.reset();uid.value='';mt.textContent='Nuevo usuario';nu.disabled=false;nr.disabled=false;modal.hidden=false};
   window.cerrarUsuarioModal=()=>modal.hidden=true;

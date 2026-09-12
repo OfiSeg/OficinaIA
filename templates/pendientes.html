@@ -1,4 +1,5 @@
 {% extends 'base.html' %}
+{% from "_icons.html" import icon %}
 {% block title %}Pendientes · {{config_global.nombre_oficina}}{% endblock %}
 {% block content %}
 <div class="page pendientes-page">
@@ -21,7 +22,7 @@
 
 <div class="modal" id="pendModal" hidden>
   <div>
-    <button type="button" id="pendModalCerrar">×</button>
+    <button type="button" id="pendModalCerrar" aria-label="Cerrar" title="Cerrar">{{ icon('close') }}</button>
     <h2 id="pendModalTitulo">Nuevo pendiente</h2>
     <form id="pendForm">
       <input type="hidden" id="pendId">

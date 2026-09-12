@@ -1,4 +1,5 @@
 {% extends 'base.html' %}
+{% from "_icons.html" import icon %}
 {% block title %}Cotizar · {{config_global.nombre_oficina}}{% endblock %}
 {% block content %}
 <div class="page cotizar-page">
@@ -109,7 +110,7 @@
       <td><input value="${esc(r.prima)}" placeholder="$ / mes"></td>
       <td><input value="${esc(r.cob)}" placeholder="Terceros / todo riesgo…"></td>
       <td><input value="${esc(r.notas)}" placeholder="Franquicia, obs."></td>
-      <td><button type="button" class="cot-del" title="Quitar">×</button></td>
+      <td><button type="button" class="cot-del" title="Quitar" aria-label="Quitar">{{ icon('close') }}</button></td>
     </tr>`;
   }
   function esc(s){return String(s??'').replace(/&/g,'&amp;').replace(/"/g,'&quot;').replace(/</g,'&lt;')}

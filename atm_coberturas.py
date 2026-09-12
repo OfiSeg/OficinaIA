@@ -1,11 +1,11 @@
 # -*- coding: utf-8 -*-
-"""Catálogo determinístico de coberturas ATM.
+"""Catálogos determinísticos de coberturas ATM para autos y motos.
 
 La visión transcribe el título y el precio. Este módulo resuelve ese título a un
-código operativo fijo de OficinaIA. Gemini NO decide A/B/C/TR.
+código operativo fijo de OficinaIA. Gemini NO decide A/B/C/TR ni RP/RC/RC1.
 
 Los códigos son internos. La propuesta al asegurado usa nombres y descripciones
-comerciales fijas del catálogo, nunca los códigos A/B/C.
+comerciales fijas del catálogo.
 """
 from __future__ import annotations
 
@@ -32,6 +32,9 @@ def _entry(
     adicionales=(),
     franquicia: bool = False,
     orden: int,
+    tipo_vehiculo: str = "auto",
+    tooltip: str | None = None,
+    franquicia_visible: str = "",
 ):
     return {
         "codigo": codigo,
@@ -46,8 +49,11 @@ def _entry(
         "grua": bool(grua),
         "adicionales": list(adicionales),
         "franquicia": bool(franquicia),
+        "franquicia_visible": str(franquicia_visible or ""),
         "detectable": True,
         "orden": int(orden),
+        "tipo_vehiculo": tipo_vehiculo,
+        "tooltip": tooltip or titulo_atm,
     }
 
 
@@ -57,7 +63,7 @@ _C_DESC = (
     "cerraduras. Incluye grúa."
 )
 
-# Orden VISUAL fijo. La familia B contiene exactamente seis coberturas: B + B1..B5.
+# Orden VISUAL fijo AUTOS. La familia B contiene exactamente seis coberturas: B + B1..B5.
 CATALOGO_CODIGOS_ATM = OrderedDict([
     ("A", _entry(
         "A", "RESPONSABILIDAD CIVIL",
@@ -187,6 +193,111 @@ CATALOGO_CODIGOS_ATM = OrderedDict([
     )),
 ])
 
+# Catálogo MOTOS separado: los códigos A/A1 se repiten deliberadamente y RC significa
+# Robo Clásico, no Responsabilidad Civil. Nunca se mezcla con el catálogo de autos.
+CATALOGO_MOTOS_ATM = OrderedDict([
+    ("RP", _entry(
+        "RP", "ROBO PREMIUM MOTOS",
+        aliases=("ROBO PREMIUM MOTOS", "ROBO PREMIUM MOTO", "ROBO PREMIUM"),
+        nombre_cliente="Robo Premium",
+        descripcion_cliente=(
+            "Robo/Hurto Total\n"
+            "Incendio Total y Parcial\n"
+            "Destrucción Total por Accidente\n"
+            "Incluye grúa"
+        ),
+        grua=True,
+        orden=50,
+        tipo_vehiculo="moto",
+        tooltip=(
+            "Robo Premium Motos — Robo/Hurto Total · Incendio Total y Parcial · "
+            "Destrucción Total por Accidente · Incluye grúa."
+        ),
+    )),
+    ("RC", _entry(
+        "RC", "ROBO TOTAL CLASICO MOTOS",
+        aliases=(
+            "ROBO TOTAL CLASICO MOTOS",
+            "ROBO TOTAL CLÁSICO MOTOS",
+            "ROBO CLASICO MOTOS",
+            "ROBO CLÁSICO MOTOS",
+            "ROBO TOTAL CLASICO",
+            "ROBO TOTAL CLÁSICO",
+            "ROBO CLASICO",
+            "ROBO CLÁSICO",
+        ),
+        nombre_cliente="Robo Clásico",
+        descripcion_cliente=(
+            "Robo/Hurto Total\n"
+            "Incendio Total\n"
+            "Incluye grúa\n"
+            "FRANQUICIA 3%"
+        ),
+        grua=True,
+        orden=40,
+        tipo_vehiculo="moto",
+        tooltip=(
+            "Robo Clásico Motos — Robo/Hurto Total · Incendio Total · "
+            "FRANQUICIA 3% · Incluye grúa."
+        ),
+        franquicia_visible="FRANQUICIA 3%",
+    )),
+    ("RC1", _entry(
+        "RC1", "ROBO TOTAL CLASICO MOTOS SIN ASISTENCIA",
+        aliases=(
+            "ROBO TOTAL CLASICO MOTOS SIN ASISTENCIA",
+            "ROBO TOTAL CLÁSICO MOTOS SIN ASISTENCIA",
+            "ROBO CLASICO MOTOS SIN ASISTENCIA",
+            "ROBO CLÁSICO MOTOS SIN ASISTENCIA",
+            "ROBO TOTAL CLASICO SIN ASISTENCIA",
+            "ROBO TOTAL CLÁSICO SIN ASISTENCIA",
+            "ROBO CLASICO SIN ASISTENCIA",
+            "ROBO CLÁSICO SIN ASISTENCIA",
+        ),
+        nombre_cliente="Robo Clásico sin asistencia",
+        descripcion_cliente=(
+            "Robo/Hurto Total\n"
+            "Incendio Total\n"
+            "Sin grúa\n"
+            "FRANQUICIA 3%"
+        ),
+        grua=False,
+        orden=30,
+        tipo_vehiculo="moto",
+        tooltip=(
+            "Robo Clásico Motos sin asistencia — Robo/Hurto Total · Incendio Total · "
+            "FRANQUICIA 3% · Sin grúa."
+        ),
+        franquicia_visible="FRANQUICIA 3%",
+    )),
+    ("A", _entry(
+        "A", "RESPONSABILIDAD CIVIL",
+        aliases=("RESPONSABILIDAD CIVIL",),
+        nombre_cliente="Responsabilidad Civil",
+        descripcion_cliente=(
+            "Seguro básico para circular. Cubre los daños que puedas ocasionar a terceros. "
+            "Incluye grúa."
+        ),
+        grua=True,
+        orden=10,
+        tipo_vehiculo="moto",
+        tooltip="Responsabilidad Civil · Con asistencia.",
+    )),
+    ("A1", _entry(
+        "A1", "RESPONSABILIDAD CIVIL SIN ASISTENCIA",
+        aliases=("RESPONSABILIDAD CIVIL SIN ASISTENCIA",),
+        nombre_cliente="Responsabilidad Civil sin asistencia",
+        descripcion_cliente=(
+            "Seguro básico para circular. Cubre los daños que puedas ocasionar a terceros. "
+            "Sin grúa."
+        ),
+        grua=False,
+        orden=20,
+        tipo_vehiculo="moto",
+        tooltip="Responsabilidad Civil · Sin asistencia.",
+    )),
+])
+
 # Alias histórico para módulos que importaban COBERTURAS_ATM.
 COBERTURAS_ATM = CATALOGO_CODIGOS_ATM
 
@@ -196,23 +307,15 @@ def _candidatos(entry: dict) -> set[str]:
     return {_norm(v) for v in valores if str(v or "").strip()}
 
 
-def resolver_codigo_atm(nombre: str) -> str | None:
-    """Resuelve sólo mapeos preconfigurados; no hace fuzzy matching agresivo."""
+def _resolver_en_catalogo(nombre: str, catalogo: OrderedDict) -> str | None:
     n = _norm(nombre)
     if not n:
         return None
-
-    # Todo Riesgo varía únicamente en el porcentaje de franquicia.
-    if n.startswith("TODO RIESGO") and "SUMA ASEGURADA" in n:
-        return "TR"
-
-    for codigo, entry in CATALOGO_CODIGOS_ATM.items():
+    for codigo, entry in catalogo.items():
         if n in _candidatos(entry):
             return codigo
-
-    # Variaciones controladas observadas: signos +, Y/O y puntuación pueden caer.
     compacta = n.replace(" Y O ", " ").replace(" O ", " ")
-    for codigo, entry in CATALOGO_CODIGOS_ATM.items():
+    for codigo, entry in catalogo.items():
         for candidato in _candidatos(entry):
             c = candidato.replace(" Y O ", " ").replace(" O ", " ")
             if compacta == c:
@@ -220,8 +323,23 @@ def resolver_codigo_atm(nombre: str) -> str | None:
     return None
 
 
-def enriquecer_cobertura(nombre: str, *, sin_asistencia: bool = False) -> dict:
-    codigo = resolver_codigo_atm(nombre)
+def resolver_codigo_atm(nombre: str) -> str | None:
+    """Resuelve AUTO sólo con mapeos preconfigurados; no hace fuzzy agresivo."""
+    n = _norm(nombre)
+    if not n:
+        return None
+    if n.startswith("TODO RIESGO") and "SUMA ASEGURADA" in n:
+        return "TR"
+    return _resolver_en_catalogo(nombre, CATALOGO_CODIGOS_ATM)
+
+
+def resolver_codigo_moto_atm(nombre: str) -> str | None:
+    """Resuelve MOTOS en su catálogo independiente."""
+    return _resolver_en_catalogo(nombre, CATALOGO_MOTOS_ATM)
+
+
+def _enriquecer_desde_catalogo(nombre: str, catalogo: OrderedDict, *, sin_asistencia: bool, tipo_vehiculo: str) -> dict:
+    codigo = _resolver_en_catalogo(nombre, catalogo)
     if not codigo:
         titulo = re.sub(r"\s+", " ", str(nombre or "")).strip()
         return {
@@ -235,36 +353,56 @@ def enriquecer_cobertura(nombre: str, *, sin_asistencia: bool = False) -> dict:
             "descripcion": "Cobertura detectada en ATM todavía sin código confirmado.",
             "descripcion_cliente": "Cobertura detectada en ATM todavía sin código confirmado.",
             "franquicia": False,
+            "franquicia_visible": "",
             "sin_asistencia": bool(sin_asistencia),
             "remolque": None,
             "grua": None,
             "adicionales": [],
             "orden": 999,
+            "tipo_vehiculo": tipo_vehiculo,
             "catalogada": False,
         }
-
-    entry = CATALOGO_CODIGOS_ATM[codigo]
+    entry = catalogo[codigo]
     titulo_leido = re.sub(r"\s+", " ", str(nombre or "")).strip()
-    salida = {
+    return {
         "id": codigo,
         **entry,
         "nombre": entry["titulo_atm"] or titulo_leido,
         "nombre_corto": codigo,
-        "tooltip": titulo_leido or entry["titulo_atm"],
+        # Para autos se preserva el título leído como tooltip; para motos el catálogo
+        # contiene el tooltip comercial solicitado (si existe).
+        "tooltip": entry.get("tooltip") or titulo_leido or entry["titulo_atm"],
         "sin_asistencia": bool(sin_asistencia or entry.get("grua") is False),
+        "tipo_vehiculo": tipo_vehiculo,
         "catalogada": True,
     }
-    return salida
 
 
-def catalogo_publico() -> list[dict]:
-    """Catálogo apto para matriz, tooltips y propuesta del frontend."""
+def enriquecer_cobertura(nombre: str, *, sin_asistencia: bool = False) -> dict:
+    codigo = resolver_codigo_atm(nombre)
+    if not codigo:
+        return _enriquecer_desde_catalogo(
+            nombre, CATALOGO_CODIGOS_ATM, sin_asistencia=sin_asistencia, tipo_vehiculo="auto"
+        )
+    # Usa el flujo común para mantener el contrato histórico.
+    return _enriquecer_desde_catalogo(
+        nombre, CATALOGO_CODIGOS_ATM, sin_asistencia=sin_asistencia, tipo_vehiculo="auto"
+    )
+
+
+def enriquecer_cobertura_moto(nombre: str, *, sin_asistencia: bool = False) -> dict:
+    return _enriquecer_desde_catalogo(
+        nombre, CATALOGO_MOTOS_ATM, sin_asistencia=sin_asistencia, tipo_vehiculo="moto"
+    )
+
+
+def _catalogo_publico(catalogo: OrderedDict) -> list[dict]:
     salida = []
-    for codigo, entry in CATALOGO_CODIGOS_ATM.items():
+    for codigo, entry in catalogo.items():
         salida.append({
             "codigo": codigo,
             "titulo_atm": entry.get("titulo_atm") or "",
-            "tooltip": entry.get("titulo_atm") or codigo,
+            "tooltip": entry.get("tooltip") or entry.get("titulo_atm") or codigo,
             "nombre_cliente": entry.get("nombre_cliente") or entry.get("titulo_atm") or codigo,
             "descripcion": entry.get("descripcion") or "",
             "descripcion_cliente": entry.get("descripcion_cliente") or entry.get("descripcion") or "",
@@ -272,13 +410,27 @@ def catalogo_publico() -> list[dict]:
             "grua": entry.get("grua"),
             "adicionales": list(entry.get("adicionales") or []),
             "franquicia": bool(entry.get("franquicia")),
+            "franquicia_visible": entry.get("franquicia_visible") or "",
             "detectable": True,
             "orden": int(entry.get("orden") or 999),
+            "tipo_vehiculo": entry.get("tipo_vehiculo") or "auto",
         })
     return salida
 
 
+def catalogo_publico() -> list[dict]:
+    """Catálogo AUTOS apto para matriz, tooltips y propuesta del frontend."""
+    return _catalogo_publico(CATALOGO_CODIGOS_ATM)
+
+
+def catalogo_motos_publico() -> list[dict]:
+    """Catálogo MOTOS separado para no colisionar A/A1 ni RC con autos."""
+    return _catalogo_publico(CATALOGO_MOTOS_ATM)
+
+
 __all__ = [
-    "COBERTURAS_ATM", "CATALOGO_CODIGOS_ATM", "resolver_codigo_atm",
-    "enriquecer_cobertura", "catalogo_publico",
+    "COBERTURAS_ATM", "CATALOGO_CODIGOS_ATM", "CATALOGO_MOTOS_ATM",
+    "resolver_codigo_atm", "resolver_codigo_moto_atm",
+    "enriquecer_cobertura", "enriquecer_cobertura_moto",
+    "catalogo_publico", "catalogo_motos_publico",
 ]

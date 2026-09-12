@@ -1,6 +1,6 @@
 """Handlers especiales previos a Sofia.
 
-Extiende el router V20 sin reemplazarlo: /coti abre Cotización ATM y /flota conserva prioridad;
+Extiende el router V20 sin reemplazarlo: /coti abre Cotizaciones y /flota conserva prioridad;
 los adjuntos operativos se clasifican como cédula/DNI/licencia/póliza/otro y disparan su
 pipeline natural sin exigir comandos.
 """
@@ -265,11 +265,11 @@ def _clasificar_con_cache(adjunto):
 
 
 def procesar(*, chat_id, mensaje, contexto_pdf, flota_store, adjunto=None, adjuntos=None, adjunto_anterior=None, on_stage=None):
-    # /coti ya NO tiene calculadora propia: es un atajo a la única UI de Cotización ATM.
+    # /coti ya NO tiene calculadora propia: es un atajo a la única UI de Cotizaciones.
     if re.match(r"^/coti(?:\s|$)", str(mensaje or "").strip(), re.I):
         return SpecialResult(
             True,
-            "Abrí Cotización ATM.",
+            "Abrí Cotizaciones.",
             {"abrir_cotizador_atm": True},
             "atm_cotizador",
         )
@@ -380,7 +380,7 @@ def procesar(*, chat_id, mensaje, contexto_pdf, flota_store, adjunto=None, adjun
             print("ERROR COTIZACION ATM CAPTURA:", exc)
             return SpecialResult(
                 True,
-                "Detecté una captura de cotización ATM, pero no pude terminar la lectura. Podés abrir Cotización ATM y cargar los precios manualmente o reintentar la captura.",
+                "Detecté una captura de cotización ATM, pero no pude terminar la lectura. Podés abrir Cotizaciones y reintentar la captura.",
                 {"abrir_cotizador_atm": True, "atm_cotizacion_error": True},
                 "atm_cotizador",
             )

@@ -1,45 +1,42 @@
 {% extends 'base.html' %}
+{% from "_icons.html" import icon %}
+{% from "_global_actions.html" import render_global_actions %}
 {% block title %}Chat IA · {{config_global.nombre_oficina}}{% endblock %}
 {% block body_class %}chat-layout{% endblock %}
+{% block global_actions_slot %}{% endblock %}
 {% block content %}
 <div class="page chat-page">
 <div class="chat-window" id="chatWindow">
   <div class="chat-window-bar" aria-label="Barra del chat">
     <button type="button" class="chat-list-toggle" id="chatListToggle" aria-expanded="true" title="Ocultar conversaciones">
-      <span class="chat-list-toggle-icon" aria-hidden="true">‹</span>
+      <span class="chat-list-toggle-icon" aria-hidden="true">{{ icon('arrow-left') }}</span>
       <span class="chat-list-toggle-label">Conversaciones</span>
     </button>
+    {{ render_global_actions('global-actions-inline') }}
   </div>
 <div class="chat-shell">
-<aside class="chat-list"><div class="chat-list-head"><div><b>Conversaciones</b></div><button onclick="nuevoChat()" title="Nueva conversación">＋</button></div><div id="chatList" class="chat-list-items"></div></aside>
+<aside class="chat-list"><div class="chat-list-head"><div><b>Conversaciones</b></div><button onclick="nuevoChat()" title="Nueva conversación" aria-label="Nueva conversación">{{ icon('plus') }}</button></div><div id="chatList" class="chat-list-items"></div></aside>
 <section class="chat" id="chatDropZone">
 <div id="chatDropOverlay" class="chat-drop-overlay" hidden aria-hidden="true">
-  <div class="chat-drop-overlay-inner"><span>📎</span>Soltá los archivos acá</div>
+  <div class="chat-drop-overlay-inner"><span aria-hidden="true">{{ icon('attach') }}</span>Soltá los archivos acá</div>
 </div>
 <header>
   <strong class="sofia-logo-shell" aria-hidden="true"><img class="sofia-logo-img" src="{{ static_asset('img/favicon.png') }}" alt=""></strong>
-  <button type="button" class="chat-list-open" id="chatListOpen" title="Conversaciones" aria-label="Abrir lista de conversaciones">☰</button>
+  <button type="button" class="chat-list-open" id="chatListOpen" title="Conversaciones" aria-label="Abrir lista de conversaciones">{{ icon('menu') }}</button>
   <div class="chat-header-actions" aria-label="Acciones del chat">
-    <button type="button" class="chat-visual-btn chat-wallpaper-btn" id="chatWallpaperBtn" title="Cambiar fondo" aria-label="Cambiar fondo" aria-haspopup="true" aria-expanded="false">
-      <img class="chat-ui-icon" src="{{ static_asset('img/ui/brush.png') }}" alt="" aria-hidden="true">
-    </button>
-    <div class="chat-wallpaper-menu" id="chatWallpaperMenu" hidden role="menu" aria-label="Fondos del chat">
-      <button type="button" data-wallpaper="soft" role="menuitem">Suave</button>
-      <button type="button" data-wallpaper="clean" role="menuitem">Liso</button>
-    </div>
     <button type="button" class="clear-chat chat-clear-danger" onclick="borrarChatActual()" title="Eliminar chat" aria-label="Eliminar chat">
-      <img class="chat-ui-icon" src="{{ static_asset('img/ui/trash.png') }}" alt="" aria-hidden="true">
+      {{ icon('trash') }}
     </button>
   </div>
 </header>
 {% if config_global.tips_visibles %}
 <div id="chatTip" class="chat-tip" hidden>
-  <span class="chat-tip-icon" aria-hidden="true">💡</span>
+  <span class="chat-tip-icon" aria-hidden="true">{{ icon('info') }}</span>
   <div class="chat-tip-body">
     <b class="chat-tip-title">¿Sabías que...?</b>
     <p id="chatTipTexto"></p>
   </div>
-  <button type="button" class="chat-tip-close" id="chatTipCerrar" aria-label="Cerrar tip" title="Cerrar">×</button>
+  <button type="button" class="chat-tip-close" id="chatTipCerrar" aria-label="Cerrar tip" title="Cerrar">{{ icon('close') }}</button>
 </div>
 {% endif %}
 <div id="chatListSheet" class="chat-list-sheet" hidden>
@@ -47,10 +44,10 @@
   <div class="chat-list-sheet-panel" role="dialog" aria-label="Conversaciones">
     <div class="chat-list-sheet-head">
       <b>Conversaciones</b>
-      <button type="button" class="chat-list-sheet-close" data-close-sheet aria-label="Cerrar">×</button>
+      <button type="button" class="chat-list-sheet-close" data-close-sheet aria-label="Cerrar">{{ icon('close') }}</button>
     </div>
     <div id="chatListSheetBody" class="chat-list-sheet-body"></div>
-    <button type="button" class="btn-primary chat-list-sheet-new" id="chatListSheetNew">＋ Nueva conversación</button>
+    <button type="button" class="btn-primary chat-list-sheet-new" id="chatListSheetNew">{{ icon('plus') }} Nueva conversación</button>
   </div>
 </div>
 <div id="chat" class="history history-empty">
@@ -66,125 +63,167 @@
   </div>
   <input id="archivoInput" class="chat-file-input" type="file" multiple accept="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,.xlsx,.xlsm,application/pdf,.pdf,text/plain,.txt,text/csv,.csv,image/png,.png,image/jpeg,.jpg,.jpeg,image/webp,.webp" hidden>
   <div class="chat-action-menu" id="chatActionMenu" hidden role="menu" aria-label="Adjuntar y acciones">
+    <button type="button" class="chat-action-item" data-chat-action="mail" role="menuitem">
+      <span class="chat-action-icon" aria-hidden="true">{{ icon('mail') }}</span><span><b>Mail</b><small>Enviar correo</small></span>
+    </button>
     <button type="button" class="chat-action-item" data-chat-action="document" role="menuitem">
-      <span class="chat-action-icon" aria-hidden="true"><img src="{{ static_asset('img/ui/document.png') }}" alt=""></span><span><b>Documento</b><small>PDF, Excel o archivo</small></span>
+      <span class="chat-action-icon" aria-hidden="true">{{ icon('file-generic') }}</span><span><b>Documentos</b><small>PDF, Excel o archivo</small></span>
     </button>
     <button type="button" class="chat-action-item" data-chat-action="photos" role="menuitem">
-      <span class="chat-action-icon" aria-hidden="true"><img src="{{ static_asset('img/ui/photo.png') }}" alt=""></span><span><b>Fotos</b><small>Imágenes</small></span>
-    </button>
-    <button type="button" class="chat-action-item" data-chat-action="dictation" role="menuitem">
-      <span class="chat-action-icon" aria-hidden="true"><img src="{{ static_asset('img/ui/mic.png') }}" alt=""></span><span><b>Dictado</b><small>Hablar para escribir</small></span>
-    </button>
-    <button type="button" class="chat-action-item" data-chat-action="portfolio" role="menuitem">
-      <span class="chat-action-icon" aria-hidden="true"><img src="{{ static_asset('img/ui/search.png') }}" alt=""></span><span><b>Buscar en cartera</b><small>Asegurados y pólizas</small></span>
+      <span class="chat-action-icon" aria-hidden="true">{{ icon('image') }}</span><span><b>Fotos</b><small>Adjuntar imágenes</small></span>
     </button>
     <button type="button" class="chat-action-item" data-chat-action="alta" role="menuitem">
-      <span class="chat-action-icon" aria-hidden="true"><img src="{{ static_asset('img/ui/user-plus.png') }}" alt=""></span><span><b>Alta / asegurado</b><small>Cargar asegurado</small></span>
+      <span class="chat-action-icon" aria-hidden="true">{{ icon('policy') }}</span><span><b>Alta asegurado</b><small>Adjuntá la póliza</small></span>
+    </button>
+    <button type="button" class="chat-action-item" data-chat-action="portfolio" role="menuitem">
+      <span class="chat-action-icon" aria-hidden="true">{{ icon('search') }}</span><span><b>Buscar cartera</b><small>Asegurados y pólizas</small></span>
     </button>
     <button type="button" class="chat-action-item" data-chat-action="cuit" role="menuitem">
-      <span class="chat-action-icon" aria-hidden="true"><img src="{{ static_asset('img/ui/id-card.png') }}" alt=""></span><span><b>CUIT / CUIL</b><small>Buscar en ARCA</small></span>
+      <span class="chat-action-icon" aria-hidden="true">{{ icon('cuit') }}</span><span><b>CUIT / CUIL</b><small>Buscar en ARCA</small></span>
+    </button>
+    <button type="button" class="chat-action-item" data-chat-action="cedula" role="menuitem">
+      <span class="chat-action-icon" aria-hidden="true">{{ icon('cedula') }}</span><span><b>Cédula</b><small>Adjuntá la cédula</small></span>
+    </button>
+    <button type="button" class="chat-action-item" data-chat-action="patente" role="menuitem">
+      <span class="chat-action-icon" aria-hidden="true">{{ icon('patente') }}</span><span><b>Patente</b><small>Consultar vehículo</small></span>
     </button>
     <button type="button" class="chat-action-item" data-chat-action="atm" role="menuitem">
-      <span class="chat-action-icon" aria-hidden="true"><img src="{{ static_asset('img/ui/companies.png') }}" alt=""></span><span><b>Cotización ATM</b><small>Precios y propuestas</small></span>
-    </button>
-    <button type="button" class="chat-action-item" data-chat-action="mail" role="menuitem">
-      <span class="chat-action-icon chat-action-glyph" aria-hidden="true">✉</span><span><b>Mail</b><small>Enviar correo</small></span>
-    </button>
-    <button type="button" class="chat-action-item" data-chat-action="notes" role="menuitem">
-      <span class="chat-action-icon" aria-hidden="true"><img src="{{ static_asset('img/ui/note.png') }}" alt=""></span><span><b>Notas rápidas</b><small>Textos guardados</small></span>
+      <span class="chat-action-icon" aria-hidden="true">{{ icon('cotizar') }}</span><span><b>Cotización</b><small>Comparar y generar propuesta</small></span>
     </button>
   </div>
   <div class="notas-toolbar" aria-hidden="true">
-    <button type="button" class="notas-btn" id="notasBtn" title="Notas rápidas" aria-label="Notas rápidas" aria-haspopup="true" aria-expanded="false">+</button>
+    <button type="button" class="notas-btn" id="notasBtn" title="Notas rápidas" aria-label="Notas rápidas" aria-haspopup="true" aria-expanded="false">{{ icon('notes') }}</button>
     <div id="notasPanel" class="notas-panel" hidden role="dialog" aria-label="Notas rápidas">
-      <div class="notas-panel-head"><b>Notas rápidas</b><button type="button" id="notaNueva" title="Nueva nota" aria-label="Nueva nota">+</button></div>
+      <div class="notas-panel-head"><b>Notas rápidas</b><button type="button" id="notaNueva" title="Nueva nota" aria-label="Nueva nota">{{ icon('plus') }}</button></div>
       <div id="notasLista" class="notas-lista"></div>
     </div>
   </div>
   <div class="composer">
-    <button type="button" class="composer-action-btn" id="chatActionBtn" title="Adjuntar y acciones" aria-label="Adjuntar y acciones" aria-haspopup="true" aria-expanded="false"><img src="{{ static_asset('img/ui/plus.png') }}" alt="" aria-hidden="true"></button>
+    <button type="button" class="composer-action-btn" id="chatActionBtn" title="Adjuntar y acciones" aria-label="Adjuntar y acciones" aria-haspopup="true" aria-expanded="false">{{ icon('plus') }}</button>
     <textarea id="mensaje" rows="1" maxlength="6000" placeholder="Escribí un mensaje"></textarea>
     <button type="button" class="dictation-btn" id="dictationBtn" title="Dictar mensaje" aria-label="Dictar mensaje" aria-pressed="false">
-      <img class="chat-ui-icon" src="{{ static_asset('img/ui/mic.png') }}" alt="" aria-hidden="true">
+      {{ icon('mic') }}
     </button>
-    <button type="button" class="send" id="sendBtn" onclick="enviarMensaje()" title="Enviar" aria-label="Enviar"><img class="send-icon" src="{{ static_asset('img/ui/send.png') }}" alt="" aria-hidden="true"></button>
+    <button type="button" class="send" id="sendBtn" onclick="enviarMensaje()" title="Enviar" aria-label="Enviar">{{ icon('send') }}</button>
   </div>
 </div>
 
 <div class="chat-image-lightbox" id="chatImageLightbox" hidden aria-hidden="true">
-  <button type="button" class="chat-image-lightbox-close" id="chatImageLightboxClose" aria-label="Cerrar imagen" title="Cerrar">×</button>
+  <button type="button" class="chat-image-lightbox-close" id="chatImageLightboxClose" aria-label="Cerrar imagen" title="Cerrar">{{ icon('close') }}</button>
   <img id="chatImageLightboxImg" alt="Imagen ampliada">
 </div>
 
 <div class="atm-coti-modal" id="atmCotiModal" hidden aria-hidden="true">
-  <div class="atm-coti-card atm-coti-card-wide" role="dialog" aria-modal="true" aria-labelledby="atmCotiTitle">
-    <button type="button" class="atm-coti-close" id="atmCotiClose" aria-label="Cerrar" title="Cerrar">×</button>
-    <div class="atm-coti-head">
-      <div><small>ATM</small><h2 id="atmCotiTitle">Cotización ATM</h2><p>Pegá la captura, elegí coberturas y generá la propuesta.</p></div>
-    </div>
-
-    <div class="atm-coti-tabs" role="tablist" aria-label="Modo de cotización">
-      <button type="button" class="active" data-atm-tab="capture" role="tab">Pegar captura</button>
-      <button type="button" data-atm-tab="manual" role="tab">Precio manual</button>
-    </div>
-
-    <section class="atm-coti-panel" data-atm-panel="capture">
-      <label class="atm-capture-drop atm-capture-drop-compact" id="atmCaptureDrop">
-        <input id="atmCaptureInput" type="file" accept="image/png,.png,image/jpeg,.jpg,.jpeg,image/webp,.webp" hidden>
-        <span class="atm-capture-paste-icon" aria-hidden="true">＋</span>
-        <b id="atmCaptureDropTitle">Pegá con Ctrl+V o elegí una imagen</b>
-        <small>PNG · JPG · WEBP</small>
-      </label>
-
-    <div class="atm-coti-common atm-coti-common-compact atm-coti-discountbar">
-      <label class="atm-coti-field atm-coti-discount-inline"><span>Descuento comercial</span>
-        <div class="atm-coti-percent-wrap"><input id="atmDescuento" inputmode="decimal" autocomplete="off" placeholder="50" value="50"><span>%</span></div>
-      </label>
-      <div class="atm-coti-presets" aria-label="Descuentos rápidos">
-        <button type="button" data-atm-descuento="30">30%</button>
-        <button type="button" data-atm-descuento="40">40%</button>
-        <button type="button" data-atm-descuento="50">50%</button>
+  <div class="atm-coti-card atm-coti-card-wide quotes-card" role="dialog" aria-modal="true" aria-labelledby="atmCotiTitle">
+    <div class="atm-coti-head quotes-head">
+      <div><small>OFICINAIA</small><h2 id="atmCotiTitle">Cotizaciones</h2><p>Agregá cotizaciones y armá una sola propuesta para el asegurado.</p></div>
+      <div class="quotes-head-actions" aria-label="Acciones de Cotizaciones">
+        <button type="button" class="quotes-calculator-btn" id="quotesCalculatorBtn" title="Calculadora" aria-label="Calculadora">{{ icon('calculator') }}</button>
+        <button type="button" class="atm-coti-close" id="atmCotiClose" aria-label="Cerrar" title="Cerrar">{{ icon('close') }}</button>
       </div>
     </div>
 
-      <p class="atm-capture-status" id="atmCaptureStatus" hidden></p>
+    <div class="quotes-scroll-body" id="quotesScrollBody">
+    <div class="quotes-composer" id="quotesComposer">
+      <textarea id="quotesComposerText" rows="1" placeholder="Pegá una cotización, escribí datos o adjuntá un PDF / captura..."></textarea>
+      <div class="quotes-composer-actions">
+        <button type="button" class="quotes-attach-btn" id="quotesAttachBtn" title="Adjuntar PDF o captura" aria-label="Adjuntar PDF o captura">{{ icon('attach') }}</button>
+        <span class="quotes-composer-hint">Ctrl+V · PDF · PNG · JPG · WEBP</span>
+        <button type="button" class="quotes-send-btn" id="quotesSendBtn">Enviar</button>
+      </div>
+      <input id="quotesFileInput" type="file" accept="application/pdf,.pdf,image/png,.png,image/jpeg,.jpg,.jpeg,image/webp,.webp" hidden>
+      <!-- Compatibilidad: el flujo ATM histórico sigue existiendo, pero ya no se muestra antes de detectar ATM. -->
+      <span data-atm-tab="capture" hidden>Pegá con Ctrl+V o elegí una imagen</span>
+    </div>
+    <p class="quotes-global-status" id="quotesGlobalStatus" hidden></p>
 
-      <div class="atm-coverage-workspace" id="atmCoverageWorkspace">
-        <div class="atm-code-matrix" id="atmCoverageMatrix" aria-label="Coberturas ATM"></div>
-        <div class="atm-selected-summary" id="atmSelectedSummary" hidden></div>
-      </div>
-
-      <div class="atm-capture-actions atm-capture-actions-compact" id="atmCaptureActions" hidden>
-        <button type="button" class="atm-coti-submit" id="atmGenerateProposal">Generar propuesta</button>
-      </div>
-      <div class="atm-proposal atm-proposal-compact" id="atmProposal" hidden>
-        <label>Texto para WhatsApp<textarea id="atmProposalText" rows="5"></textarea></label>
-        <button type="button" class="secondary" id="atmCopyProposal">Copiar texto</button>
-      </div>
-    </section>
-
-    <section class="atm-coti-panel" data-atm-panel="manual" hidden>
-      <div class="atm-coti-form atm-coti-manual-form atm-coti-manual-compact">
-        <label>Precio base / cuponera ATM
-          <input id="atmPrecioBase" inputmode="decimal" autocomplete="off" placeholder="158561">
-        </label>
-        <p class="atm-coti-error" id="atmCotiError" hidden></p>
-        <button type="button" class="atm-coti-submit" id="atmCotiSubmit">Calcular</button>
-      </div>
-      <div class="atm-coti-result atm-coti-result-compact" id="atmCotiResult" hidden>
-        <div class="atm-coti-final-grid">
-          <div class="atm-coti-final-price"><span>Efectivo / cuponera</span><strong id="atmResBaseDto"></strong></div>
-          <div class="atm-coti-final-price"><span>Adherido</span><strong id="atmResAdheridoDto"></strong></div>
+    <div class="quotes-sources" id="quotesSources">
+      <section class="quote-source atm-quote-source" id="atmQuoteSource" hidden>
+        <div class="quote-source-head">
+          <div><b id="atmQuoteSourceTitle">ATM</b><small id="atmQuoteSourceMeta"></small></div>
+          <button type="button" class="quote-source-remove" id="atmQuoteRemove" title="Quitar ATM" aria-label="Quitar ATM">{{ icon('close') }}</button>
         </div>
-        <span class="atm-coti-badge-inline" id="atmCotiBadge"></span>
+        <div class="quote-source-tools">
+          <label class="quote-inline-field">Suma asegurada <span>$</span><input id="atmSumaAsegurada" inputmode="decimal" autocomplete="off" placeholder="Opcional"></label>
+          <label class="quote-inline-field quote-discount-field">Bonificación <input id="atmDescuento" inputmode="decimal" autocomplete="off" value="50"><span>%</span></label>
+          <div class="atm-coti-presets quotes-presets" aria-label="Descuentos rápidos ATM">
+            <button type="button" data-atm-descuento="0">0%</button>
+            <button type="button" data-atm-descuento="30">30%</button>
+            <button type="button" data-atm-descuento="40">40%</button>
+            <button type="button" data-atm-descuento="50">50%</button>
+          </div>
+        </div>
+        <p class="atm-capture-status" id="atmCaptureStatus" hidden></p>
+        <div class="atm-coverage-workspace" id="atmCoverageWorkspace">
+          <div class="quote-subsection-title">Coberturas</div><div class="atm-code-matrix" id="atmCoverageMatrix" aria-label="Coberturas ATM autos"></div>
+          <div class="atm-moto-coverage-row" id="atmMotoCoverageRow" aria-label="Coberturas ATM motos" hidden>
+            <span class="atm-moto-row-label">MOTOS</span>
+            <div class="atm-moto-code-grid" id="atmMotoCoverageMatrix"></div>
+          </div>
+          <div class="quote-subsection-title quote-selected-label" id="atmSelectedLabel" hidden>Seleccionadas</div><div class="atm-selected-summary" id="atmSelectedSummary" hidden></div>
+        </div>
+        <div class="atm-capture-actions" id="atmCaptureActions" hidden></div>
+      </section>
+
+      <section class="quote-source mercantil-quote-source" id="mercantilQuoteSource" hidden>
+        <div class="quote-source-head">
+          <div><b>Mercantil Andina</b><small id="mercantilQuoteMeta"></small></div>
+          <button type="button" class="quote-source-remove" id="mercantilQuoteRemove" title="Quitar Mercantil" aria-label="Quitar Mercantil">{{ icon('close') }}</button>
+        </div>
+        <div class="quote-subsection-title">Coberturas</div><div class="mercantil-code-matrix" id="mercantilCoverageMatrix"></div>
+        <div class="quote-subsection-title quote-selected-label" id="mercantilSelectedLabel" hidden>Seleccionadas</div><div class="mercantil-selected-summary" id="mercantilSelectedSummary" hidden></div>
+      </section>
+
+      <div id="federacionQuoteSources"></div>
+      <div id="manualQuoteSources"></div>
+    </div>
+
+    <div class="quotes-footer" id="quotesFooter" hidden>
+      <span id="quotesSelectionCount">0 alternativas seleccionadas</span>
+      <button type="button" class="atm-coti-submit" id="atmGenerateProposal">Generar mensaje</button>
+      <button type="button" class="quotes-clear-btn" id="quotesClearBtn">Limpiar cotización</button>
+    </div>
+
+    <div class="atm-proposal atm-proposal-compact quotes-proposal" id="atmProposal" hidden>
+      <label>Texto para WhatsApp<textarea id="atmProposalText" rows="7"></textarea></label>
+      <button type="button" class="secondary quotes-whatsapp-copy" id="atmCopyProposal" title="Copiar para WhatsApp" aria-label="Copiar para WhatsApp"><img src="{{ static_asset('img/herramientas/whatsapp.png') }}" alt="" aria-hidden="true"></button>
+    </div>
+
+    </div><!-- /quotes-scroll-body -->
+
+    <aside class="quotes-calculator" id="quotesCalculator" hidden>
+      <div class="quotes-calculator-head"><b>Calculadora</b><button type="button" id="quotesCalculatorClose" aria-label="Cerrar calculadora">{{ icon('close') }}</button></div>
+      <div class="quotes-calc-grid">
+        <label>Precio<input id="quotesCalcPrice" inputmode="decimal" placeholder="150000"></label>
+        <label>Descuento %<input id="quotesCalcDiscount" inputmode="decimal" placeholder="35"></label>
+        <div class="quotes-calc-result"><small>Resultado</small><strong id="quotesCalcResult">—</strong></div>
       </div>
-    </section>
+      <div class="quotes-atm-quick">
+        <b>Cálculo rápido ATM</b>
+        <div class="quotes-calc-grid quotes-calc-grid-atm">
+          <label>Precio cuponera<input id="atmPrecioBase" inputmode="decimal" autocomplete="off" placeholder="158561"></label>
+          <label>Tipo<select id="quotesCalcAtmType"><option value="auto">Auto</option><option value="moto">Moto</option></select></label>
+          <label>Bonificación %<input id="quotesCalcAtmDiscount" inputmode="decimal" value="50"></label>
+          <div class="quotes-calc-atm-actions">
+            <button type="button" class="atm-coti-submit" id="atmCotiSubmit">Calcular ATM</button>
+          </div>
+        </div>
+        <p class="atm-coti-error" id="atmCotiError" hidden></p>
+        <div class="atm-coti-result atm-coti-result-compact" id="atmCotiResult" hidden>
+          <div class="atm-coti-final-grid">
+            <div class="atm-coti-final-price"><span>Cuponera</span><strong id="atmResBaseDto"></strong></div>
+            <div class="atm-coti-final-price"><span>Adherido</span><strong id="atmResAdheridoDto"></strong></div>
+          </div>
+          <span class="atm-coti-badge-inline" id="atmCotiBadge"></span>
+        </div>
+      </div>
+    </aside>
   </div>
 </div>
 
 <div class="modal" id="notaModal" hidden>
   <div>
-    <button type="button" id="notaModalCerrar">×</button>
+    <button type="button" id="notaModalCerrar">{{ icon('close') }}</button>
     <h2 id="notaModalTitulo">Nueva nota</h2>
     <form id="notaForm">
       <input type="hidden" id="notaId">
@@ -251,9 +290,9 @@
           <b>${esc(n.titulo)}</b>
           ${preview?`<small>${esc(preview)}</small>`:''}
         </span>
-        <button type="button" class="nota-orden" data-act="subir" title="Subir prioridad" aria-label="Subir prioridad"${i===0?' disabled':''}>↑</button>
-        <button type="button" class="nota-orden" data-act="bajar" title="Bajar prioridad" aria-label="Bajar prioridad"${i===notas.length-1?' disabled':''}>↓</button>
-        <button type="button" class="nota-edit" data-act="editar" title="Editar" aria-label="Editar nota">✎</button>
+        <button type="button" class="nota-orden" data-act="subir" title="Subir prioridad" aria-label="Subir prioridad"${i===0?' disabled':''}>${oiaIconHtml('arrow-up')}</button>
+        <button type="button" class="nota-orden" data-act="bajar" title="Bajar prioridad" aria-label="Bajar prioridad"${i===notas.length-1?' disabled':''}>${oiaIconHtml('arrow-down')}</button>
+        <button type="button" class="nota-edit" data-act="editar" title="Editar" aria-label="Editar nota">${oiaIconHtml('edit')}</button>
       </div>`;
     }).join('');
   }

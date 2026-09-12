@@ -1,0 +1,15 @@
+{% from "_icons.html" import icon %}
+{% macro render_global_actions(extra_class='') -%}
+<div class="global-actions {{ extra_class }}" aria-label="Accesos globales">
+  <time id="fechaHoy" class="global-date" aria-label="Fecha actual"></time>
+  <div class="appearance-controls" role="group" aria-label="Apariencia">
+    <button type="button" class="theme-toggle theme-switch" id="themeToggle" title="Cambiar tema" aria-label="Cambiar tema claro u oscuro">
+      <span class="theme-switch-icon theme-switch-sun" aria-hidden="true">{{ icon('sun') }}</span>
+      <span class="theme-switch-knob" aria-hidden="true"></span>
+      <span class="theme-switch-icon theme-switch-moon" aria-hidden="true">{{ icon('moon') }}</span>
+    </button>
+  </div>
+  <a class="global-action global-settings" href="{{url_for('configuracion')}}" title="Configuración" aria-label="Configuración">{{ icon('settings') }}</a>
+  <a class="global-action global-logout" href="{{url_for('logout')}}" title="Cerrar sesión" aria-label="Cerrar sesión">{{ icon('logout') }}</a>
+</div>
+{%- endmacro %}
