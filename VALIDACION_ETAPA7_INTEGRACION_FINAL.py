@@ -93,7 +93,7 @@ def test_capabilities_y_arca_integrados_sin_inventar() -> None:
     check(arca.formatear_cuit("20301234567") == "20-30123456-7", "CUIT se formatea para el productor")
 
     chat_commands_code = read("chat_commands.py")
-    check("def parsear_cuit_arca" in chat_commands_code and "^/cuit" in chat_commands_code, "parser/comando /cuit integrado")
+    check("def parsear_cuit_arca" in chat_commands_code and "(?:cuit|cuil)" in chat_commands_code, "parser compartido /cuit y /cuil integrado")
 
 
 def test_persisten_validadores_por_etapa() -> None:

@@ -4585,3 +4585,561 @@ html[data-theme="dark"] body.chat-layout .file-attached-item.wa-composer-attachm
   body.chat-layout .wa-attachment-card.wa-attachment-image,
   body.chat-layout .wa-attachment-card.wa-attachment-image .wa-photo-preview{min-height:98px !important}
 }
+
+/* ETAPA 1 · Envíos Masivos → CSV Envíos Ya */
+.envios-head p,.envios-card-head p,.envios-preview-head p{margin:.25rem 0 0;color:var(--muted,#6b7280);font-size:.9rem}
+.envios-manual-grid{display:grid;grid-template-columns:repeat(4,minmax(150px,1fr));gap:10px;margin-top:12px;width:100%}
+.envios-manual-grid label{display:flex;flex-direction:column;gap:6px;font-size:.82rem;font-weight:600}
+.envios-manual-grid select{min-width:0;width:100%;padding:9px 10px;border:1px solid rgba(127,127,127,.28);border-radius:8px;background:var(--surface,#fff);color:inherit}
+.envios-map-row{display:block}
+.envios-export-card small{display:block;margin-top:4px;color:var(--muted,#6b7280)}
+@media (max-width:900px){.envios-manual-grid{grid-template-columns:1fr 1fr}}
+@media (max-width:560px){.envios-manual-grid{grid-template-columns:1fr}}
+
+
+/* ==========================================================
+   ETAPA 2 — Composer WhatsApp + adjuntos clickeables + dictado
+   Aislado del flujo de envío: no modifica enviarMensaje().
+   ========================================================== */
+.chat-file-input{display:none!important}
+.composer-wrap{position:relative!important;padding:10px 12px 12px!important}
+.composer{
+  width:calc(100% - 8px)!important;max-width:none!important;min-height:50px!important;
+  margin:0 4px!important;padding:5px 6px!important;gap:6px!important;border-radius:16px!important;
+}
+.composer textarea{flex:1 1 auto!important;min-width:0!important;padding:8px 4px!important}
+.composer-action-btn,.slash-btn,.dictation-btn,.send{
+  width:38px!important;height:38px!important;min-width:38px!important;display:grid!important;
+  place-items:center!important;padding:0!important;line-height:1!important;flex:0 0 auto;
+}
+.composer-action-btn,.dictation-btn{
+  border:0!important;border-radius:50%!important;background:transparent!important;color:var(--muted,#667384)!important;cursor:pointer;
+}
+.composer-action-btn img{width:19px;height:19px;display:block}
+.dictation-btn .chat-ui-icon{width:18px;height:18px;display:block}
+.composer-action-btn:hover,.composer-action-btn[aria-expanded="true"],.dictation-btn:hover{
+  background:var(--hover,#eef2f4)!important;color:var(--teal,#315A72)!important;
+}
+.slash-btn{border:0!important;border-radius:50%!important;background:transparent!important;color:var(--muted,#667384)!important;font-size:19px!important;font-weight:700!important}
+.slash-btn:hover{background:var(--hover,#eef2f4)!important;color:var(--teal,#315A72)!important}
+.send{border-radius:11px!important}
+.send .send-icon{width:18px;height:18px;display:block;object-fit:contain}
+.notas-toolbar{left:max(12px,calc((100% - 980px)/2))!important;bottom:64px!important}
+.notas-btn{display:none!important}
+.notas-panel{bottom:0!important;left:0!important}
+.chat-action-menu{
+  position:absolute;left:16px;bottom:68px;z-index:42;width:min(260px,calc(100% - 32px));
+  max-height:min(430px,65vh);overflow:auto;padding:7px;border:1px solid var(--line,#dfe5ea);
+  border-radius:14px;background:var(--surface,#fff);box-shadow:0 12px 34px rgba(18,32,51,.16);
+}
+.chat-action-menu[hidden]{display:none!important}
+.chat-action-item{width:100%;min-height:48px;display:flex;align-items:center;gap:11px;padding:7px 9px;border:0;border-radius:10px;background:transparent;color:var(--ink,#25313c);text-align:left;cursor:pointer}
+.chat-action-item:hover{background:var(--hover,#f2f5f7)}
+.chat-action-icon{width:31px;height:31px;flex:0 0 31px;border-radius:9px;display:grid;place-items:center;background:color-mix(in srgb,var(--tealbg,#eef3f6) 80%,transparent)}
+.chat-action-icon img{width:17px;height:17px;display:block;object-fit:contain}
+.chat-action-item>span:last-child{min-width:0;display:grid;gap:1px}.chat-action-item b{font-size:13px;font-weight:650;line-height:1.2}.chat-action-item small{font-size:11px;color:var(--soft,#7b8794);line-height:1.2}
+.chat-command-menu{left:auto!important;right:58px!important;bottom:68px!important;width:min(390px,calc(100% - 84px))!important;max-height:min(310px,55vh)!important;overflow-y:auto!important;padding:6px!important;border-radius:14px!important;background:var(--surface,#fff)!important;box-shadow:0 12px 34px rgba(18,32,51,.16)!important}
+.chat-command-menu[hidden]{display:none!important}.chat-command-item{display:flex!important;align-items:center!important;justify-content:space-between!important;gap:16px!important;min-height:38px!important;padding:7px 9px!important;border-radius:9px!important}
+.chat-command-item strong{font-size:12.5px!important;font-weight:700!important;white-space:nowrap}.chat-command-item small{font-size:11px!important;opacity:.68!important;text-align:right;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.file-attached{width:calc(100% - 8px)!important;max-width:none!important;margin:0 4px 8px!important}
+.dictation-btn.is-listening{color:#c84d4d!important;background:rgba(200,77,77,.10)!important;animation:dictationPulse 1.25s ease-in-out infinite}.dictation-btn.is-unavailable{opacity:.48}@keyframes dictationPulse{0%,100%{transform:scale(1)}50%{transform:scale(1.07)}}
+body.chat-layout .wa-attachment-card.wa-attachment-image .wa-photo-preview{cursor:zoom-in}
+body.chat-layout .wa-attachment-card.wa-attachment-image .wa-photo-preview:focus-visible{outline:2px solid currentColor;outline-offset:2px}
+.chat-image-lightbox[hidden]{display:none!important}.chat-image-lightbox{position:fixed;inset:0;z-index:2400;display:flex;align-items:center;justify-content:center;padding:34px;background:rgba(6,12,17,.88);backdrop-filter:blur(2px)}
+.chat-image-lightbox img{display:block;max-width:min(94vw,1400px);max-height:90vh;width:auto;height:auto;object-fit:contain;border-radius:8px;box-shadow:0 18px 60px rgba(0,0,0,.42)}
+.chat-image-lightbox-close{position:fixed;top:18px;right:22px;width:40px;height:40px;border:0;border-radius:50%;background:rgba(255,255,255,.14);color:#fff;font-size:28px;line-height:1;cursor:pointer}.chat-image-lightbox-close:hover{background:rgba(255,255,255,.24)}body.chat-lightbox-open{overflow:hidden}
+html[data-theme="dark"] .chat-action-menu,html[data-theme="dark"] .chat-command-menu{background:var(--surface,#1e2730)!important;border-color:var(--line,#33404d)!important}html[data-theme="dark"] .chat-action-item{color:var(--ink,#edf2f6)}html[data-theme="dark"] .composer-action-btn,html[data-theme="dark"] .dictation-btn{color:var(--muted,#aab5c0)!important}
+@media(max-width:800px){.composer-wrap{padding:8px 8px 10px!important}.composer{width:100%!important;margin:0!important}.chat-action-menu{left:8px;bottom:64px;width:min(260px,calc(100% - 16px))}.chat-command-menu{left:8px!important;right:8px!important;bottom:64px!important;width:auto!important}}
+@media(max-width:560px){.chat-image-lightbox{padding:18px}.chat-image-lightbox-close{top:10px;right:10px}}
+
+
+/* ETAPA 2 · Ajuste visual final tomado del composer aprobado */
+.chat-action-icon{background:#eef3f6!important;overflow:hidden}
+.chat-action-icon img{width:18px;height:18px;object-fit:contain;display:block}
+html[data-theme="dark"] .chat-action-icon{background:#24343d!important}
+html[data-theme="dark"] .chat-action-icon img{filter:brightness(1.45)}
+body.chat-layout .composer-wrap{padding:8px 10px 10px!important;background:var(--surface,#fff)!important}
+body.chat-layout .composer{width:100%!important;margin:0!important;min-height:48px!important;padding:5px 7px!important;border-radius:15px!important;box-shadow:0 1px 2px rgba(11,20,26,.08)!important}
+.composer-action-btn,.slash-btn,.dictation-btn,.send{width:36px!important;height:36px!important;min-width:36px!important;border-radius:50%!important;border:0!important;display:grid!important;place-items:center!important}
+.send{background:#315a72!important;border-radius:50%!important}.send .send-icon{width:18px;height:18px}.composer.has-attachments{box-shadow:0 0 0 1px rgba(49,90,114,.12),0 1px 2px rgba(11,20,26,.08)!important}
+body.chat-layout .wa-attachment-card.wa-attachment-image{background:#d9dee2!important;overflow:hidden!important;cursor:zoom-in!important}
+body.chat-layout .wa-attachment-card.wa-attachment-image .wa-attachment-info{display:none!important}
+body.chat-layout .wa-attachment-card.wa-attachment-image .wa-photo-preview{width:100%!important;height:100%!important;object-fit:cover!important;cursor:zoom-in!important;outline:none!important}
+body.chat-layout .wa-attachment-card.wa-attachment-image .wa-photo-preview:focus-visible{box-shadow:inset 0 0 0 3px rgba(49,90,114,.55)!important}
+body.chat-layout .file-attached{width:100%!important;max-width:none!important;margin:0 0 7px!important;padding:7px 8px!important;border:0!important;border-radius:12px!important;background:#f5f7f8!important}
+body.chat-layout .file-attached-list{display:flex!important;flex-wrap:wrap!important;justify-content:flex-start!important;gap:7px!important}
+body.chat-layout .file-attached-item.wa-composer-attachment{width:132px!important;flex:0 0 132px!important}
+body.chat-layout .file-attached-item.wa-composer-attachment .wa-attachment-card.wa-attachment-image{width:132px!important;height:92px!important;min-height:92px!important;aspect-ratio:auto!important;border-radius:10px!important}
+body.chat-layout .file-attached-item.wa-composer-attachment .wa-photo-preview{width:132px!important;height:92px!important;min-height:92px!important}
+body.chat-layout .file-attached-item.wa-composer-attachment .file-attached-remove{width:25px!important;height:25px!important;top:5px!important;right:5px!important;font-size:18px!important;line-height:1!important;background:rgba(17,27,33,.72)!important;color:#fff!important}
+html[data-theme="dark"] body.chat-layout .file-attached{background:#17232a!important}
+body.chat-layout .wa-sent-attachments{max-width:360px!important;gap:3px!important}
+body.chat-layout .wa-sent-attachments .wa-attachment-image{border-radius:9px!important}
+body.chat-layout .wa-sent-attachments .wa-photo-preview{min-height:120px!important}
+@media(max-width:560px){body.chat-layout .file-attached-item.wa-composer-attachment{width:112px!important;flex-basis:112px!important}body.chat-layout .file-attached-item.wa-composer-attachment .wa-attachment-card.wa-attachment-image,body.chat-layout .file-attached-item.wa-composer-attachment .wa-photo-preview{width:112px!important;height:82px!important;min-height:82px!important}}
+
+/* ETAPA 3 — Persistencia visual de fichas operativas históricas */
+.insured-profile-row{margin-top:2px!important}
+.insured-profile-card{width:min(560px,100%);border:1px solid var(--line,#e2e7ea);border-radius:14px;padding:14px;background:var(--panel,#fff)}
+.insured-profile-header{display:flex;align-items:flex-start;justify-content:space-between;gap:12px;margin-bottom:12px}
+.insured-profile-header small{display:block;font-size:10.5px;letter-spacing:.08em;color:var(--muted,#667384);font-weight:700;margin-bottom:3px}
+.insured-profile-header strong{font-size:16px;line-height:1.25}
+.insured-profile-badge{font-size:11.5px;background:var(--hover,#eef2f4);border-radius:999px;padding:5px 8px;color:var(--muted,#667384);white-space:nowrap}
+.insured-profile-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px;margin-bottom:12px}
+.insured-profile-fact{min-width:0;background:var(--hover,#f5f7f8);border-radius:9px;padding:8px 9px}
+.insured-profile-fact span{display:block;font-size:10.5px;color:var(--muted,#667384);margin-bottom:2px}
+.insured-profile-fact b{display:block;font-size:13px;overflow-wrap:anywhere}
+.insured-profile-section-title{font-size:11px;text-transform:uppercase;letter-spacing:.06em;color:var(--muted,#667384);font-weight:700;margin:4px 0 6px}
+.insured-profile-vehicles{display:flex;flex-direction:column;gap:6px}
+.insured-profile-vehicle{border-top:1px solid var(--line,#e2e7ea);padding:8px 1px 2px}
+.insured-profile-vehicle-main{display:flex;flex-direction:column;gap:2px}
+.insured-profile-vehicle-main strong{font-size:13.5px}
+.insured-profile-vehicle-main small{font-size:11.5px;color:var(--muted,#667384);overflow-wrap:anywhere}
+.insured-profile-actions{display:flex;gap:7px;margin-top:12px}
+html[data-theme="dark"] .insured-profile-card{background:var(--panel,#20272c)}
+html[data-theme="dark"] .insured-profile-fact,html[data-theme="dark"] .insured-profile-badge{background:rgba(255,255,255,.055)}
+@media(max-width:700px){.insured-profile-card{width:94%;padding:12px}.insured-profile-grid{grid-template-columns:1fr}}
+
+
+/* ===== ETAPA 4 — Cédula: evidencia MOTOR/CHASIS + revisión compacta ===== */
+.cedula-card:not(.personal-document-card) .cedula-review-brief{
+  margin:1px 0 5px;
+  padding:5px 7px;
+  border-left:3px solid rgba(184,122,24,.72);
+  border-radius:7px;
+  background:rgba(184,122,24,.075);
+  color:var(--ink);
+  font-size:calc(11px * var(--font-scale,1));
+  line-height:1.35;
+  font-weight:700;
+}
+.cedula-card:not(.personal-document-card) .cedula-review-details{margin:0 0 8px}
+.cedula-card:not(.personal-document-card) .cedula-review-details>summary{
+  cursor:pointer;color:var(--muted);font-size:calc(11px * var(--font-scale,1));
+  line-height:1.35;font-weight:650;user-select:none;
+}
+.cedula-card:not(.personal-document-card) .cedula-review-details .cedula-doubt{margin:6px 0 0}
+.cedula-card:not(.personal-document-card) .cedula-crop{cursor:zoom-in}
+.cedula-card:not(.personal-document-card) .cedula-crop:focus{
+  outline:2px solid var(--teal);outline-offset:2px;
+}
+
+/* Cédula → Alta: una sola entrada compacta al formulario existente. */
+.cedula-alta-actions{
+  display:flex;align-items:center;gap:8px;flex-wrap:wrap;
+  margin-top:9px;padding-top:8px;border-top:1px solid var(--line);
+}
+.cedula-preparar-alta{
+  min-height:32px!important;padding:6px 11px!important;font-size:calc(12px * var(--font-scale,1))!important;
+  flex:0 0 auto!important;width:auto!important;
+}
+.cedula-alta-actions small{
+  color:var(--muted);font-size:calc(10.5px * var(--font-scale,1));line-height:1.3;max-width:390px;
+}
+.alta-prefill-warning{
+  margin:7px 0 9px;padding:6px 8px;border-radius:8px;
+  border-left:3px solid rgba(184,122,24,.72);background:rgba(184,122,24,.075);
+  color:var(--ink);font-size:calc(11px * var(--font-scale,1));line-height:1.35;font-weight:680;
+}
+.alta-prefill-warning[hidden]{display:none!important}
+.alta-compact-item.needs-review,.alta-edit-field.needs-review{
+  box-shadow:inset 0 0 0 1px rgba(184,122,24,.46);
+  background:rgba(184,122,24,.055);
+}
+.alta-field-review-note{
+  display:block;margin-top:4px;color:var(--muted);font-size:calc(10.5px * var(--font-scale,1));line-height:1.3;font-weight:650;
+}
+html[data-theme="dark"] .cedula-card:not(.personal-document-card) .cedula-review-brief,
+html[data-theme="dark"] .alta-prefill-warning,
+html[data-theme="dark"] .alta-compact-item.needs-review,
+html[data-theme="dark"] .alta-edit-field.needs-review{background:rgba(217,154,52,.10)}
+@media(max-width:700px){
+  .cedula-alta-actions{align-items:flex-start}
+  .cedula-alta-actions small{flex-basis:100%}
+}
+
+/* ==========================================================
+   RECUPERACIÓN UX CHAT APROBADA — brocha/header + ATM
+   No altera lectores de documentos ni lógica de cédulas.
+   ========================================================== */
+.chat-ui-icon,.send-icon{
+  display:block;
+  width:18px;
+  height:18px;
+  object-fit:contain;
+  flex:0 0 auto;
+}
+html[data-theme="dark"] .chat-ui-icon{filter:brightness(1.45) saturate(.85)}
+
+/* Brocha del ZIP de referencia: dos fondos simples y persistentes. */
+body.chat-layout .chat[data-wallpaper="soft"] .history,
+body.chat-layout .chat:not([data-wallpaper]) .history{
+  background-color:#efeae2 !important;
+  background-image:
+    radial-gradient(circle at 18px 18px,rgba(84,101,111,.045) 1.2px,transparent 1.5px),
+    radial-gradient(circle at 58px 52px,rgba(84,101,111,.028) 1px,transparent 1.4px) !important;
+  background-size:76px 76px,92px 92px !important;
+}
+body.chat-layout .chat[data-wallpaper="clean"] .history{
+  background:#f4f2ee !important;
+  background-image:none !important;
+}
+html[data-theme="dark"] body.chat-layout .chat[data-wallpaper="soft"] .history,
+html[data-theme="dark"] body.chat-layout .chat:not([data-wallpaper]) .history{
+  background-color:#0b141a !important;
+  background-image:
+    radial-gradient(circle at 18px 18px,rgba(255,255,255,.025) 1.2px,transparent 1.5px),
+    radial-gradient(circle at 58px 52px,rgba(255,255,255,.018) 1px,transparent 1.4px) !important;
+  background-size:76px 76px,92px 92px !important;
+}
+html[data-theme="dark"] body.chat-layout .chat[data-wallpaper="clean"] .history{background:#0b141a !important;background-image:none !important}
+.chat-wallpaper-menu{min-width:132px !important;right:38px !important;padding:5px !important}
+.chat-wallpaper-menu button{padding:8px 10px !important;font-size:12px !important}
+body.chat-layout .chat>header .chat-visual-btn,
+body.chat-layout .chat>header .chat-clear-danger.clear-chat{
+  width:34px !important;
+  height:34px !important;
+  min-width:34px !important;
+  padding:0 !important;
+  display:grid !important;
+  place-items:center !important;
+  border-radius:10px !important;
+}
+body.chat-layout .chat>header .chat-ui-icon{width:18px !important;height:18px !important}
+
+/* Cotizador ATM determinístico recuperado del ZIP de referencia. */
+.atm-coti-modal{position:fixed;inset:0;z-index:2200;display:grid;place-items:center;padding:20px;background:rgba(10,18,24,.38);backdrop-filter:blur(2px)}
+.atm-coti-modal[hidden]{display:none!important}
+.atm-coti-card{position:relative;width:min(460px,calc(100vw - 28px));max-height:calc(100vh - 34px);overflow:auto;background:var(--panel,#fff);color:var(--ink,#17212b);border:1px solid var(--line,#dce3e8);border-radius:18px;box-shadow:0 18px 55px rgba(0,0,0,.24);padding:20px}
+.atm-coti-close{position:absolute;right:12px;top:12px;width:34px;height:34px;border:0;border-radius:50%;background:var(--hover,#eef2f5);color:inherit;font-size:22px;line-height:1;cursor:pointer}
+.atm-coti-head small{display:block;font-size:11px;font-weight:800;letter-spacing:.12em;color:var(--soft,#6e7b86);margin-bottom:2px}
+.atm-coti-head h2{font-size:20px;margin:0 0 18px}
+.atm-coti-form{display:grid;gap:14px}
+.atm-coti-form label,.atm-coti-field{display:grid;gap:6px;font-size:12px;font-weight:700;color:var(--soft,#64717d)}
+.atm-coti-form input{width:100%;box-sizing:border-box;height:42px;border:1px solid var(--line,#d8e0e5);border-radius:10px;background:var(--surface,#fff);color:var(--ink,#17212b);padding:0 12px;font:inherit;outline:none}
+.atm-coti-form input:focus{border-color:#4f8fab;box-shadow:0 0 0 3px rgba(79,143,171,.13)}
+.atm-coti-segmented{display:grid;grid-template-columns:1fr 1fr;gap:8px}
+.atm-coti-segmented button,.atm-coti-presets button{border:1px solid var(--line,#d8e0e5);background:var(--surface,#fff);color:var(--ink,#17212b);border-radius:10px;cursor:pointer;height:40px;font-weight:700}
+.atm-coti-segmented button small{margin-left:5px;color:var(--soft,#70808b);font-weight:600}
+.atm-coti-segmented button.active{background:#e5f4f7;border-color:#75aebd;color:#0e5364}
+.atm-coti-percent-wrap{position:relative}
+.atm-coti-percent-wrap input{padding-right:34px}
+.atm-coti-percent-wrap>span{position:absolute;right:12px;top:50%;transform:translateY(-50%);font-weight:800;color:var(--soft,#6e7b86)}
+.atm-coti-presets{display:flex;gap:8px;margin-top:-5px}
+.atm-coti-presets button{height:32px;padding:0 14px;font-size:12px}
+.atm-coti-presets button:hover,.atm-coti-segmented button:hover{background:var(--hover,#f1f5f7)}
+.atm-coti-help{margin:-3px 0 0;font-size:11px;color:var(--soft,#77838d);line-height:1.35}
+.atm-coti-error{margin:0;padding:9px 11px;border-radius:9px;background:#fff0f0;color:#a12e2e;font-size:12px;font-weight:650}
+.atm-coti-submit{height:43px;border:0;border-radius:11px;background:#15324a;color:#fff;font-weight:800;cursor:pointer}
+.atm-coti-submit:hover{filter:brightness(1.08)}
+.atm-coti-result{margin-top:18px;border-top:1px solid var(--line,#dce3e8);padding-top:16px;display:grid;gap:12px}
+.atm-coti-result[hidden]{display:none!important}
+.atm-coti-result-head{display:flex;align-items:center;justify-content:space-between}
+.atm-coti-result-head>span{font-size:12px;font-weight:800;background:#e5f4f7;color:#0e5364;border-radius:999px;padding:4px 9px}
+.atm-coti-price-group{border:1px solid var(--line,#dce3e8);border-radius:12px;padding:12px;background:var(--surface,#fff);display:grid;gap:8px}
+.atm-coti-kicker{font-size:10px;font-weight:900;letter-spacing:.1em;color:var(--soft,#74818b)}
+.atm-coti-price-group>div{display:flex;justify-content:space-between;gap:16px;align-items:baseline;font-size:13px}
+.atm-coti-price-group strong{font-size:16px;white-space:nowrap}
+html[data-theme="dark"] .atm-coti-card{background:#111c23;border-color:#2c3b45;color:#edf2f6}
+html[data-theme="dark"] .atm-coti-form input,html[data-theme="dark"] .atm-coti-segmented button,html[data-theme="dark"] .atm-coti-presets button,html[data-theme="dark"] .atm-coti-price-group{background:#18252d;border-color:#334650;color:#edf2f6}
+html[data-theme="dark"] .atm-coti-segmented button.active{background:#183943;border-color:#4d8795;color:#d9f5fb}
+html[data-theme="dark"] .atm-coti-error{background:#382128;color:#ffccd1}
+html[data-theme="dark"] .atm-coti-result-head>span{background:#183943;color:#d9f5fb}
+@media(max-width:600px){.atm-coti-modal{padding:10px}.atm-coti-card{padding:17px;border-radius:15px}.atm-coti-price-group strong{font-size:15px}}
+
+/* ==========================================================
+   OFICINAIA · Centro de acciones + Cotización ATM unificada
+   ========================================================== */
+.chat-action-menu{
+  overflow-x:hidden!important;
+  max-height:min(420px,64vh)!important;
+  scrollbar-gutter:stable;
+}
+.chat-action-item{min-height:46px!important;padding:6px 8px!important;gap:10px!important}
+.chat-action-icon{width:30px!important;height:30px!important;flex-basis:30px!important;border-radius:9px!important}
+.chat-action-item[data-chat-action="document"] .chat-action-icon{background:#e9f2ff!important}
+.chat-action-item[data-chat-action="photos"] .chat-action-icon{background:#f2eafe!important}
+.chat-action-item[data-chat-action="photos"] .chat-action-icon img{filter:hue-rotate(60deg) saturate(1.45)}
+.chat-action-item[data-chat-action="dictation"] .chat-action-icon{background:#fff1df!important}
+.chat-action-item[data-chat-action="dictation"] .chat-action-icon img{filter:sepia(1) saturate(4) hue-rotate(345deg)}
+.chat-action-item[data-chat-action="portfolio"] .chat-action-icon{background:#e5f7ef!important}
+.chat-action-item[data-chat-action="portfolio"] .chat-action-icon img{filter:hue-rotate(80deg) saturate(1.3)}
+.chat-action-item[data-chat-action="alta"] .chat-action-icon{background:#e8f8f4!important}
+.chat-action-item[data-chat-action="alta"] .chat-action-icon img{filter:hue-rotate(70deg) saturate(1.4)}
+.chat-action-item[data-chat-action="cuit"] .chat-action-icon{background:#e8f7fb!important}
+.chat-action-item[data-chat-action="atm"] .chat-action-icon{background:#f7e7eb!important}
+.chat-action-item[data-chat-action="atm"] .chat-action-icon img{filter:sepia(1) saturate(3.8) hue-rotate(305deg) brightness(.78)}
+.chat-action-item[data-chat-action="mail"] .chat-action-icon{background:#ffebec!important;color:#b83a45!important;font-size:16px!important;font-weight:800}
+.chat-action-item[data-chat-action="notes"] .chat-action-icon{background:#fff5d9!important}
+.chat-action-item[data-chat-action="notes"] .chat-action-icon img{filter:sepia(1) saturate(2.8) hue-rotate(350deg)}
+.chat-action-glyph{font-family:Arial,sans-serif}
+html[data-theme="dark"] .chat-action-item .chat-action-icon{filter:none!important}
+html[data-theme="dark"] .chat-action-item[data-chat-action="document"] .chat-action-icon{background:#172c44!important}
+html[data-theme="dark"] .chat-action-item[data-chat-action="photos"] .chat-action-icon{background:#30233f!important}
+html[data-theme="dark"] .chat-action-item[data-chat-action="dictation"] .chat-action-icon{background:#3b2b19!important}
+html[data-theme="dark"] .chat-action-item[data-chat-action="portfolio"] .chat-action-icon,
+html[data-theme="dark"] .chat-action-item[data-chat-action="alta"] .chat-action-icon{background:#17352d!important}
+html[data-theme="dark"] .chat-action-item[data-chat-action="cuit"] .chat-action-icon{background:#18343d!important}
+html[data-theme="dark"] .chat-action-item[data-chat-action="atm"] .chat-action-icon,
+html[data-theme="dark"] .chat-action-item[data-chat-action="mail"] .chat-action-icon{background:#3c232a!important}
+html[data-theme="dark"] .chat-action-item[data-chat-action="notes"] .chat-action-icon{background:#3a321d!important}
+
+/* Los slash siguen disponibles, pero visualmente son un atajo secundario. */
+.slash-btn{opacity:.72!important;font-size:17px!important}
+.slash-btn:hover{opacity:1!important}
+
+/* Cotizador ATM: compacto, una sola herramienta, dos entradas. */
+.atm-coti-card.atm-coti-card-wide{width:min(640px,calc(100vw - 28px));padding:18px!important}
+.atm-coti-head{padding-right:38px}
+.atm-coti-head h2{margin-bottom:3px!important}
+.atm-coti-head p{margin:0 0 14px;color:var(--soft,#73808a);font-size:12px}
+.atm-coti-common{display:grid;grid-template-columns:1fr 1fr;gap:10px 12px;padding:11px;border:1px solid var(--line,#dce3e8);border-radius:13px;background:var(--surface,#fff)}
+.atm-coti-common .atm-coti-presets{grid-column:1/-1;margin:0}
+.atm-coti-tabs{display:grid;grid-template-columns:1fr 1fr;gap:5px;margin:12px 0 10px;padding:4px;background:var(--hover,#f0f3f5);border-radius:11px}
+.atm-coti-tabs button{height:34px;border:0;border-radius:8px;background:transparent;color:var(--soft,#667480);font-weight:750;cursor:pointer}
+.atm-coti-tabs button.active{background:var(--panel,#fff);color:var(--ink,#17212b);box-shadow:0 1px 3px rgba(13,28,38,.11)}
+.atm-coti-panel[hidden]{display:none!important}
+.atm-coti-manual-form{gap:10px!important}
+.atm-coti-final-grid{display:grid;grid-template-columns:1fr 1fr;gap:9px}
+.atm-coti-final-price{border:1px solid var(--line,#dce3e8);background:var(--surface,#fff);border-radius:12px;padding:12px;display:grid;gap:5px}
+.atm-coti-final-price span{font-size:11px;color:var(--soft,#71808b);font-weight:700}
+.atm-coti-final-price strong{font-size:19px;line-height:1.1}
+.atm-capture-drop{display:grid;place-items:center;text-align:center;gap:3px;min-height:92px;border:1.5px dashed #9fb2be;border-radius:13px;background:var(--surface,#fff);cursor:pointer;padding:12px}
+.atm-capture-drop:hover,.atm-capture-drop.drag{border-color:#6b93a7;background:#f4f9fb}
+.atm-capture-drop b{font-size:13px}.atm-capture-drop span{font-size:11px;color:var(--soft,#74818c)}
+.atm-capture-status{margin:9px 0 0;padding:8px 10px;border-radius:9px;background:var(--hover,#f1f4f6);font-size:12px;color:var(--soft,#65737e)}
+.atm-capture-status.error{background:#fff0f0;color:#a12e2e}.atm-capture-status.ok{background:#eaf7ef;color:#236a45}
+.atm-coverages{display:grid;gap:7px;margin-top:10px}
+.atm-coverage-row{border:1px solid var(--line,#dce3e8);border-radius:12px;background:var(--surface,#fff);padding:9px 10px;display:grid;grid-template-columns:auto minmax(0,1fr) 112px;gap:8px;align-items:center}
+.atm-coverage-row.is-review{border-color:#d9ad5f;background:#fffaf0}
+.atm-coverage-check{width:17px;height:17px;accent-color:#315a72}
+.atm-coverage-main{min-width:0}.atm-coverage-main b{display:block;font-size:12.5px;line-height:1.25}.atm-coverage-main small{display:block;margin-top:2px;font-size:10.5px;color:var(--soft,#73808a);line-height:1.25}
+.atm-coverage-price{display:grid;gap:4px}.atm-coverage-price input{width:100%;height:32px!important;padding:0 8px!important;font-size:12px!important;text-align:right}
+.atm-coverage-final{display:flex;justify-content:flex-end;gap:7px;flex-wrap:wrap;font-size:10.5px;color:var(--soft,#73808a)}
+.atm-coverage-final strong{color:var(--ink,#17212b);font-size:11px}
+.atm-franchise{display:flex;align-items:center;gap:5px;margin-top:5px;font-size:10.5px;color:var(--soft,#73808a)}
+.atm-franchise input{width:58px!important;height:27px!important;padding:0 6px!important;font-size:11px!important}.atm-franchise span{font-weight:800}
+.atm-capture-actions{display:flex;gap:8px;justify-content:flex-end;margin-top:10px}.atm-capture-actions .atm-coti-submit{min-width:155px;padding:0 14px}.atm-capture-actions .secondary{height:43px}
+.atm-proposal{display:grid;gap:7px;margin-top:10px;border-top:1px solid var(--line,#dce3e8);padding-top:10px}
+.atm-proposal label{font-size:11px;font-weight:750;color:var(--soft,#687680);display:grid;gap:5px}.atm-proposal textarea{width:100%;box-sizing:border-box;border:1px solid var(--line,#d8e0e5);border-radius:10px;background:var(--surface,#fff);color:var(--ink,#17212b);padding:10px;resize:vertical;font:inherit;font-size:12px;line-height:1.45}
+.atm-proposal .secondary{justify-self:end}
+html[data-theme="dark"] .atm-coti-common,html[data-theme="dark"] .atm-capture-drop,html[data-theme="dark"] .atm-coverage-row,html[data-theme="dark"] .atm-coti-final-price,html[data-theme="dark"] .atm-proposal textarea{background:#18252d;border-color:#334650;color:#edf2f6}
+html[data-theme="dark"] .atm-coti-tabs{background:#152129}html[data-theme="dark"] .atm-coti-tabs button.active{background:#24343d;color:#edf2f6}
+html[data-theme="dark"] .atm-coverage-row.is-review{background:#382f1e;border-color:#806b3e}
+@media(max-width:650px){.atm-coti-common{grid-template-columns:1fr}.atm-coti-common .atm-coti-presets{grid-column:auto}.atm-coti-final-grid{grid-template-columns:1fr}.atm-coverage-row{grid-template-columns:auto minmax(0,1fr)}.atm-coverage-price{grid-column:2}.atm-capture-actions{flex-direction:column}.atm-capture-actions>*{width:100%}.atm-coti-card.atm-coti-card-wide{width:min(520px,calc(100vw - 16px));padding:14px!important}}
+
+/* CSV/Excel desde el chat */
+.envios-chat-card{width:min(560px,100%);border:1px solid var(--line,#dce3e8);border-radius:13px;background:var(--panel,#fff);padding:12px;display:grid;gap:10px}
+.envios-chat-summary{display:flex;gap:8px;flex-wrap:wrap}.envios-chat-stat{background:var(--hover,#f2f5f7);border-radius:9px;padding:7px 9px;display:grid;gap:1px;min-width:92px}.envios-chat-stat b{font-size:14px}.envios-chat-stat span{font-size:10px;color:var(--soft,#74818b)}
+.envios-chat-map{display:grid;gap:8px}.envios-chat-map article{border-top:1px solid var(--line,#dce3e8);padding-top:8px}.envios-chat-map b{font-size:12px}.envios-chat-map-grid{display:grid;grid-template-columns:1fr 1fr;gap:6px;margin-top:6px}.envios-chat-map label{display:grid;gap:3px;font-size:10px;color:var(--soft,#74818b)}.envios-chat-map select{height:34px;border:1px solid var(--line,#dce3e8);border-radius:8px;background:var(--surface,#fff);color:var(--ink,#17212b);font-size:11px;padding:0 7px}
+.envios-chat-actions{display:flex;gap:7px;justify-content:flex-end}.envios-chat-actions button,.envios-chat-actions a{min-height:36px;padding:0 12px;border-radius:9px;font-size:12px;font-weight:750;display:inline-flex;align-items:center;justify-content:center;text-decoration:none}.envios-chat-primary{border:0;background:#315a72;color:#fff;cursor:pointer}.envios-chat-secondary{border:1px solid var(--line,#dce3e8);background:var(--surface,#fff);color:var(--ink,#17212b);cursor:pointer}
+html[data-theme="dark"] .envios-chat-card{background:#17232a;border-color:#334650}html[data-theme="dark"] .envios-chat-map select{background:#18252d;border-color:#334650;color:#edf2f6}
+@media(max-width:560px){.envios-chat-map-grid{grid-template-columns:1fr}.envios-chat-actions{flex-direction:column}.envios-chat-actions>*{width:100%;box-sizing:border-box}}
+
+
+/* ==========================================================
+   ETAPA PULIDO 2026-09-12 · UI compacta sin barras visibles
+   ========================================================== */
+/* Centro de acciones: entran las 9 acciones en desktop; en pantallas bajas
+   sigue pudiendo desplazarse con rueda/touch, pero jamás muestra scrollbar. */
+.chat-action-menu{
+  width:min(272px,calc(100% - 24px))!important;
+  max-height:min(472px,calc(100dvh - 92px))!important;
+  overflow-y:auto!important;
+  overflow-x:hidden!important;
+  scrollbar-width:none!important;
+  -ms-overflow-style:none!important;
+  scrollbar-gutter:auto!important;
+}
+.chat-action-menu::-webkit-scrollbar{display:none!important;width:0!important;height:0!important}
+.chat-action-item{min-height:45px!important;padding:5px 8px!important}
+
+/* El botón físico / se retiró del template. Esta regla evita que una versión
+   cacheada/legacy lo vuelva visible por CSS. Los comandos escritos siguen vivos. */
+.slash-btn{display:none!important}
+
+/* Visor real de pantalla completa: el JS lo mueve a body para evitar clipping
+   del chat-window. El backdrop uniforme incluye barra superior y sidebar. */
+body.chat-lightbox-open>.chat-image-lightbox{
+  position:fixed!important;inset:0!important;width:100vw!important;height:100dvh!important;
+  z-index:99999!important;padding:clamp(18px,3vw,42px)!important;
+  background:rgba(8,14,19,.78)!important;
+  -webkit-backdrop-filter:blur(7px) saturate(.9)!important;
+  backdrop-filter:blur(7px) saturate(.9)!important;
+}
+body.chat-lightbox-open>.chat-image-lightbox img{
+  max-width:min(94vw,1500px)!important;max-height:92dvh!important;
+  border-radius:10px!important;box-shadow:0 24px 80px rgba(0,0,0,.48)!important;
+}
+body.chat-lightbox-open>.chat-image-lightbox .chat-image-lightbox-close{
+  top:14px!important;right:16px!important;z-index:2!important;
+}
+
+/* Conversaciones cede ancho al trabajo. Sigue siendo plegable y no aparece
+   ninguna barra/panel adicional. */
+body.chat-layout .page.chat-page{padding:8px 16px 10px!important;max-width:none!important}
+body.chat-layout .chat-page .chat-shell{grid-template-columns:184px minmax(0,1fr)!important}
+body.chat-layout .chat-list{min-width:0!important}
+body.chat-layout .chat-list-head{padding-left:9px!important;padding-right:8px!important}
+body.chat-layout .chat-list-items{padding-left:6px!important;padding-right:6px!important}
+body.chat-layout .history{padding-left:3.2%!important;padding-right:3.2%!important}
+html[data-chat-list="collapsed"] body.chat-layout .chat-page .chat-shell{grid-template-columns:0 minmax(0,1fr)!important}
+@media(max-width:1050px){
+  body.chat-layout .page.chat-page{padding-left:10px!important;padding-right:10px!important}
+  body.chat-layout .chat-page .chat-shell{grid-template-columns:168px minmax(0,1fr)!important}
+}
+@media(max-width:850px){
+  body.chat-layout .page.chat-page{padding:0!important}
+  body.chat-layout .chat-page .chat-shell{grid-template-columns:1fr!important}
+}
+
+/* ==========================================================
+   ETAPA ATM MATRIZ 2026-09-12 · Ctrl+V + códigos compactos
+   ========================================================== */
+.atm-coti-card.atm-coti-card-wide{
+  width:min(840px,calc(100vw - 28px))!important;
+  max-height:calc(100dvh - 24px)!important;
+  overflow:visible!important;
+  padding:14px 16px!important;
+  border-radius:16px!important;
+}
+.atm-coti-head{padding-right:38px!important}
+.atm-coti-head h2{font-size:19px!important;margin:0!important}
+.atm-coti-head p{margin:2px 0 8px!important;font-size:11px!important}
+.atm-coti-head small{font-size:9px!important}
+.atm-coti-close{width:30px!important;height:30px!important;right:10px!important;top:10px!important;font-size:20px!important}
+
+.atm-coti-common.atm-coti-common-compact{
+  display:grid!important;
+  grid-template-columns:minmax(220px,1.2fr) minmax(150px,.72fr) auto!important;
+  align-items:end!important;
+  gap:8px!important;
+  padding:7px 9px!important;
+  border-radius:10px!important;
+}
+.atm-coti-type-inline,.atm-coti-discount-inline{gap:3px!important}
+.atm-coti-common .atm-coti-field>span{font-size:10px!important}
+.atm-coti-common .atm-coti-segmented{gap:5px!important}
+.atm-coti-common .atm-coti-segmented button{height:31px!important;border-radius:8px!important;font-size:11px!important}
+.atm-coti-common .atm-coti-segmented button small{font-size:9px!important}
+.atm-coti-common .atm-coti-percent-wrap input{height:31px!important;border-radius:8px!important;font-size:11px!important;padding:0 28px 0 8px!important}
+.atm-coti-common .atm-coti-percent-wrap>span{font-size:10px!important;right:8px!important}
+.atm-coti-common .atm-coti-presets{grid-column:auto!important;display:flex!important;gap:4px!important;margin:0!important;align-items:center!important;padding-bottom:0!important}
+.atm-coti-common .atm-coti-presets button{height:31px!important;min-width:42px!important;padding:0 8px!important;border-radius:8px!important;font-size:10px!important}
+
+.atm-coti-tabs{margin:8px 0 7px!important;padding:3px!important;border-radius:9px!important}
+.atm-coti-tabs button{height:29px!important;border-radius:7px!important;font-size:11px!important}
+
+.atm-capture-drop.atm-capture-drop-compact{
+  min-height:38px!important;
+  height:38px!important;
+  padding:0 10px!important;
+  display:flex!important;
+  align-items:center!important;
+  justify-content:flex-start!important;
+  gap:7px!important;
+  text-align:left!important;
+  border-radius:9px!important;
+}
+.atm-capture-drop-compact .atm-capture-paste-icon{
+  display:inline-grid;place-items:center;flex:0 0 21px;width:21px;height:21px;border-radius:6px;
+  background:#e8f3f7;color:#285c72;font-size:15px;font-weight:800;line-height:1;
+}
+.atm-capture-drop-compact b{font-size:11px!important;white-space:nowrap}
+.atm-capture-drop-compact small{margin-left:auto;font-size:9px;color:var(--soft,#77838d);white-space:nowrap}
+.atm-capture-drop-compact.has-file{border-style:solid!important;border-color:#88b9a0!important;background:#f4fbf6!important}
+.atm-capture-drop-compact:focus{outline:none;box-shadow:0 0 0 3px rgba(79,143,171,.13)}
+html[data-theme="dark"] .atm-capture-drop-compact.has-file{background:#173126!important;border-color:#38674f!important}
+
+.atm-capture-status{
+  margin:5px 0 0!important;padding:5px 7px!important;min-height:24px!important;box-sizing:border-box;
+  font-size:10px!important;line-height:1.25!important;border-radius:7px!important;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;
+}
+
+.atm-coverage-workspace{margin-top:7px;display:grid;gap:7px}
+.atm-code-matrix{
+  display:grid;
+  grid-template-columns:repeat(9,minmax(44px,1fr));
+  gap:5px;
+  align-items:center;
+}
+.atm-code-slot{position:relative;min-width:0}
+.atm-code-slot-tr{grid-column:span 4;display:grid;grid-template-columns:54px 1fr;gap:5px;align-items:center}
+.atm-code-cell{
+  position:relative;width:100%;height:31px;border:1px solid var(--line,#d8e0e5);border-radius:7px;
+  background:var(--surface,#fff);color:var(--ink,#17212b);font-weight:850;font-size:11px;cursor:pointer;
+  padding:0 6px;transition:background .12s,border-color .12s,box-shadow .12s,opacity .12s;
+}
+.atm-code-cell:hover:not(.is-unavailable){background:#eef7fa;border-color:#77a9ba}
+.atm-code-cell.active{background:#dff2f7;border-color:#5c9caf;color:#104f61;box-shadow:inset 0 0 0 1px rgba(44,116,139,.08)}
+.atm-code-cell.is-unavailable{opacity:.38;cursor:default;background:var(--hover,#f2f4f5)}
+.atm-code-cell.is-pending-map{border-style:dashed}
+.atm-code-cell.is-review{border-color:#d1a14d;box-shadow:inset 0 -2px 0 #d1a14d}
+.atm-code-cell:focus-visible{outline:none;box-shadow:0 0 0 3px rgba(79,143,171,.15)}
+
+.atm-tr-franchises{display:flex;gap:4px;min-width:0}
+.atm-franchise-chip{
+  flex:1;min-width:42px;height:31px;padding:0 7px;border:1px solid var(--line,#d8e0e5);border-radius:7px;
+  background:var(--surface,#fff);color:var(--ink,#17212b);font-size:10px;font-weight:800;cursor:pointer;
+}
+.atm-franchise-chip.active{background:#dff2f7;border-color:#5c9caf;color:#104f61}
+
+.atm-selected-summary{
+  display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:5px;
+}
+.atm-selected-item{
+  min-height:34px;display:grid;grid-template-columns:44px 1fr 1fr;align-items:center;gap:5px;
+  padding:4px 6px;border:1px solid var(--line,#dce3e8);border-radius:7px;background:var(--surface,#fff);
+}
+.atm-selected-item>b{font-size:10px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.atm-selected-item>span{display:grid;gap:0;min-width:0;text-align:right}
+.atm-selected-item small{font-size:7.5px;color:var(--soft,#74818b);line-height:1.1;text-transform:uppercase;letter-spacing:.03em}
+.atm-selected-item strong{font-size:10px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+
+.atm-capture-actions.atm-capture-actions-compact{margin-top:7px!important;display:flex!important;justify-content:flex-end!important}
+.atm-capture-actions-compact .atm-coti-submit{height:34px!important;min-width:150px!important;border-radius:8px!important;font-size:11px!important}
+.atm-capture-actions-compact .atm-coti-submit:disabled{opacity:.45;cursor:not-allowed;filter:none}
+
+.atm-proposal.atm-proposal-compact{margin-top:7px!important;padding-top:7px!important;grid-template-columns:1fr auto;align-items:end;gap:6px!important}
+.atm-proposal-compact label{font-size:9px!important;gap:3px!important}
+.atm-proposal-compact textarea{min-height:86px!important;max-height:112px!important;padding:7px 8px!important;font-size:10.5px!important;line-height:1.3!important;resize:none!important}
+.atm-proposal-compact .secondary{height:34px!important;min-width:100px;font-size:10px!important}
+
+.atm-coti-manual-compact{grid-template-columns:1fr 145px;align-items:end;gap:8px!important}
+.atm-coti-manual-compact label{font-size:10px!important;gap:3px!important}
+.atm-coti-manual-compact input{height:34px!important;border-radius:8px!important;font-size:11px!important}
+.atm-coti-manual-compact .atm-coti-submit{height:34px!important;border-radius:8px!important;font-size:11px!important}
+.atm-coti-manual-compact .atm-coti-error{grid-column:1/-1;margin:0!important;padding:5px 7px!important;font-size:10px!important}
+.atm-coti-result.atm-coti-result-compact{margin-top:7px!important;padding-top:7px!important;display:grid!important;grid-template-columns:1fr auto;gap:6px!important;align-items:center}
+.atm-coti-result-compact[hidden]{display:none!important}
+.atm-coti-result-compact .atm-coti-final-grid{gap:6px!important}
+.atm-coti-result-compact .atm-coti-final-price{padding:7px 9px!important;border-radius:8px!important;gap:2px!important}
+.atm-coti-result-compact .atm-coti-final-price span{font-size:9px!important}
+.atm-coti-result-compact .atm-coti-final-price strong{font-size:15px!important}
+.atm-coti-badge-inline{font-size:10px;font-weight:800;padding:4px 7px;border-radius:999px;background:#e5f4f7;color:#0e5364;white-space:nowrap}
+
+html[data-theme="dark"] .atm-code-cell,html[data-theme="dark"] .atm-franchise-chip,html[data-theme="dark"] .atm-selected-item{
+  background:#18252d;border-color:#334650;color:#edf2f6
+}
+html[data-theme="dark"] .atm-code-cell.active,html[data-theme="dark"] .atm-franchise-chip.active{background:#183943;border-color:#4d8795;color:#d9f5fb}
+html[data-theme="dark"] .atm-code-cell.is-unavailable{background:#152129}
+
+@media(max-width:760px){
+  .atm-coti-modal{place-items:start center!important;overflow-y:auto!important;padding:8px!important}
+  .atm-coti-card.atm-coti-card-wide{width:min(620px,calc(100vw - 10px))!important;max-height:none!important;overflow:visible!important;padding:12px!important;margin:auto 0!important}
+  .atm-coti-common.atm-coti-common-compact{grid-template-columns:1fr 150px!important}
+  .atm-coti-common .atm-coti-presets{grid-column:1/-1!important}
+  .atm-code-matrix{grid-template-columns:repeat(5,minmax(44px,1fr))}
+  .atm-code-slot-tr{grid-column:span 3}
+  .atm-selected-summary{grid-template-columns:repeat(2,minmax(0,1fr))}
+}
+@media(max-width:480px){
+  .atm-coti-common.atm-coti-common-compact{grid-template-columns:1fr!important}
+  .atm-coti-common .atm-coti-presets{grid-column:auto!important}
+  .atm-code-matrix{grid-template-columns:repeat(4,minmax(42px,1fr))}
+  .atm-code-slot-tr{grid-column:span 4}
+  .atm-selected-summary{grid-template-columns:1fr}
+  .atm-capture-drop-compact small{display:none}
+  .atm-coti-manual-compact{grid-template-columns:1fr}
+  .atm-proposal.atm-proposal-compact{grid-template-columns:1fr}
+}

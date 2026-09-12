@@ -35,10 +35,14 @@ Este archivo documenta **nombres reales usados por el proyecto**. No debe conten
 
 ## Ajustes de Gemini ya soportados
 
-- `GEMINI_HTTP_TIMEOUT_MS`
-- `GEMINI_REQUEST_BUDGET_SECONDS`
-- `GEMINI_MIN_REMAINING_SECONDS`
-- `GEMINI_DOCUMENT_BUDGET_SECONDS`
+- `GEMINI_HTTP_TIMEOUT_MS` — timeout general/documental del SDK.
+- `GEMINI_REQUEST_BUDGET_SECONDS` — presupuesto general de una operación de IA.
+- `GEMINI_MIN_REMAINING_SECONDS` — margen mínimo antes de iniciar otro intento.
+- `GEMINI_DOCUMENT_BUDGET_SECONDS` — presupuesto ampliado para cédulas/PDF/imágenes.
+- `GEMINI_CHAT_BUDGET_SECONDS` — presupuesto del chat interactivo (35 s por defecto).
+- `GEMINI_CHAT_HTTP_TIMEOUT_MS` — timeout por llamada del chat normal (10 s por defecto).
+- `GEMINI_CHAT_SMALLTALK_TIMEOUT_MS` — timeout por intento para saludos/charla trivial (5,5 s por defecto). La ruta liviana prioriza `gemini-3.5-flash-lite`, permite como máximo un segundo intento con `gemini-3.8-flash` ante fallo transitorio y recién después usa el fallback local mínimo.
+- `GEMINI_CHAT_THINKING_LEVEL` — `low` por defecto para priorizar latencia en chat; admite `low`, `medium` o `high`.
 
 ## Ajustes de búsqueda documental ya soportados
 

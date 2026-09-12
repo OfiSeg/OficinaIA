@@ -153,6 +153,42 @@ function formatoTamArchivo(bytes){
   if(n>=1024)return Math.round(n/1024)+' KB';
   return n+' B';
 }
+function abrirLightboxImagen(src,alt='Imagen ampliada'){
+  const modal=document.getElementById('chatImageLightbox');
+  const img=document.getElementById('chatImageLightboxImg');
+  if(!modal||!img||!src)return;
+  // El visor debe cubrir TODO el viewport. Dentro de .chat-window podía quedar
+  // recortado por el overflow del contenedor (la franja superior seguía nítida).
+  if(modal.parentElement!==document.body)document.body.appendChild(modal);
+  img.src=src;
+  img.alt=alt||'Imagen ampliada';
+  modal.hidden=false;
+  modal.setAttribute('aria-hidden','false');
+  document.body.classList.add('chat-lightbox-open');
+}
+function cerrarLightboxImagen(){
+  const modal=document.getElementById('chatImageLightbox');
+  const img=document.getElementById('chatImageLightboxImg');
+  if(!modal)return;
+  modal.hidden=true;
+  modal.setAttribute('aria-hidden','true');
+  if(img)img.removeAttribute('src');
+  document.body.classList.remove('chat-lightbox-open');
+}
+function inicializarLightboxChat(){
+  const modal=document.getElementById('chatImageLightbox');
+  if(!modal)return;
+  // Sacarlo de chat-window evita cualquier clipping por overflow y hace que el
+  // blur/oscurecido incluya también barra superior, sidebar y conversaciones.
+  if(modal.parentElement!==document.body)document.body.appendChild(modal);
+  const close=document.getElementById('chatImageLightboxClose');
+  if(modal.dataset.wired==='1')return;
+  modal.dataset.wired='1';
+  close?.addEventListener('click',cerrarLightboxImagen);
+  modal.addEventListener('click',e=>{if(e.target===modal)cerrarLightboxImagen()});
+  document.addEventListener('keydown',e=>{if(e.key==='Escape'&&!modal.hidden)cerrarLightboxImagen()});
+}
+
 function iconoAdjuntoWhatsApp(tipo){
   if(tipo==='pdf')return 'PDF';
   if(tipo==='sheet')return 'XLS';
@@ -170,7 +206,17 @@ function crearVistaAdjuntoWhatsApp(file,indice=0,{compact=false,sent=false}={}){
     const img=document.createElement('img');
     img.className='wa-photo-preview';
     img.alt=nombreArchivoSeguro(file,indice);
-    try{img.src=URL.createObjectURL(file)}catch(_){card.classList.add('wa-no-preview')}
+    try{
+      const objectUrl=URL.createObjectURL(file);
+      img.src=objectUrl;
+      img.dataset.objectUrl=objectUrl;
+      const abrir=()=>abrirLightboxImagen(objectUrl,img.alt);
+      img.addEventListener('click',abrir);
+      img.addEventListener('keydown',e=>{if(e.key==='Enter'||e.key===' '){e.preventDefault();abrir()}});
+      img.tabIndex=0;
+      img.role='button';
+      img.title='Abrir imagen';
+    }catch(_){card.classList.add('wa-no-preview')}
     card.appendChild(img);
   }
 
@@ -198,6 +244,29 @@ function crearVistaAdjuntoHistoricoWhatsApp(nombre,indice=0){
   const card=crearVistaAdjuntoWhatsApp(fake,indice,{compact:true,sent:true});
   card.classList.add('is-historical');
   card.querySelector('img')?.remove();
+  return card;
+}
+function crearVistaAdjuntoPersistenteWhatsApp(asset,indice=0){
+  if(!asset||typeof asset!=='object')return null;
+  const fake={name:asset.name||`Adjunto ${indice+1}`,size:Number(asset.size||0),type:asset.mime||''};
+  const tipo=tipoArchivoVisual(fake);
+  const card=crearVistaAdjuntoWhatsApp(fake,indice,{compact:true,sent:true});
+  card.classList.add('is-persisted');
+  const url=String(asset.url||'');
+  if(tipo==='image'&&url){
+    let img=card.querySelector('img');
+    if(!img){img=document.createElement('img');img.className='wa-photo-preview';card.prepend(img)}
+    img.src=url;img.alt=fake.name;
+    const abrir=()=>abrirLightboxImagen(url,fake.name);
+    img.addEventListener('click',abrir);
+    img.addEventListener('keydown',e=>{if(e.key==='Enter'||e.key===' '){e.preventDefault();abrir()}});
+    img.tabIndex=0;img.role='button';img.title='Abrir imagen';
+  }else if(url){
+    card.tabIndex=0;card.role='button';card.title='Abrir adjunto';
+    const abrir=()=>window.open(url,'_blank','noopener');
+    card.addEventListener('click',abrir);
+    card.addEventListener('keydown',e=>{if(e.key==='Enter'||e.key===' '){e.preventDefault();abrir()}});
+  }
   return card;
 }
 function parsearAdjuntosHistoricosUsuario(texto){
@@ -231,20 +300,23 @@ function agregarMensajeUsuarioConAdjuntos(texto,archivos=[]){
   limpiarMetadataVisualMensajes(r);
   return r;
 }
-function agregarMensajeUsuarioHistorico(texto){
+function agregarMensajeUsuarioHistorico(texto,metadata={}){
+  const md=(metadata&&typeof metadata==='object')?metadata:{};
+  const persistidos=Array.isArray(md.attachments)?md.attachments:[];
   const parsed=parsearAdjuntosHistoricosUsuario(texto);
-  if(!parsed.adjuntos.length)return add('user',texto||'');
-  const c=chatContainer();
-  if(!c)return null;
-  const r=document.createElement('div');
-  r.className='msg user';
-  const b=document.createElement('div');
-  b.className='bubble';
-  const stack=document.createElement('div');
-  stack.className='wa-sent-attachments is-historical';
-  parsed.adjuntos.forEach((nombre,idx)=>{const card=crearVistaAdjuntoHistoricoWhatsApp(nombre,idx);if(card)stack.appendChild(card)});
+  const adjuntos=persistidos.length?persistidos:parsed.adjuntos;
+  const displayText=Object.prototype.hasOwnProperty.call(md,'display_text')?String(md.display_text||''):String(parsed.texto||'');
+  if(!adjuntos.length)return add('user',displayText||texto||'');
+  const c=chatContainer();if(!c)return null;
+  const r=document.createElement('div');r.className='msg user';
+  const b=document.createElement('div');b.className='bubble';
+  const stack=document.createElement('div');stack.className='wa-sent-attachments is-historical';
+  adjuntos.forEach((item,idx)=>{
+    const card=(item&&typeof item==='object')?crearVistaAdjuntoPersistenteWhatsApp(item,idx):crearVistaAdjuntoHistoricoWhatsApp(item,idx);
+    if(card)stack.appendChild(card);
+  });
   if(stack.children.length)b.appendChild(stack);
-  const cuerpo=String(parsed.texto||'').trim();
+  const cuerpo=displayText.trim();
   if(cuerpo){const txt=document.createElement('div');txt.className='wa-user-message-text';txt.textContent=cuerpo;b.appendChild(txt)}
   r.appendChild(b);c.appendChild(r);limpiarMetadataVisualMensajes(r);return r;
 }
@@ -282,19 +354,32 @@ function wireWelcomeWorkflows(root){
 
 function usarSugerencia(t){const i=document.getElementById('mensaje');if(i){i.value=t;size();i.focus()}}
 let currentChatId=null;
+// Evita que initChat() y el primer envío creen/abran conversaciones al mismo tiempo.
+// El envío espera a que termine únicamente la inicialización ya en curso;
+// el botón no se bloquea ni cambia de estado mientras espera.
+let chatInitInProgress=false;
+let chatInitReadyPromise=Promise.resolve();
+let resolveChatInitReady=null;
 let archivosAdjuntosChat=[];
 let composerEditSeq=0;
+// Dictado a texto: Web Speech API del navegador. No llama al backend ni envía solo.
+let dictationRecognition=null;
+let dictationActive=false;
+let dictationBaseText='';
+let dictationFinalText='';
+let dictationCancelRequested=false;
+let dictationProgrammaticUpdate=false;
 let attachmentEditSeq=0;
 function historialParaApi(){const c=document.getElementById('chat');return c?[...c.querySelectorAll('.msg')].map(x=>({rol:x.classList.contains('user')?'user':'assistant',contenido:(x.querySelector('.bubble')?.textContent?.trim()||'').slice(0,2000)})).filter(x=>x.contenido).slice(-8):[]}
 let _chatsCache=[];
 let _chatSearchQuery='';
 
 const CHAT_WALLPAPER_KEY='oficinaia_chat_wallpaper';
-const CHAT_WALLPAPERS=['classic','soft','clean'];
+const CHAT_WALLPAPERS=['soft','clean'];
 
 function aplicarFondoChat(valor){
   const chat=document.getElementById('chatDropZone');
-  const elegido=CHAT_WALLPAPERS.includes(valor)?valor:'classic';
+  const elegido=CHAT_WALLPAPERS.includes(valor)?valor:'soft';
   if(chat)chat.dataset.wallpaper=elegido;
   try{localStorage.setItem(CHAT_WALLPAPER_KEY,elegido)}catch(_){}
   document.querySelectorAll('#chatWallpaperMenu [data-wallpaper]').forEach(btn=>{
@@ -314,8 +399,8 @@ function ocultarMenuFondosChat(){
 function inicializarVisualChatWhatsApp(){
   const btn=document.getElementById('chatWallpaperBtn');
   const menu=document.getElementById('chatWallpaperMenu');
-  let guardado='classic';
-  try{guardado=localStorage.getItem(CHAT_WALLPAPER_KEY)||'classic'}catch(_){}
+  let guardado='soft';
+  try{guardado=localStorage.getItem(CHAT_WALLPAPER_KEY)||'soft'}catch(_){}
   aplicarFondoChat(guardado);
   if(!btn||!menu||btn.dataset.wired==='1')return;
   btn.dataset.wired='1';
@@ -517,8 +602,13 @@ async function abrirChat(id){
   }else{
     c.classList.remove('history-empty');
     d.mensajes.forEach(m=>{
-      if(m.rol==='user')agregarMensajeUsuarioHistorico(m.contenido);
-      else add(m.rol,m.contenido);
+      if(m.rol==='user')agregarMensajeUsuarioHistorico(m.contenido,m.metadata||{});
+      else{
+        const ui=(m?.metadata?.ui&&typeof m.metadata.ui==='object')?m.metadata.ui:{};
+        const visible=textoVisibleAsistente(m.contenido,ui);
+        if(visible)add(m.rol,visible);
+        renderizarUiPersistida(m);
+      }
     });
     scrollToBottom(false);
   }
@@ -773,12 +863,65 @@ function crearConfirmacionCedula({datos,clave,etiqueta,box,code,badge,onConfirma
   return wrap;
 }
 
-function mostrarCedulaDetectada(datos,advertencias=[]){
+async function persistirConfirmacionesCedula(messageId,datos){
+  const id=Number(messageId||0);
+  if(!id||!currentChatId||!datos||typeof datos!=='object')return;
+  const confirmaciones={};
+  ['patente','motor','chasis'].forEach(clave=>{
+    if(String(datos['estado_'+clave]||'').toLowerCase()!=='confirmado_productor')return;
+    const valor=String(datos[clave]||'').trim();
+    if(valor)confirmaciones[clave]=valor;
+  });
+  if(!Object.keys(confirmaciones).length)return;
+  try{
+    await fetch(`/api/chats/${currentChatId}/messages/${id}/ui-state`,{
+      method:'PATCH',headers:{'Content-Type':'application/json'},credentials:'same-origin',
+      body:JSON.stringify({ui_state:{cedula_confirmaciones:confirmaciones}})
+    });
+  }catch(_){}
+}
+
+function aplicarConfirmacionesCedulaPersistidas(datos,uiState){
+  if(!datos||typeof datos!=='object')return datos;
+  const confirmaciones=(uiState&&typeof uiState.cedula_confirmaciones==='object')?uiState.cedula_confirmaciones:{};
+  ['patente','motor','chasis'].forEach(clave=>{
+    const valor=String(confirmaciones[clave]||'').trim();
+    if(!valor)return;
+    datos[clave]=valor;
+    datos['estado_'+clave]='confirmado_productor';
+    datos['fuente_verificacion_'+clave]='producer';
+  });
+  return datos;
+}
+
+function prefillAltaDesdeCedula(datos,base={}){
+  const campos={...(base&&typeof base==='object'?base:{})};
+  campos.LIBRO_ID=String(campos.LIBRO_ID||'1');
+  campos.ASEGURADO=String(datos?.titular||campos.ASEGURADO||'').trim();
+  const vehiculo=[datos?.marca,datos?.modelo,datos?.anio].map(x=>String(x||'').trim()).filter(Boolean).filter((v,i,a)=>a.findIndex(x=>x.toUpperCase()===v.toUpperCase())===i).join(' ');
+  if(vehiculo)campos.VEHICULO=vehiculo;
+  if(String(datos?.patente||'').trim())campos.PATENTE=String(datos.patente).trim().toUpperCase().replace(/\s+/g,'');
+  ['POLIZA','NUMERO','ENVIOS YA','CIA','MEDIO DE PAGO','CP','EMITIDO DÍA:','IMPORTE APROX','MAIL','TELEFONO'].forEach(k=>{if(campos[k]==null)campos[k]=''});
+  return campos;
+}
+function revisionesAltaDesdeCedula(datos,base={}){
+  const revisiones={...(base&&typeof base==='object'?base:{})};
+  if(estadoCriticoConfiable(datos?.estado_patente))delete revisiones.PATENTE;
+  else if(String(datos?.patente||'').trim())revisiones.PATENTE=revisiones.PATENTE||'Lectura de patente para confirmar con la cédula antes de guardar.';
+  return revisiones;
+}
+
+function mostrarCedulaDetectada(datos,advertencias=[],opciones={}){
   const c=document.getElementById('chat');
   if(!c||!datos||typeof datos!=='object')return;
+  const opts=(opciones&&typeof opciones==='object')?opciones:{};
+  const messageId=Number(opts.messageId||0);
+  const uiState=(opts.uiState&&typeof opts.uiState==='object')?opts.uiState:{};
+  aplicarConfirmacionesCedulaPersistidas(datos,uiState);
+
   const r=document.createElement('div');r.className='msg assistant';
   const b=document.createElement('div');b.className='bubble cedula-card';
-  const titulo=document.createElement('div');titulo.className='alta-compact-title';titulo.textContent='Cédula detectada';b.appendChild(titulo);
+  const titulo=document.createElement('div');titulo.className='alta-compact-title';titulo.textContent='Cédula detectada'+(datos.caras_combinadas?' · frente + dorso':'');b.appendChild(titulo);
 
   const meta=[];
   const vehiculo=[datos.marca,datos.modelo,datos.anio].filter(Boolean).join(' ');
@@ -826,21 +969,42 @@ function mostrarCedulaDetectada(datos,advertencias=[]){
     const badge=document.createElement('span');badge.className='cedula-status';badge.textContent=etiquetaConfianza(estado,coincidencias);
     head.append(lab,badge);box.appendChild(head);
     const code=document.createElement('code');code.className='cedula-code';code.textContent=valor||'—';box.appendChild(code);
-    if(dudas.length){
-      const det=document.createElement('div');det.className='cedula-doubt';
-      dudas.slice(0,8).forEach(d=>{const linea=document.createElement('div');linea.textContent=String(d);det.appendChild(linea)});
-      box.appendChild(det);
+
+    if(!confiable){
+      const aviso=document.createElement('div');aviso.className='cedula-review-brief';
+      aviso.textContent=estado.toLowerCase()==='no_legible'?'⚠ Lectura para confirmar · no pude leer este dato con seguridad.':'⚠ Lectura para confirmar · verificá este dato antes de utilizarlo.';
+      box.appendChild(aviso);
+      if(dudas.length){
+        const details=document.createElement('details');details.className='cedula-review-details';
+        const summary=document.createElement('summary');summary.textContent='¿Por qué debo revisarlo?';
+        const det=document.createElement('div');det.className='cedula-doubt';
+        dudas.slice(0,8).forEach(d=>{const linea=document.createElement('div');linea.textContent=String(d);det.appendChild(linea)});
+        details.addEventListener('toggle',()=>{summary.textContent=details.open?'Ocultar detalles':'¿Por qué debo revisarlo?'});
+        details.append(summary,det);box.appendChild(details);
+      }
     }
-    if(recorte&&!confiable){
+
+    // MOTOR/CHASIS: conservar la evidencia visual derivada del documento real.
+    // No se realiza una nueva consulta a Gemini: sólo se renderiza el crop que
+    // ya vino en cedula_detectada y se abre con el lightbox común del chat.
+    if(recorte&&(clave==='motor'||clave==='chasis')){
       const details=document.createElement('details');details.className='cedula-crop-details';
-      const summary=document.createElement('summary');summary.textContent='Ver ampliado';
-      const img=document.createElement('img');img.className='cedula-crop';img.alt='Recorte ampliado de '+etiqueta;img.src=recorte;
+      const summary=document.createElement('summary');summary.textContent='Ver recorte';
+      const img=document.createElement('img');img.className='cedula-crop';img.alt='Recorte de '+etiqueta;img.src=recorte;
+      const abrir=()=>abrirLightboxImagen(recorte,img.alt);
+      img.addEventListener('click',abrir);
+      img.addEventListener('keydown',e=>{if(e.key==='Enter'||e.key===' '){e.preventDefault();abrir()}});
+      img.tabIndex=0;img.role='button';img.title='Abrir imagen';
       details.append(summary,img);box.appendChild(details);
     }
+
     if(confiable){
       const btn=botonCopiarCampo(valor,'Copiar '+etiqueta.toLowerCase());if(btn)box.appendChild(btn);
     }else{
-      box.appendChild(crearConfirmacionCedula({datos,clave,etiqueta,box,code,badge,onConfirmada:refrescarAcciones}));
+      box.appendChild(crearConfirmacionCedula({datos,clave,etiqueta,box,code,badge,onConfirmada:()=>{
+        refrescarAcciones();
+        if(messageId)persistirConfirmacionesCedula(messageId,datos);
+      }}));
     }
     return box;
   };
@@ -851,7 +1015,30 @@ function mostrarCedulaDetectada(datos,advertencias=[]){
 
   refrescarAcciones();
   b.appendChild(acciones);
-  if(Array.isArray(advertencias)&&advertencias.length){const w=document.createElement('div');w.className='cedula-warning';w.textContent=advertencias.slice(0,4).join(' ');b.appendChild(w)}
+
+  if(!opts.altaYaPreparada){
+    const altaAcciones=document.createElement('div');altaAcciones.className='cedula-alta-actions';
+    const prepararAlta=document.createElement('button');prepararAlta.type='button';prepararAlta.className='excel-proposal-save cedula-preparar-alta';prepararAlta.textContent='Preparar alta';
+    const altaAyuda=document.createElement('small');altaAyuda.textContent='Abre el mismo Alta / asegurado para revisar, completar y recién después guardar en Excel.';
+    prepararAlta.addEventListener('click',()=>{
+      const campos=prefillAltaDesdeCedula(datos,opts.altaPrefill||{});
+      const revisiones=revisionesAltaDesdeCedula(datos,opts.altaRevisiones||{});
+      mostrarOpcionesAltaAsegurado(null,campos,{origen:'cedula',revisiones});
+      prepararAlta.disabled=true;prepararAlta.textContent='✓ Alta preparada';
+      const cards=document.querySelectorAll('.alta-compact-card[data-alta-activa="1"]');
+      const ultima=cards[cards.length-1];if(ultima)ultima.scrollIntoView({behavior:'smooth',block:'nearest'});
+    });
+    altaAcciones.append(prepararAlta,altaAyuda);b.appendChild(altaAcciones);
+  }
+  if(Array.isArray(advertencias)&&advertencias.length){
+    const generales=advertencias.filter(a=>{
+      const t=String(a||'').trim();
+      return t && !/^Revisá (PATENTE|MOTOR|CHASIS)\b/i.test(t) &&
+        !/^La lectura focalizada no pudo completarse/i.test(t) &&
+        !/^La verificación independiente no pudo completarse/i.test(t);
+    });
+    if(generales.length){const w=document.createElement('div');w.className='cedula-warning';w.textContent=generales.slice(0,2).join(' ');b.appendChild(w)}
+  }
   r.appendChild(b);c.appendChild(r);
 }
 
@@ -958,7 +1145,7 @@ async function prepararSalidasAlta(campos){
   return d;
 }
 
-function mostrarOpcionesAltaAsegurado(_tabuladoInicial,camposGuardar){
+function mostrarOpcionesAltaAsegurado(_tabuladoInicial,camposGuardar,opciones={}){
   const c=document.getElementById('chat');
   if(!c||!camposGuardar||typeof camposGuardar!=='object')return;
   document.querySelectorAll('.alta-compact-card[data-alta-activa="1"]').forEach(x=>x.dataset.altaActiva='0');
@@ -974,16 +1161,23 @@ function mostrarOpcionesAltaAsegurado(_tabuladoInicial,camposGuardar){
 
   const r=document.createElement('div');r.className='msg assistant';
   const b=document.createElement('div');b.className='bubble alta-compact-card';b.dataset.altaActiva='1';
+  const messageId=Number(opciones?.messageId||0);
+  if(messageId)b.dataset.messageId=String(messageId);
 
+  const revisiones={...(opciones?.revisiones&&typeof opciones.revisiones==='object'?opciones.revisiones:{})};
+  const origen=String(opciones?.origen||'').trim().toLowerCase();
   const titulo=document.createElement('div');titulo.className='alta-compact-title';
-  const refrescarTitulo=()=>{const nombre=String(valores.ASEGURADO||'').trim();titulo.textContent=nombre?`Alta detectada — ${nombre}`:'Alta detectada'};
+  const refrescarTitulo=()=>{const nombre=String(valores.ASEGURADO||'').trim();const base=origen==='cedula'?'Alta desde cédula':(origen==='cedula+poliza'?'Alta desde cédula + póliza':'Alta detectada');titulo.textContent=nombre?`${base} — ${nombre}`:base};
   refrescarTitulo();b.appendChild(titulo);
+  const revisionAviso=document.createElement('div');revisionAviso.className='alta-prefill-warning';
+  const refrescarRevisionAviso=()=>{const pendientes=Object.values(revisiones).filter(Boolean);revisionAviso.textContent=pendientes.length?'⚠ Lectura para confirmar · '+pendientes.join(' '):'';revisionAviso.hidden=!pendientes.length};
+  refrescarRevisionAviso();b.appendChild(revisionAviso);
 
   const resumen=document.createElement('div');resumen.className='alta-compact-summary';
   const resumenRefs={};
   const camposResumen=[['VEHICULO','Vehículo'],['PATENTE','Patente'],['CIA','Compañía'],['MEDIO DE PAGO','Medio de pago'],['IMPORTE APROX','Precio'],['EMITIDO DÍA:','Emisión']];
   const valorVisible=(clave,valor)=>{const raw=String(valor??'').trim();if(!raw)return '—';if(clave==='IMPORTE APROX'){const n=Number(raw.replace(',','.'));if(Number.isFinite(n)){try{return new Intl.NumberFormat('es-AR',{style:'currency',currency:'ARS',maximumFractionDigits:2}).format(n)}catch(_){}}}return raw};
-  camposResumen.forEach(([clave,label])=>{const item=document.createElement('div');item.className='alta-compact-item';const k=document.createElement('span');k.className='alta-compact-key';k.textContent=label;const v=document.createElement('strong');v.className='alta-compact-value';v.textContent=valorVisible(clave,valores[clave]);resumenRefs[clave]=v;item.append(k,v);resumen.appendChild(item)});
+  camposResumen.forEach(([clave,label])=>{const item=document.createElement('div');item.className='alta-compact-item'+(revisiones[clave]?' needs-review':'');item.dataset.resumenCampo=clave;const k=document.createElement('span');k.className='alta-compact-key';k.textContent=label;const v=document.createElement('strong');v.className='alta-compact-value';v.textContent=valorVisible(clave,valores[clave]);resumenRefs[clave]=v;item.append(k,v);resumen.appendChild(item)});
   b.appendChild(resumen);
 
   const telefonoWrap=document.createElement('label');telefonoWrap.className='alta-phone-field';
@@ -995,7 +1189,7 @@ function mostrarOpcionesAltaAsegurado(_tabuladoInicial,camposGuardar){
   const detalles=document.createElement('div');detalles.className='alta-edit-panel';detalles.hidden=true;
   const editables=[['ASEGURADO','Asegurado','text'],['POLIZA','N.º póliza','text'],['VEHICULO','Vehículo','text'],['PATENTE','Patente','text'],['CIA','Compañía','text'],['MEDIO DE PAGO','Medio de pago','select'],['CP','Código postal','text'],['EMITIDO DÍA:','Día de emisión','text'],['IMPORTE APROX','Precio','text'],['MAIL','Mail','email']];
   const inputs={};
-  editables.forEach(([clave,label,tipo])=>{const wrap=document.createElement('label');wrap.className='alta-edit-field';const span=document.createElement('span');span.textContent=label;let input;if(tipo==='select'){input=document.createElement('select');[['','—'],['CUPONERA','CUPONERA'],['CBU','CBU'],['CREDITO','CREDITO']].forEach(([value,text])=>{const opt=document.createElement('option');opt.value=value;opt.textContent=text;if(String(valores[clave]||'').toUpperCase()===value)opt.selected=true;input.appendChild(opt)})}else{input=document.createElement('input');input.type=tipo;input.value=String(valores[clave]??'')}input.dataset.campo=clave;inputs[clave]=input;const sync=()=>{valores[clave]=input.value.trim();if(resumenRefs[clave])resumenRefs[clave].textContent=valorVisible(clave,valores[clave]);if(clave==='ASEGURADO')refrescarTitulo()};input.addEventListener('input',sync);input.addEventListener('change',sync);wrap.append(span,input);detalles.appendChild(wrap)});
+  editables.forEach(([clave,label,tipo])=>{const wrap=document.createElement('label');wrap.className='alta-edit-field'+(revisiones[clave]?' needs-review':'');const span=document.createElement('span');span.textContent=label;let input;if(tipo==='select'){input=document.createElement('select');[['','—'],['CUPONERA','CUPONERA'],['CBU','CBU'],['CREDITO','CREDITO']].forEach(([value,text])=>{const opt=document.createElement('option');opt.value=value;opt.textContent=text;if(String(valores[clave]||'').toUpperCase()===value)opt.selected=true;input.appendChild(opt)})}else{input=document.createElement('input');input.type=tipo;input.value=String(valores[clave]??'')}input.dataset.campo=clave;inputs[clave]=input;let reviewNote=null;if(revisiones[clave]){reviewNote=document.createElement('small');reviewNote.className='alta-field-review-note';reviewNote.textContent='⚠ '+revisiones[clave]}const sync=(e)=>{valores[clave]=input.value.trim();if(resumenRefs[clave])resumenRefs[clave].textContent=valorVisible(clave,valores[clave]);if(clave==='ASEGURADO')refrescarTitulo();if(e?.isTrusted&&revisiones[clave]){delete revisiones[clave];wrap.classList.remove('needs-review');reviewNote?.remove();const item=resumen.querySelector(`[data-resumen-campo="${clave}"]`);item?.classList.remove('needs-review');refrescarRevisionAviso()}};input.addEventListener('input',sync);input.addEventListener('change',sync);wrap.append(span,input);if(reviewNote)wrap.appendChild(reviewNote);detalles.appendChild(wrap)});
   b.appendChild(detalles);
 
   const acciones=document.createElement('div');acciones.className='alta-compact-actions';
@@ -1005,6 +1199,7 @@ function mostrarOpcionesAltaAsegurado(_tabuladoInicial,camposGuardar){
   const enviosBtn=document.createElement('button');enviosBtn.type='button';enviosBtn.className='alta-secondary-btn';enviosBtn.textContent='Copiar Envíos Ya';
   const estado=document.createElement('span');estado.className='excel-proposal-status';
   acciones.append(guardar,editar,tabular,enviosBtn,estado);b.appendChild(acciones);
+  if(opciones?.uiState?.saved_excel){guardar.textContent='✓ Guardado en Excel';guardar.disabled=true;editar.disabled=true;telefonoInput.disabled=true;Object.values(inputs).forEach(input=>input.disabled=true);b.dataset.altaActiva='0';}
 
   const tabPanel=document.createElement('div');tabPanel.className='alta-inline-panel';tabPanel.hidden=true;
   const tabTitle=document.createElement('div');tabTitle.className='alta-inline-title';tabTitle.textContent='Fila tabulada';
@@ -1041,7 +1236,10 @@ function mostrarOpcionesAltaAsegurado(_tabuladoInicial,camposGuardar){
   });
 
   guardar.addEventListener('click',async()=>{
-    if(guardar.disabled)return;const payload=payloadExcel();if(!payload.ASEGURADO){estado.textContent='Completá el asegurado.';return}if(!payload.PATENTE){estado.textContent='Completá la patente.';return}
+    if(guardar.disabled)return;
+    const pendientes=Object.values(revisiones).filter(Boolean);
+    if(pendientes.length){const seguirRevision=confirm('Hay datos que siguen marcados para revisar:\n\n'+pendientes.join('\n')+'\n\n¿Ya los corroboraste y querés guardar de todas formas?');if(!seguirRevision){detalles.hidden=false;editar.textContent='Cerrar edición';const primera=Object.keys(revisiones)[0];inputs[primera]?.focus();return}}
+    const payload=payloadExcel();if(!payload.ASEGURADO){estado.textContent='Completá el asegurado.';return}if(!payload.PATENTE){estado.textContent='Completá la patente.';return}
     guardar.disabled=true;editar.disabled=true;estado.textContent='Validando…';
     try{
       const valResp=await fetch('/api/validar-excel-fila',{method:'POST',headers:{'Content-Type':'application/json'},credentials:'same-origin',body:JSON.stringify({campos:payload,libro_id:'1'})});
@@ -1054,9 +1252,116 @@ function mostrarOpcionesAltaAsegurado(_tabuladoInicial,camposGuardar){
       const resp=await fetch('/api/excel/agregar-fila',{method:'POST',headers:{'Content-Type':'application/json'},credentials:'same-origin',body:JSON.stringify({campos:completo,libro_id:'1'})});
       const d=await leerJsonSeguro(resp);if(!resp.ok||d.ok===false)throw Error(d.error||'No se pudo guardar el registro.');
       guardar.textContent='✓ Guardado en Excel';estado.textContent='';detalles.hidden=true;editar.textContent='Editar';editar.disabled=true;telefonoInput.disabled=true;Object.values(inputs).forEach(input=>input.disabled=true);b.dataset.altaActiva='0';
+      if(messageId){try{await fetch(`/api/chats/${currentChatId}/messages/${messageId}/ui-state`,{method:'PATCH',headers:{'Content-Type':'application/json'},credentials:'same-origin',body:JSON.stringify({ui_state:{saved_excel:true}})})}catch(_){}}
       if(d.texto_envios_ya){enviosPre.textContent=d.texto_envios_ya;enviosPanel.hidden=false;const avisos=Array.isArray(d.envios_ya_advertencias)?d.envios_ya_advertencias:[];enviosAviso.textContent=avisos.join(' ');enviosAviso.hidden=!avisos.length}
     }catch(e){estado.textContent=e?.message||'No se pudo guardar.';guardar.disabled=false;editar.disabled=false}
   });
+}
+
+function mostrarFichaOperativaAsegurado(ficha){
+  const c=document.getElementById('chat');
+  if(!c||!ficha||ficha.status!=='found')return;
+  const r=document.createElement('div');r.className='msg assistant insured-profile-row';
+  const card=document.createElement('section');card.className='insured-profile-card';
+  const header=document.createElement('div');header.className='insured-profile-header';
+  const title=document.createElement('div');title.innerHTML=`<small>FICHA OPERATIVA</small><strong></strong>`;
+  title.querySelector('strong').textContent=String(ficha.asegurado||'Asegurado');header.appendChild(title);
+  const badge=document.createElement('span');badge.className='insured-profile-badge';badge.textContent=`${Number(ficha.total_registros||0)} registro${Number(ficha.total_registros||0)===1?'':'s'}`;header.appendChild(badge);card.appendChild(header);
+  const contacto=ficha.contacto||{},facts=[];
+  if(contacto.telefono)facts.push(['Teléfono',contacto.telefono]);if(contacto.mail)facts.push(['Mail',contacto.mail]);if(contacto.dni)facts.push(['DNI',contacto.dni]);if(contacto.cuit)facts.push(['CUIT/CUIL',contacto.cuit]);
+  if(Array.isArray(ficha.companias)&&ficha.companias.length)facts.push(['Compañía',ficha.companias.join(' · ')]);if(Array.isArray(ficha.polizas)&&ficha.polizas.length)facts.push(['Póliza',ficha.polizas.join(' · ')]);
+  if(facts.length){const grid=document.createElement('div');grid.className='insured-profile-grid';facts.forEach(([k,v])=>{const item=document.createElement('div');item.className='insured-profile-fact';const lab=document.createElement('span');lab.textContent=k;const val=document.createElement('b');val.textContent=v;item.append(lab,val);grid.appendChild(item)});card.appendChild(grid)}
+  const vehiculos=Array.isArray(ficha.vehiculos)?ficha.vehiculos:[];
+  if(vehiculos.length){const st=document.createElement('div');st.className='insured-profile-section-title';st.textContent=vehiculos.length===1?'Vehículo':'Vehículos';card.appendChild(st);const list=document.createElement('div');list.className='insured-profile-vehicles';vehiculos.forEach(v=>{const row=document.createElement('div');row.className='insured-profile-vehicle';const main=document.createElement('div');main.className='insured-profile-vehicle-main';const name=document.createElement('strong');name.textContent=String(v.vehiculo||v.patente||'Vehículo');main.appendChild(name);const meta=[v.patente,v.compania,v.poliza&&`Pól. ${v.poliza}`,v.cobertura].filter(Boolean).join(' · ');if(meta){const sm=document.createElement('small');sm.textContent=meta;main.appendChild(sm)}row.appendChild(main);list.appendChild(row)});card.appendChild(list)}
+  const actions=document.createElement('div');actions.className='insured-profile-actions';const btn=document.createElement('button');btn.type='button';btn.className='alta-secondary-btn';btn.textContent='Copiar resumen';btn.addEventListener('click',async()=>{const lines=[String(ficha.asegurado||'')];facts.forEach(([k,v])=>lines.push(`${k}: ${v}`));vehiculos.forEach(v=>lines.push([v.vehiculo,v.patente,v.compania,v.poliza&&`Póliza ${v.poliza}`].filter(Boolean).join(' · ')));const ok=await copiarTextoSeguro(lines.filter(Boolean).join('\n'));if(ok){const prev=btn.textContent;btn.textContent='✓ Copiado';setTimeout(()=>btn.textContent=prev,1400)}});actions.appendChild(btn);card.appendChild(actions);r.appendChild(card);c.appendChild(r);
+}
+
+function mostrarEnviosChat(payload,opciones={}){
+  const c=document.getElementById('chat');
+  if(!c||!payload||typeof payload!=='object')return;
+  const existente=opciones.card instanceof HTMLElement?opciones.card:null;
+  const card=existente||document.createElement('div');card.className='envios-chat-card';card.replaceChildren();
+  if(!existente){const r=document.createElement('div');r.className='msg assistant';const b=document.createElement('div');b.className='bubble';b.appendChild(card);r.appendChild(b);c.appendChild(r)}
+
+  const estado=String(payload.estado||'');const resumen=payload.resumen||{};
+  const title=document.createElement('b');title.textContent=estado==='mapeo'?'Confirmá las columnas':'Contactos detectados';card.appendChild(title);
+  const stats=document.createElement('div');stats.className='envios-chat-summary';
+  const agregarStat=(v,label)=>{const x=document.createElement('div');x.className='envios-chat-stat';const b=document.createElement('b');b.textContent=Number(v||0).toLocaleString('es-AR');const sp=document.createElement('span');sp.textContent=label;x.append(b,sp);stats.appendChild(x)};
+  if(estado==='mapeo')agregarStat(resumen.contactos_detectados||0,'detectados hasta ahora');
+  else{agregarStat(resumen.exportables||0,'válidos');agregarStat(resumen.revisar||0,'para revisar');agregarStat(resumen.omitidos_sin_celular||0,'sin celular')}
+  card.appendChild(stats);
+
+  if(estado==='mapeo'){
+    const wrap=document.createElement('div');wrap.className='envios-chat-map';
+    (payload.mapeos||[]).forEach(m=>{
+      const art=document.createElement('article');art.dataset.mapFile=String(m.file_index);
+      const h=document.createElement('b');h.textContent=String(m.nombre||'Planilla');art.appendChild(h);
+      const grid=document.createElement('div');grid.className='envios-chat-map-grid';
+      const detect=m.detectado||{};
+      ['apellido','nombre','nombre_completo','celular'].forEach(campo=>{
+        const lab=document.createElement('label');lab.textContent=campo==='nombre_completo'?'Nombre completo':campo.charAt(0).toUpperCase()+campo.slice(1);
+        const sel=document.createElement('select');sel.dataset.field=campo;
+        const none=document.createElement('option');none.value='';none.textContent='— Elegir —';sel.appendChild(none);
+        (m.columnas||[]).forEach(col=>{const opt=document.createElement('option');opt.value=String(col.index);opt.textContent=String(col.label||`Columna ${Number(col.index)+1}`);if(String(detect[campo])===String(col.index))opt.selected=true;sel.appendChild(opt)});
+        lab.appendChild(sel);grid.appendChild(lab);
+      });
+      art.appendChild(grid);wrap.appendChild(art);
+    });
+    card.appendChild(wrap);
+    const actions=document.createElement('div');actions.className='envios-chat-actions';const btn=document.createElement('button');btn.type='button';btn.className='envios-chat-primary';btn.textContent='Aplicar y continuar';actions.appendChild(btn);card.appendChild(actions);
+    btn.addEventListener('click',async()=>{
+      const manual={};card.querySelectorAll('[data-map-file]').forEach(row=>{const one={};row.querySelectorAll('select[data-field]').forEach(sel=>{if(sel.value!=='')one[sel.dataset.field]=Number(sel.value)});manual[row.dataset.mapFile]=one});
+      btn.disabled=true;btn.textContent='Procesando…';
+      try{const r=await fetch('/api/chat/envios/reprocesar',{method:'POST',credentials:'same-origin',headers:{'Content-Type':'application/json'},body:JSON.stringify({token:payload.token,manual_mapping:manual})});const d=await leerJsonSeguro(r);if(!r.ok||d.ok===false)throw Error(d.error||'No pude aplicar el mapeo.');mostrarEnviosChat(d.envios_chat,{card})}catch(e){btn.disabled=false;btn.textContent='Aplicar y continuar';window.showToast?.(e?.message||'No pude aplicar el mapeo.','warning')}
+    });
+    return;
+  }
+
+  const note=document.createElement('div');note.className='tabulado-flota-help';note.textContent='Revisá el resumen y confirmá para generar el CSV final de Envíos Ya.';card.appendChild(note);
+  const actions=document.createElement('div');actions.className='envios-chat-actions';const btn=document.createElement('button');btn.type='button';btn.className='envios-chat-primary';btn.textContent='Generar CSV';actions.appendChild(btn);card.appendChild(actions);
+  btn.addEventListener('click',async()=>{
+    btn.disabled=true;btn.textContent='Generando…';
+    try{const r=await fetch('/api/chat/envios/generar',{method:'POST',credentials:'same-origin',headers:{'Content-Type':'application/json'},body:JSON.stringify({token:payload.token})});const d=await leerJsonSeguro(r);if(!r.ok||d.ok===false)throw Error(d.error||'No pude generar el CSV.');const a=document.createElement('a');a.className='envios-chat-primary';a.href=d.download_url;a.textContent='Descargar CSV para Envíos Ya';a.setAttribute('download','');actions.replaceChildren(a)}catch(e){btn.disabled=false;btn.textContent='Generar CSV';window.showToast?.(e?.message||'No pude generar el CSV.','warning')}
+  });
+}
+
+function tieneUiPrincipal(d){
+  if(!d||typeof d!=='object')return false;
+  return !!(
+    d.cedula_detectada||d.documento_personal_detectado||
+    d.actualizacion_alta_asegurado||d.tabulado_alta_asegurado||d.campos_guardar_alta_asegurado||
+    d.texto_envios_ya||d.ficha_operativa_asegurado||d.tabulado_flota||d.envios_chat
+  );
+}
+function textoVisibleAsistente(texto,d){
+  const t=String(texto||'').trim();
+  if(!t||!tieneUiPrincipal(d))return t;
+  // Las advertencias/errores siguen visibles. Sólo se oculta la prosa de éxito
+  // redundante cuando la tarjeta estructurada ya contiene la respuesta.
+  const alerta=/\b(no pude|no encontr|error|fall[oó]|revis[aá]|falt[aó]|diferentes|no combin|no disponible|no legible|advertencia)\b/i.test(t);
+  if(alerta)return t;
+  return t.length<=700?'':t;
+}
+
+function renderizarUiPersistida(mensaje){
+  const md=(mensaje?.metadata&&typeof mensaje.metadata==='object')?mensaje.metadata:{};
+  const d=(md.ui&&typeof md.ui==='object')?md.ui:{};
+  const uiState=(md.ui_state&&typeof md.ui_state==='object')?md.ui_state:{};
+  const messageId=Number(mensaje?.id||0);
+  if(d.propuesta_excel)mostrarPropuestaExcel(d.propuesta_excel);
+  if(d.propuesta_metadato)mostrarPropuestaMetadato(d.propuesta_metadato);
+  if(d.tabulado_flota)mostrarTabuladoFlota(d.tabulado_flota);
+  if(d.cedula_detectada)mostrarCedulaDetectada(d.cedula_detectada,d.cedula_advertencias,{messageId,uiState,altaPrefill:d.borrador_alta_desde_cedula,altaRevisiones:d.alta_revisiones,altaYaPreparada:!!d.campos_guardar_alta_asegurado});
+  if(d.documento_personal_detectado)mostrarDocumentoPersonalDetectado(d.documento_personal_detectado,d.documento_personal_advertencias);
+  if(d.actualizacion_alta_asegurado){
+    const actualizado=actualizarFormularioAltaActivo(d.actualizacion_alta_asegurado);
+    if(!actualizado)mostrarOpcionesAltaAsegurado(d.tabulado_alta_asegurado,d.actualizacion_alta_asegurado,{messageId,uiState,revisiones:d.alta_revisiones,origen:d.alta_origen});
+  }else if(d.tabulado_alta_asegurado||d.campos_guardar_alta_asegurado){
+    mostrarOpcionesAltaAsegurado(d.tabulado_alta_asegurado,d.campos_guardar_alta_asegurado,{messageId,uiState,revisiones:d.alta_revisiones,origen:d.alta_origen});
+  }
+  if(d.texto_envios_ya&&!d.actualizacion_alta_asegurado&&!d.campos_guardar_alta_asegurado)mostrarTextoEnviosYa(d.texto_envios_ya);
+  if(d.ficha_operativa_asegurado)mostrarFichaOperativaAsegurado(d.ficha_operativa_asegurado);
+  if(d.envios_chat)mostrarEnviosChat(d.envios_chat,{messageId});
 }
 
 function mostrarTextoEnviosYa(texto){
@@ -1559,14 +1864,19 @@ const COMANDOS_CHAT=[
     plantilla:'/guardar asegurado (asegurado) (numero) (vehiculo) (patente) (cia) (medio de pago) (cp) (mail)'
   },
   {
+    comando:'/ficha',
+    descripcion:'Ver ficha operativa del asegurado',
+    plantilla:'/ficha '
+  },
+  {
     comando:'/flota',
     descripcion:'Cargar datos de una póliza para completar una flota',
     plantilla:'/flota'
   },
   {
     comando:'/coti',
-    descripcion:'Generar una cotización rápida. Formato: /coti CIA COBERTURA SUMA PREMIO',
-    plantilla:'/coti CIA COBERTURA SUMA PREMIO'
+    descripcion:'Abrir Cotización ATM',
+    plantilla:'/coti'
   },
   {
     comando:'/mail',
@@ -1574,12 +1884,25 @@ const COMANDOS_CHAT=[
     plantilla:'/mail destinatario@correo.com asunto Asunto mensaje Mensaje'
   },
   {
-    comando:'/envios ya',
-    descripcion:'Generar el texto para cargar el asegurado en Envíos Ya, buscando por patente.',
-    plantilla:'/envios ya (patente)'
+    comando:'/cuit',
+    descripcion:'Buscar CUIT/CUIL en ARCA',
+    plantilla:'/cuit '
+  },
+  {
+    comando:'/cuil',
+    descripcion:'Buscar CUIT/CUIL en ARCA',
+    plantilla:'/cuil '
   }
 ];
 function ejecutarClickComando(cmd,input){
+  if(cmd.comando==='/coti'){
+    input.value='';
+    indiceComando=-1;
+    cerrarMenuComandos();
+    size();
+    abrirCotizadorATM();
+    return;
+  }
   if(cmd.comando==='/guardar asegurado'){
     input.value='';
     indiceComando=-1;
@@ -1681,10 +2004,7 @@ function seleccionarComandoActual(){
   const disponibles=COMANDOS_CHAT.filter(x=>x.comando.slice(1).toLowerCase().startsWith(filtro));
   if(!disponibles.length)return false;
   const cmd=disponibles[indiceComando>=0?indiceComando:0];
-  input.value=cmd.plantilla;
-  cerrarMenuComandos();
-  size();
-  input.focus();
+  ejecutarClickComando(cmd,input);
   return true;
 }
 
@@ -1720,33 +2040,487 @@ function toggleMenuComandos(){
   mostrarMenuComandosCompleto();
 }
 
+function cerrarMenuAccionesChat(){
+  const menu=document.getElementById('chatActionMenu');
+  const btn=document.getElementById('chatActionBtn');
+  if(menu)menu.hidden=true;
+  if(btn)btn.setAttribute('aria-expanded','false');
+}
+
+function abrirSelectorArchivoChat(modo){
+  const input=document.getElementById('archivoInput');
+  if(!input)return;
+  input.accept=modo==='photos'
+    ?'image/png,.png,image/jpeg,.jpg,.jpeg,image/webp,.webp'
+    :'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,.xlsx,.xlsm,application/pdf,.pdf,text/plain,.txt,text/csv,.csv,image/png,.png,image/jpeg,.jpg,.jpeg,image/webp,.webp';
+  input.value='';
+  input.click();
+}
+
+function prepararAccionComposer(texto){
+  const input=document.getElementById('mensaje');
+  if(!input)return;
+  input.value=texto;
+  composerEditSeq++;
+  if(typeof size==='function')size();
+  input.focus();
+}
+
+function SpeechRecognitionCtor(){return window.SpeechRecognition||window.webkitSpeechRecognition||null}
+function dictadoDisponible(){return !!SpeechRecognitionCtor()}
+function unirTextoDictado(base,dictado){
+  const a=String(base||'').trimEnd(),b=String(dictado||'').trim();
+  if(!a)return b;if(!b)return a;return a+' '+b;
+}
+function actualizarBotonDictado(){
+  const btn=document.getElementById('dictationBtn');
+  if(!btn)return;
+  const disponible=dictadoDisponible();
+  btn.classList.toggle('is-listening',dictationActive);
+  btn.classList.toggle('is-unavailable',!disponible);
+  btn.setAttribute('aria-pressed',dictationActive?'true':'false');
+  btn.setAttribute('aria-label',dictationActive?'Detener dictado':'Dictar mensaje');
+  btn.title=dictationActive?'Detener dictado (Esc cancela)':'Dictar mensaje';
+}
+function escribirResultadoDictado(interim=''){
+  const input=document.getElementById('mensaje');if(!input)return;
+  dictationProgrammaticUpdate=true;
+  input.value=unirTextoDictado(dictationBaseText,[dictationFinalText,interim].filter(Boolean).join(' '));
+  composerEditSeq++;if(typeof size==='function')size();dictationProgrammaticUpdate=false;
+}
+function finalizarDictado({cancelar=false}={}){
+  const input=document.getElementById('mensaje');
+  if(cancelar&&input){dictationProgrammaticUpdate=true;input.value=dictationBaseText;composerEditSeq++;if(typeof size==='function')size();dictationProgrammaticUpdate=false}
+  dictationCancelRequested=!!cancelar;
+  if(dictationRecognition){try{dictationRecognition.abort()}catch(_){try{dictationRecognition.stop()}catch(__){}}}
+  dictationActive=false;actualizarBotonDictado();
+  if(cancelar&&window.showToast)showToast('Dictado cancelado.','info');
+  input?.focus();
+}
+function iniciarDictado(){
+  const Ctor=SpeechRecognitionCtor(),input=document.getElementById('mensaje');if(!input)return;
+  if(!Ctor){if(window.showToast)showToast('Dictado no disponible en este navegador.','warning');else alert('Dictado no disponible en este navegador.');return}
+  if(dictationActive){try{dictationRecognition?.stop()}catch(_){finalizarDictado()}return}
+  cerrarMenuAccionesChat();cerrarMenuComandos();
+  dictationBaseText=input.value;dictationFinalText='';dictationCancelRequested=false;
+  const rec=new Ctor();dictationRecognition=rec;rec.lang='es-AR';rec.continuous=true;rec.interimResults=true;rec.maxAlternatives=1;
+  rec.onstart=()=>{dictationActive=true;actualizarBotonDictado();if(window.showToast)showToast('Escuchando… hablá normalmente.','info')};
+  rec.onresult=e=>{let interim='';for(let n=e.resultIndex;n<e.results.length;n++){const texto=String(e.results[n][0]?.transcript||'').trim();if(!texto)continue;if(e.results[n].isFinal)dictationFinalText=(dictationFinalText+' '+texto).trim();else interim=(interim+' '+texto).trim()}escribirResultadoDictado(interim)};
+  rec.onerror=e=>{const tipo=String(e?.error||'');if(tipo==='aborted'||dictationCancelRequested)return;if(tipo==='not-allowed'||tipo==='service-not-allowed'){window.showToast?.('Necesito permiso de micrófono para dictar.','warning')}else if(tipo==='no-speech'){window.showToast?.('No escuché voz. Podés intentarlo de nuevo.','info')}else{window.showToast?.('No se pudo continuar el dictado.','warning')}};
+  rec.onend=()=>{const cancelado=dictationCancelRequested;dictationActive=false;dictationRecognition=null;dictationCancelRequested=false;actualizarBotonDictado();if(!cancelado)input.focus()};
+  try{rec.start()}catch(_){dictationRecognition=null;dictationActive=false;actualizarBotonDictado();window.showToast?.('No se pudo iniciar el dictado.','warning')}
+}
+function inicializarDictadoChat(){
+  const btn=document.getElementById('dictationBtn');if(!btn||btn.dataset.wired==='1')return;
+  btn.dataset.wired='1';btn.addEventListener('click',e=>{e.preventDefault();e.stopPropagation();iniciarDictado()});actualizarBotonDictado();
+}
+function ejecutarAccionRapidaChat(accion){
+  cerrarMenuAccionesChat();
+  if(accion==='document'){abrirSelectorArchivoChat('document');return}
+  if(accion==='photos'){abrirSelectorArchivoChat('photos');return}
+  if(accion==='dictation'){iniciarDictado();return}
+  if(accion==='portfolio'){prepararAccionComposer('Buscá en mi cartera ');return}
+  if(accion==='cuit'){prepararAccionComposer('/cuit ');return}
+  if(accion==='atm'){abrirCotizadorATM();return}
+  if(accion==='mail'){prepararAccionComposer('/mail ');return}
+  if(accion==='alta'){
+    const input=document.getElementById('mensaje'),cmd=COMANDOS_CHAT.find(x=>x.comando==='/guardar asegurado');
+    if(input&&cmd)ejecutarClickComando(cmd,input);return;
+  }
+  if(accion==='notes'){document.getElementById('notasBtn')?.click()}
+}
+let atmCoberturasDetectadas=[];
+let atmCatalogoCoberturas=[];
+let atmTabActual='capture';
+let atmRecalculoTimer=null;
+
+const ATM_CODIGOS_ORDEN=['A','A1','B','B1','B2','B3','B4','B5','C','CPr','CB','TR'];
+
+async function asegurarCatalogoATM(){
+  if(atmCatalogoCoberturas.length)return atmCatalogoCoberturas;
+  try{
+    const resp=await fetch('/api/atm/catalogo',{credentials:'same-origin'});
+    const d=await leerJsonSeguro(resp);
+    if(resp.ok&&d.ok!==false&&Array.isArray(d.coberturas))atmCatalogoCoberturas=d.coberturas;
+  }catch(_){/* El lector sigue pudiendo cargar el catálogo devuelto por la captura. */}
+  if(!atmCatalogoCoberturas.length){
+    atmCatalogoCoberturas=ATM_CODIGOS_ORDEN.map((codigo,i)=>({codigo,tooltip:codigo,orden:(i+1)*10,detectable:true,franquicia:codigo==='TR'}));
+  }
+  return atmCatalogoCoberturas;
+}
+function entradaCatalogoATM(codigo){return atmCatalogoCoberturas.find(x=>x.codigo===codigo)||null}
+function detectadasPorCodigoATM(codigo){return atmCoberturasDetectadas.filter(c=>String(c.codigo||'')===codigo)}
+function coberturaDisponibleATM(codigo){return detectadasPorCodigoATM(codigo).length>0}
+function seleccionadasATM(){
+  return atmCoberturasDetectadas.filter(c=>!!c.ofrecer).sort((a,b)=>{
+    const oa=Number(a.orden||entradaCatalogoATM(a.codigo)?.orden||999),ob=Number(b.orden||entradaCatalogoATM(b.codigo)?.orden||999);
+    if(oa!==ob)return oa-ob;
+    return Number(a.franquicia_pct||0)-Number(b.franquicia_pct||0);
+  });
+}
+function invalidarPropuestaATM(){
+  const wrap=document.getElementById('atmProposal'),area=document.getElementById('atmProposalText');
+  if(wrap)wrap.hidden=true;if(area)area.value='';
+  const status=document.getElementById('atmCaptureStatus');
+  if(status&&String(status.textContent||'').includes('Propuesta lista'))estadoCapturaATM('');
+}
+
+async function abrirCotizadorATM(lectura=null){
+  const modal=document.getElementById('atmCotiModal');
+  if(!modal)return;
+  modal.hidden=false;
+  modal.setAttribute('aria-hidden','false');
+  const error=document.getElementById('atmCotiError');if(error)error.hidden=true;
+  await asegurarCatalogoATM();
+  const descuento=document.getElementById('atmDescuento');if(descuento&&!descuento.value.trim())descuento.value='50';
+  invalidarPropuestaATM();
+  if(lectura&&typeof lectura==='object')cargarLecturaATMCapture(lectura);
+  else{
+    cambiarTabATM('capture');
+    renderMatrizCoberturasATM();
+    renderResumenSeleccionATM();
+  }
+  setTimeout(()=>document.getElementById(atmTabActual==='capture'?'atmCaptureDrop':'atmPrecioBase')?.focus(),0);
+}
+function cerrarCotizadorATM(){
+  const modal=document.getElementById('atmCotiModal');
+  if(!modal)return;
+  modal.hidden=true;
+  modal.setAttribute('aria-hidden','true');
+  document.getElementById('mensaje')?.focus();
+}
+function cambiarTabATM(tab){
+  atmTabActual=tab==='manual'?'manual':'capture';
+  document.querySelectorAll('[data-atm-tab]').forEach(btn=>btn.classList.toggle('active',btn.dataset.atmTab===atmTabActual));
+  document.querySelectorAll('[data-atm-panel]').forEach(panel=>panel.hidden=panel.dataset.atmPanel!==atmTabActual);
+  const descuento=document.querySelector('.atm-coti-discountbar');
+  if(descuento){
+    if(atmTabActual==='capture'){
+      const drop=document.getElementById('atmCaptureDrop');if(drop)drop.insertAdjacentElement('afterend',descuento);
+    }else{
+      const panel=document.querySelector('[data-atm-panel="manual"]');if(panel)panel.prepend(descuento);
+    }
+  }
+}
+function mostrarErrorATM(msg){
+  const e=document.getElementById('atmCotiError');if(!e)return;
+  e.textContent=msg||'No se pudo calcular.';e.hidden=false;
+}
+async function cotizarPrecioATM(precio){
+  const descuento=document.getElementById('atmDescuento')?.value?.trim()||'';
+  const resp=await fetch('/api/atm/cotizar',{
+    method:'POST',credentials:'same-origin',headers:{'Content-Type':'application/json'},
+    body:JSON.stringify({precio_base:String(precio||''),descuento:descuento||null})
+  });
+  const d=await leerJsonSeguro(resp);
+  if(!resp.ok||d.ok===false)throw Error(d.error||'No se pudo calcular la cotización ATM.');
+  return d;
+}
+async function calcularCotizacionATM(){
+  const precio=document.getElementById('atmPrecioBase')?.value?.trim()||'';
+  const error=document.getElementById('atmCotiError');if(error)error.hidden=true;
+  try{
+    const d=await cotizarPrecioATM(precio);
+    document.getElementById('atmResBaseDto').textContent=d.precio_base_descuento_formateado;
+    document.getElementById('atmResAdheridoDto').textContent=d.precio_adherido_descuento_formateado;
+    document.getElementById('atmCotiBadge').textContent=d.descuento_formateado;
+    document.getElementById('atmCotiResult').hidden=false;
+  }catch(e){mostrarErrorATM(e?.message||'No se pudo calcular.')}
+}
+function estadoCapturaATM(texto,tipo=''){
+  const el=document.getElementById('atmCaptureStatus');if(!el)return;
+  el.textContent=texto||'';el.hidden=!texto;el.className='atm-capture-status'+(tipo?' '+tipo:'');
+}
+function actualizarDropCapturaATM(cargada=false){
+  const title=document.getElementById('atmCaptureDropTitle');
+  if(title)title.textContent=cargada?'✓ Captura cargada · Ctrl+V para reemplazar':'Pegá con Ctrl+V o elegí una imagen';
+  document.getElementById('atmCaptureDrop')?.classList.toggle('has-file',!!cargada);
+}
+function tooltipCodigoATM(codigo,detectadas=[]){
+  if(detectadas.length){
+    const titulos=[...new Set(detectadas.map(c=>String(c.titulo_leido||c.tooltip||'').trim()).filter(Boolean))];
+    if(titulos.length)return titulos.join(' / ');
+  }
+  const cat=entradaCatalogoATM(codigo);
+  return String(cat?.tooltip||cat?.titulo_atm||codigo);
+}
+function codigoSeleccionadoATM(codigo){return detectadasPorCodigoATM(codigo).some(c=>!!c.ofrecer)}
+function togglearCodigoATM(codigo){
+  const items=detectadasPorCodigoATM(codigo);
+  if(!items.length)return;
+  invalidarPropuestaATM();
+  if(codigo==='TR'){
+    const alguno=items.some(c=>c.ofrecer);
+    items.forEach(c=>c.ofrecer=false);
+    if(!alguno){
+      const preferida=items.find(c=>String(c.franquicia_pct||'').trim()==='3')||items[0];
+      if(preferida)preferida.ofrecer=true;
+    }
+  }else{
+    const nuevo=!items[0].ofrecer;
+    items.forEach(c=>c.ofrecer=false);
+    items[0].ofrecer=nuevo;
+  }
+  renderMatrizCoberturasATM();
+  renderResumenSeleccionATM();
+  programarRecalculoSeleccionATM();
+}
+function togglearFranquiciaATM(pct){
+  const items=detectadasPorCodigoATM('TR');
+  const item=items.find(c=>String(c.franquicia_pct||'').trim()===String(pct));
+  if(!item)return;
+  invalidarPropuestaATM();
+  const yaActivo=!!item.ofrecer;
+  items.forEach(c=>c.ofrecer=false);
+  if(!yaActivo)item.ofrecer=true;
+  renderMatrizCoberturasATM();renderResumenSeleccionATM();programarRecalculoSeleccionATM();
+}
+function crearCeldaCodigoATM(codigo){
+  const items=detectadasPorCodigoATM(codigo),cat=entradaCatalogoATM(codigo);
+  const disponible=items.length>0;
+  const btn=document.createElement('button');
+  btn.type='button';btn.className='atm-code-cell';btn.textContent=codigo;
+  btn.dataset.atmCode=codigo;
+  const tooltip=tooltipCodigoATM(codigo,items);
+  btn.title=tooltip;
+  btn.setAttribute('aria-label',`${codigo}: ${tooltip}`);
+  btn.setAttribute('aria-disabled',disponible?'false':'true');
+  if(!disponible)btn.classList.add('is-unavailable');
+  if(codigoSeleccionadoATM(codigo))btn.classList.add('active');
+  if(items.some(c=>c.requiere_revision))btn.classList.add('is-review');
+  if(cat?.detectable===false)btn.classList.add('is-pending-map');
+  btn.addEventListener('click',()=>{if(disponible)togglearCodigoATM(codigo)});
+  return btn;
+}
+function crearCeldaFranquiciaATM(pct){
+  const item=detectadasPorCodigoATM('TR').find(c=>String(c.franquicia_pct||'').trim()===String(pct));
+  const btn=document.createElement('button');
+  btn.type='button';btn.className='atm-code-cell atm-franchise-chip';btn.textContent=`${pct}%`;
+  btn.dataset.atmFranquicia=String(pct);
+  const tooltip=`Todo Riesgo · Franquicia ${pct}%`;
+  btn.title=tooltip;btn.setAttribute('aria-label',tooltip);
+  btn.setAttribute('aria-disabled',item?'false':'true');
+  if(!item)btn.classList.add('is-unavailable');
+  if(item?.ofrecer)btn.classList.add('active');
+  btn.addEventListener('click',()=>{if(item)togglearFranquiciaATM(pct)});
+  return btn;
+}
+function renderMatrizCoberturasATM(){
+  const matrix=document.getElementById('atmCoverageMatrix');if(!matrix)return;
+  matrix.innerHTML='';
+  ATM_CODIGOS_ORDEN.forEach(codigo=>{
+    const wrap=document.createElement('div');wrap.className='atm-code-slot';
+    wrap.appendChild(crearCeldaCodigoATM(codigo));matrix.appendChild(wrap);
+  });
+  ['3','6'].forEach(pct=>{
+    const wrap=document.createElement('div');wrap.className='atm-code-slot atm-franchise-slot';
+    wrap.appendChild(crearCeldaFranquiciaATM(pct));matrix.appendChild(wrap);
+  });
+}
+function nombreSeleccionATM(c){
+  const codigo=String(c.codigo||c.nombre_corto||'').trim()||'Cobertura';
+  if(codigo==='TR'&&String(c.franquicia_pct||'').trim())return `TR ${c.franquicia_pct}%`;
+  return codigo;
+}
+function renderResumenSeleccionATM(){
+  const wrap=document.getElementById('atmSelectedSummary'),actions=document.getElementById('atmCaptureActions');if(!wrap)return;
+  const seleccion=seleccionadasATM();wrap.innerHTML='';
+  seleccion.forEach(c=>{
+    const item=document.createElement('div');item.className='atm-selected-item';
+    const code=document.createElement('b');code.textContent=nombreSeleccionATM(c);code.title=String(c.titulo_leido||c.tooltip||'');
+    const ef=document.createElement('span');ef.innerHTML=`<small>Cupones</small><strong>${esc(c.precio_efectivo_comercial||'—')}</strong>`;
+    const ad=document.createElement('span');ad.innerHTML=`<small>CBU / tarjeta</small><strong>${esc(c.precio_adherido_comercial||'—')}</strong>`;
+    item.append(code,ef,ad);wrap.appendChild(item);
+  });
+  wrap.hidden=!seleccion.length;
+  if(actions)actions.hidden=!atmCoberturasDetectadas.length;
+  const gen=document.getElementById('atmGenerateProposal');if(gen)gen.disabled=!seleccion.length;
+}
+function cargarLecturaATMCapture(lectura){
+  const lista=Array.isArray(lectura?.coberturas)?lectura.coberturas:[];
+  atmCoberturasDetectadas=lista.map(x=>({...x,ofrecer:false}));
+  invalidarPropuestaATM();
+  cambiarTabATM('capture');
+  renderMatrizCoberturasATM();renderResumenSeleccionATM();actualizarDropCapturaATM(!!lista.length);
+  const adv=Array.isArray(lectura?.advertencias)?lectura.advertencias.filter(Boolean):[];
+  const sinCodigo=lista.filter(x=>!x.codigo).length;
+  if(lista.length){
+    let msg=`✓ ${lista.length} cobertura${lista.length===1?'':'s'} detectada${lista.length===1?'':'s'}`;
+    if(sinCodigo)msg+=` · ${sinCodigo} sin código confirmado`;
+    if(adv.length)msg+=` · ${adv.slice(0,1).join(' ')}`;
+    estadoCapturaATM(msg,sinCodigo||adv.length?'':'ok');
+  }else estadoCapturaATM('No pude confirmar coberturas y precios en esa captura.','error');
+}
+async function leerCapturaATM(file){
+  if(!file)return;
+  estadoCapturaATM('Leyendo captura…');actualizarDropCapturaATM(true);
+  atmCoberturasDetectadas=[];renderMatrizCoberturasATM();renderResumenSeleccionATM();
+  invalidarPropuestaATM();
+  try{
+    const fd=new FormData();fd.append('captura',file,file.name||'captura-atm.png');
+    const resp=await fetch('/api/atm/leer-captura',{method:'POST',body:fd,credentials:'same-origin'});
+    const d=await leerJsonSeguro(resp);
+    if(!resp.ok||d.ok===false)throw Error(d.error||'No pude leer la captura ATM.');
+    cargarLecturaATMCapture(d);
+  }catch(e){actualizarDropCapturaATM(false);estadoCapturaATM(e?.message||'No pude leer la captura ATM.','error')}
+}
+async function calcularCoberturasSeleccionadasATM(){
+  const seleccion=seleccionadasATM();if(!seleccion.length){renderResumenSeleccionATM();return true}
+  try{
+    await Promise.all(seleccion.map(async c=>{
+      const d=await cotizarPrecioATM(c.precio_base);
+      c.precio_efectivo_exacto=d.precio_base_descuento;
+      c.precio_adherido_exacto=d.precio_adherido_descuento;
+      c.precio_efectivo_comercial=d.precio_base_descuento_comercial_formateado||'';
+      c.precio_adherido_comercial=d.precio_adherido_descuento_comercial_formateado||'';
+      c.precio_efectivo_final=d.precio_base_descuento_formateado;
+      c.precio_adherido_final=d.precio_adherido_descuento_formateado;
+      c.descuento_formateado=d.descuento_formateado;
+    }));
+    renderResumenSeleccionATM();return true;
+  }catch(e){estadoCapturaATM(e?.message||'No pude calcular los precios finales.','error');return false}
+}
+function programarRecalculoSeleccionATM(){
+  clearTimeout(atmRecalculoTimer);
+  if(!seleccionadasATM().length)return;
+  atmRecalculoTimer=setTimeout(()=>calcularCoberturasSeleccionadasATM(),180);
+}
+function numeroPrecioATM(valor,formateado=''){
+  const exacto=Number(String(valor??'').replace(',','.'));
+  if(Number.isFinite(exacto)&&exacto>0)return exacto;
+  const limpio=String(formateado||'').replace(/[^0-9,.-]/g,'').replace(/\./g,'').replace(',','.');
+  const fallback=Number(limpio);return Number.isFinite(fallback)?fallback:NaN;
+}
+function redondearComercialMilesATM(valor){
+  const n=Number(valor);if(!Number.isFinite(n))return NaN;
+  return Math.floor((n+500)/1000)*1000;
+}
+function formatearPrecioComercialATM(valorExacto,formateadoExacto=''){
+  const n=numeroPrecioATM(valorExacto,formateadoExacto);if(!Number.isFinite(n))return formateadoExacto||'—';
+  return '$'+redondearComercialMilesATM(n).toLocaleString('es-AR');
+}
+function nombreClientePropuestaATM(c){
+  const codigo=String(c.codigo||'');
+  if(codigo==='TR'){
+    const pct=String(c.franquicia_pct||'').trim();
+    return `Todo Riesgo – Franquicia ${pct}%`;
+  }
+  return String(c.nombre_cliente||entradaCatalogoATM(codigo)?.nombre_cliente||c.titulo_leido||c.nombre||'Cobertura').trim();
+}
+function descripcionPropuestaATM(c){
+  const codigo=String(c.codigo||'');
+  if(codigo==='TR'){
+    const pct=String(c.franquicia_pct||'').trim();
+    return `Incluye responsabilidad civil, incendio total y parcial, robo total y parcial, destrucción total y daños parciales por accidente. Además incluye ruedas, vidrios, granizo, cerraduras y grúa.\n\nEn caso de un daño parcial, queda a cargo del asegurado una franquicia equivalente al ${pct}% de la suma asegurada. Todo gasto que supere ese importe queda a cargo de la compañía.`;
+  }
+  return String(c.descripcion_cliente||c.descripcion||entradaCatalogoATM(codigo)?.descripcion_cliente||entradaCatalogoATM(codigo)?.descripcion||'').trim();
+}
+async function generarPropuestaATM(){
+  const seleccion=seleccionadasATM();
+  if(!seleccion.length){estadoCapturaATM('Elegí al menos una cobertura para generar la propuesta.','error');return}
+  for(const c of seleccion){
+    if(c.codigo==='TR'&&!String(c.franquicia_pct||'').trim()){
+      estadoCapturaATM('Elegí la franquicia de Todo Riesgo.','error');return;
+    }
+  }
+  const ok=await calcularCoberturasSeleccionadasATM();if(!ok)return;
+  const finalSeleccion=seleccionadasATM();
+  const lines=['¡Hola! Te paso algunas opciones de cobertura para tu vehículo para que puedas compararlas y elegir la que mejor te sirva:',''];
+  finalSeleccion.forEach((c,i)=>{
+    lines.push(nombreClientePropuestaATM(c));
+    const desc=descripcionPropuestaATM(c);if(desc)lines.push(desc);
+    const cupones=c.precio_efectivo_comercial||formatearPrecioComercialATM(c.precio_efectivo_exacto,c.precio_efectivo_final);
+    const adherido=c.precio_adherido_comercial||formatearPrecioComercialATM(c.precio_adherido_exacto,c.precio_adherido_final);
+    lines.push(`${cupones} con cupones · ${adherido} con CBU o tarjeta adherida`);
+    if(i<finalSeleccion.length-1)lines.push('');
+  });
+  const text=lines.join('\n');
+  const area=document.getElementById('atmProposalText'),wrap=document.getElementById('atmProposal');
+  if(area)area.value=text;if(wrap)wrap.hidden=false;
+  estadoCapturaATM('Propuesta lista para copiar.','ok');
+}
+async function copiarPropuestaATM(){
+  const text=document.getElementById('atmProposalText')?.value||'';if(!text)return;
+  const ok=await copiarTextoSeguro(text);window.showToast?.(ok?'Propuesta copiada.':'No pude copiar automáticamente.',ok?'success':'warning');
+}
+function inicializarCotizadorATM(){
+  const modal=document.getElementById('atmCotiModal');
+  if(!modal||modal.dataset.wired==='1')return;
+  modal.dataset.wired='1';
+  asegurarCatalogoATM().then(()=>renderMatrizCoberturasATM());
+  document.getElementById('atmCotiClose')?.addEventListener('click',cerrarCotizadorATM);
+  document.getElementById('atmCotiSubmit')?.addEventListener('click',calcularCotizacionATM);
+  document.getElementById('atmGenerateProposal')?.addEventListener('click',generarPropuestaATM);
+  document.getElementById('atmCopyProposal')?.addEventListener('click',copiarPropuestaATM);
+  document.querySelectorAll('[data-atm-tab]').forEach(btn=>btn.addEventListener('click',()=>cambiarTabATM(btn.dataset.atmTab)));
+  document.querySelectorAll('[data-atm-descuento]').forEach(btn=>btn.addEventListener('click',()=>{const input=document.getElementById('atmDescuento');if(input){input.value=btn.dataset.atmDescuento;invalidarPropuestaATM();programarRecalculoSeleccionATM();input.focus()}}));
+  document.getElementById('atmDescuento')?.addEventListener('input',()=>{invalidarPropuestaATM();programarRecalculoSeleccionATM()});
+  modal.addEventListener('click',e=>{if(e.target===modal)cerrarCotizadorATM()});
+  document.addEventListener('keydown',e=>{if(e.key==='Escape'&&!modal.hidden)cerrarCotizadorATM()});
+  document.getElementById('atmPrecioBase')?.addEventListener('keydown',e=>{if(e.key==='Enter'){e.preventDefault();calcularCotizacionATM()}});
+
+  const capture=document.getElementById('atmCaptureInput'),drop=document.getElementById('atmCaptureDrop');
+  drop?.setAttribute('tabindex','0');
+  capture?.addEventListener('change',()=>{const f=capture.files?.[0];if(f)leerCapturaATM(f);capture.value=''});
+  ['dragenter','dragover'].forEach(ev=>drop?.addEventListener(ev,e=>{e.preventDefault();drop.classList.add('drag')}));
+  ['dragleave','drop'].forEach(ev=>drop?.addEventListener(ev,e=>{e.preventDefault();drop.classList.remove('drag')}));
+  drop?.addEventListener('drop',e=>{const f=[...(e.dataTransfer?.files||[])].find(x=>String(x.type||'').startsWith('image/'));if(f)leerCapturaATM(f)});
+  modal.addEventListener('paste',e=>{
+    if(modal.hidden||atmTabActual!=='capture')return;
+    const item=[...(e.clipboardData?.items||[])].find(x=>String(x.type||'').startsWith('image/'));
+    const blob=item?.getAsFile?.();if(!blob)return;
+    e.preventDefault();
+    const ext=String(blob.type||'').includes('jpeg')?'jpg':String(blob.type||'').includes('webp')?'webp':'png';
+    leerCapturaATM(new File([blob],`captura-atm.${ext}`,{type:blob.type||'image/png'}));
+  });
+  const descuento=document.getElementById('atmDescuento');if(descuento&&!descuento.value.trim())descuento.value='50';
+  cambiarTabATM('capture');
+}
+
+function inicializarMenuAccionesChat(){
+  const btn=document.getElementById('chatActionBtn'),menu=document.getElementById('chatActionMenu');
+  if(!btn||!menu||btn.dataset.wired==='1')return;
+  btn.dataset.wired='1';
+  btn.addEventListener('click',e=>{e.preventDefault();e.stopPropagation();const abrir=menu.hidden;cerrarMenuComandos();menu.hidden=!abrir;btn.setAttribute('aria-expanded',abrir?'true':'false')});
+  menu.addEventListener('click',e=>{const item=e.target.closest('[data-chat-action]');if(!item)return;e.preventDefault();ejecutarAccionRapidaChat(item.dataset.chatAction)});
+  document.addEventListener('click',e=>{if(menu.hidden)return;if(e.target.closest('#chatActionMenu')||e.target.closest('#chatActionBtn'))return;cerrarMenuAccionesChat()});
+  document.addEventListener('keydown',e=>{if(e.key==='Escape')cerrarMenuAccionesChat()});
+}
+
 async function enviarMensaje(){
   const i=document.getElementById('mensaje'),b=document.querySelector('.send'),pdf=document.getElementById('archivoInput');
   if(!i||enviandoMensaje)return;
+  // La inicialización y el primer envío nunca crean chats en paralelo.
+  if(chatInitInProgress){try{await chatInitReadyPromise}catch(_){}}
+  if(enviandoMensaje)return;
   const textoOriginal=i.value;
   const editSeqAlEnviar=composerEditSeq;
-  const attachmentSeqAlEnviar=attachmentEditSeq;
   const t=textoOriginal.trim();
   const archivos=archivosAdjuntosChat.length?[...archivosAdjuntosChat]:Array.from(pdf?.files||[]).slice(0,MAX_CHAT_ATTACHMENTS);
   if(!t&&!archivos.length)return;
   enviandoMensaje=true;
   if(b)b.disabled=true;
   const c=chatContainer();
-  // Si el usuario estaba siguiendo la conversación, al terminar posicionamos
-  // al inicio de la respuesta del asistente. Si se fue a leer mensajes anteriores,
-  // no lo sacamos de ahí.
   const seguirConversacion=isNearBottom(c);
   try{
     if(!currentChatId){await nuevoChat();}
     const historial=historialParaApi();
-    document.getElementById('chatWelcome')?.remove();try{document.getElementById('chat')?.classList.remove('history-empty')}catch(_){};
-  try{document.getElementById('chat')?.classList.remove('history-empty')}catch(_){};
-    agregarMensajeUsuarioConAdjuntos(t||(archivos.length>1?'Procesá estos documentos.':'Analizá este archivo.'),archivos);
-    // Conservamos texto y adjuntos pendientes hasta recibir una respuesta válida.
-    // Así un fallo de red/servidor no obliga al usuario a seleccionar todo de nuevo.
+    document.getElementById('chatWelcome')?.remove();
+    try{document.getElementById('chat')?.classList.remove('history-empty')}catch(_){}
+
+    // Lo visible es exactamente lo que escribió/adjuntó el usuario. Los prompts
+    // operativos del backend nunca se pintan en el chat.
+    agregarMensajeUsuarioConAdjuntos(t,archivos);
+
+    // Snapshot inmutable de este envío. El composer se limpia INMEDIATAMENTE;
+    // la request conserva sus File objects en memoria aunque ya no estén visibles.
+    limpiarComposerDespuesDeEnvio(i,textoOriginal,editSeqAlEnviar);
+    if(archivos.length)quitarAdjuntosEnviados(archivos);
+    const composerSeqLimpio=composerEditSeq;
+    const adjuntosSeqLimpios=attachmentEditSeq;
+
     if(seguirConversacion)scrollToBottom(false);
     const thinking=add('assistant','<span class="typing"><i></i><i></i><i></i></span>',true);
-    // No secuestrar el scroll mientras "piensa": solo un leve ajuste si el usuario seguía abajo.
     if(seguirConversacion)scrollToMessageStart(thinking,false);
     try{
       const fd=new FormData();
@@ -1758,49 +2532,64 @@ async function enviarMensaje(){
       const d=await leerJsonSeguro(r);
       if(!r.ok||d.ok===false)throw Error(d.error||'No se pudo consultar el asistente.');
       currentChatId=d.chat_id||currentChatId;
-      // Recién ahora la operación fue aceptada/procesada: limpiamos sólo lo enviado.
-      // Si el usuario escribió otro mensaje o agregó otros adjuntos mientras esperaba,
-      // no se destruye ese borrador nuevo.
-      limpiarComposerDespuesDeEnvio(i,textoOriginal,editSeqAlEnviar);
-      if(archivos.length)quitarAdjuntosEnviados(archivos,attachmentSeqAlEnviar);
-      const texto=d.respuesta||'No recibí una respuesta.';
-      const bubble=thinking.querySelector('.bubble');
-      bubble.innerHTML=fmt(texto);
+
+      const visible=textoVisibleAsistente(d.respuesta||'No recibí una respuesta.',d);
+      if(visible){thinking.querySelector('.bubble').innerHTML=fmt(visible)}else{thinking.remove()}
       if(d.propuesta_excel)mostrarPropuestaExcel(d.propuesta_excel);
       if(d.propuesta_metadato)mostrarPropuestaMetadato(d.propuesta_metadato);
       if(d.tabulado_flota)mostrarTabuladoFlota(d.tabulado_flota);
-      if(d.cedula_detectada)mostrarCedulaDetectada(d.cedula_detectada,d.cedula_advertencias);
+      if(d.cedula_detectada)mostrarCedulaDetectada(d.cedula_detectada,d.cedula_advertencias,{messageId:d.assistant_message_id,altaPrefill:d.borrador_alta_desde_cedula,altaRevisiones:d.alta_revisiones,altaYaPreparada:!!d.campos_guardar_alta_asegurado});
       if(d.documento_personal_detectado)mostrarDocumentoPersonalDetectado(d.documento_personal_detectado,d.documento_personal_advertencias);
       if(d.actualizacion_alta_asegurado){
         const actualizado=actualizarFormularioAltaActivo(d.actualizacion_alta_asegurado);
-        if(!actualizado)mostrarOpcionesAltaAsegurado(d.tabulado_alta_asegurado,d.actualizacion_alta_asegurado);
+        if(!actualizado)mostrarOpcionesAltaAsegurado(d.tabulado_alta_asegurado,d.actualizacion_alta_asegurado,{messageId:d.assistant_message_id,revisiones:d.alta_revisiones,origen:d.alta_origen});
       }else if(d.tabulado_alta_asegurado||d.campos_guardar_alta_asegurado){
-        mostrarOpcionesAltaAsegurado(d.tabulado_alta_asegurado,d.campos_guardar_alta_asegurado);
+        mostrarOpcionesAltaAsegurado(d.tabulado_alta_asegurado,d.campos_guardar_alta_asegurado,{messageId:d.assistant_message_id,revisiones:d.alta_revisiones,origen:d.alta_origen});
       }
-      // El alta nueva ya integra Envíos Ya en la misma tarjeta. Esta tarjeta suelta
-      // queda solamente para respuestas históricas/manuales del comando /envios ya.
       if(d.texto_envios_ya&&!d.actualizacion_alta_asegurado&&!d.campos_guardar_alta_asegurado)mostrarTextoEnviosYa(d.texto_envios_ya);
+      if(d.ficha_operativa_asegurado)mostrarFichaOperativaAsegurado(d.ficha_operativa_asegurado);
+      if(d.envios_chat)mostrarEnviosChat(d.envios_chat,{messageId:d.assistant_message_id});
+      if(d.abrir_cotizador_atm)abrirCotizadorATM(d.atm_cotizacion_detectada||null);
       try{await cargarListaChats()}catch(_){}
     }catch(e){
+      // Si el usuario no empezó un borrador nuevo mientras esperaba, devolvemos
+      // el snapshot al editor. Nunca obligamos a volver a seleccionar archivos.
+      if(composerEditSeq===composerSeqLimpio && attachmentEditSeq===adjuntosSeqLimpios && !i.value.trim() && !archivosAdjuntosChat.length){
+        if(textoOriginal){i.value=textoOriginal;composerEditSeq++;size()}
+        if(archivos.length){
+          archivosAdjuntosChat=[...archivos];
+          attachmentEditSeq++;
+          _sincronizarInputAdjuntos(pdf);
+          mostrarAdjuntos(archivosAdjuntosChat);
+        }
+      }
       const mensaje=e?.message||'No se pudo procesar la consulta. Intentá nuevamente.';
-      thinking.querySelector('.bubble').innerHTML='<p>'+esc(mensaje)+'</p>';
+      if(thinking.isConnected)thinking.querySelector('.bubble').innerHTML='<p>'+esc(mensaje)+'</p>';
     }
-    // Al finalizar: viewport al comienzo de la respuesta del asistente (no al último renglón).
-    if(seguirConversacion)scrollToMessageStart(thinking,true);
+    if(seguirConversacion && thinking.isConnected)scrollToMessageStart(thinking,true);
   }finally{
     enviandoMensaje=false;
     if(b)b.disabled=false;
     i.focus();
   }
 }
+
 async function initChat(){
   const i=document.getElementById('mensaje');
   if(!i)return;
+  chatInitInProgress=true;
+  chatInitReadyPromise=new Promise(resolve=>{resolveChatInitReady=resolve});
+  try{
   inicializarVisualChatWhatsApp();
+  inicializarLightboxChat();
+  inicializarMenuAccionesChat();
+  inicializarDictadoChat();
+  inicializarCotizadorATM();
   limpiarMetadataVisualMensajes(document.getElementById('chat'));
   wireWelcomeWorkflows(document);try{const h=document.getElementById('chat');if(h&&h.querySelector('#chatWelcome')){h.classList.add('history-empty');h.scrollTop=0}}catch(_){};
 
   i.oninput=()=>{
+    if(dictationActive&&!dictationProgrammaticUpdate){try{dictationRecognition?.stop()}catch(_){}}
     composerEditSeq++;
     size();
     actualizarMenuComandos();
@@ -1814,6 +2603,7 @@ async function initChat(){
       if(navegarMenuComandos(-1)){e.preventDefault();return}
     }
     if(e.key==='Escape'){
+      if(dictationActive){e.preventDefault();finalizarDictado({cancelar:true});return}
       cerrarMenuComandos();
       return;
     }
@@ -1866,19 +2656,11 @@ async function initChat(){
 
   document.addEventListener('click',e=>{
     const menu=document.getElementById('chatCommandMenu');
-    if(menu&&!menu.hidden&&!e.target.closest('#chatCommandMenu')&&!e.target.closest('#slashBtn')&&e.target!==i){
+    if(menu&&!menu.hidden&&!e.target.closest('#chatCommandMenu')&&e.target!==i){
       cerrarMenuComandos();
     }
   });
 
-  const slashBtn=document.getElementById('slashBtn');
-  if(slashBtn){
-    slashBtn.addEventListener('click',e=>{
-      e.preventDefault();
-      e.stopPropagation();
-      toggleMenuComandos();
-    });
-  }
 
   const r=await fetch('/api/chats',{credentials:'same-origin'});
   const d=await leerJsonSeguro(r);
@@ -1900,6 +2682,11 @@ async function initChat(){
 
   size();
   scroll();
+  }finally{
+    chatInitInProgress=false;
+    try{resolveChatInitReady?.()}catch(_){}
+    resolveChatInitReady=null;
+  }
 }
 
 async function buscar(q){const box=document.getElementById('resultadosBusqueda');if(!box)return;if(!q){box.innerHTML='<div class="empty"><b>Empezá a buscar</b><small>Los resultados aparecerán aquí.</small></div>';return}box.innerHTML='<div class="empty"><b>Buscando…</b></div>';try{const r=await fetch('/api/buscar?q='+encodeURIComponent(q)),d=await r.json();box.innerHTML=d.length?d.map(x=>`<div class="result"><b>${esc((x.extension||'FILE').replace('.','').toUpperCase())}</b><span><strong>${esc(x.nombre)}</strong><small>${esc(x.compania)} · ${esc(x.tamaño)} KB</small></span></div>`).join(''):'<div class="empty"><b>No encontramos coincidencias</b></div>'}catch{box.innerHTML='<div class="empty"><b>Error de búsqueda</b></div>'}}
@@ -1929,6 +2716,7 @@ function mostrarAdjuntos(files){
     listaEl.appendChild(item);
   });
   box.hidden=!lista.length;
+  document.querySelector('.composer')?.classList.toggle('has-attachments',!!lista.length);
 }
 function mostrarAdjunto(file){mostrarAdjuntos(file?[file]:[])}
 function _sincronizarInputAdjuntos(input){
@@ -1973,9 +2761,9 @@ function limpiarComposerDespuesDeEnvio(input,valorEnviado,seqAlEnviar){
 function _archivoAdjuntoValido(file){
   if(!file)return {ok:false,error:'Archivo inválido.'};
   const ext=(file.name.split('.').pop()||'').toLowerCase();
-  const limites={pdf:20,txt:2,png:15,jpg:15,jpeg:15,webp:15};
+  const limites={pdf:20,txt:2,csv:20,xlsx:20,xlsm:20,png:15,jpg:15,jpeg:15,webp:15};
   const limite=limites[ext];
-  if(!limite)return {ok:false,error:'Podés adjuntar PDF, TXT, PNG, JPG, JPEG o WEBP.'};
+  if(!limite)return {ok:false,error:'Podés adjuntar Excel (XLSX/XLSM), PDF, TXT, CSV, PNG, JPG, JPEG o WEBP.'};
   if(file.size>limite*1024*1024)return {ok:false,error:`El archivo supera el límite de ${limite} MB.`};
   return {ok:true};
 }
@@ -2373,9 +3161,9 @@ document.addEventListener('DOMContentLoaded',inicializarFechaGlobal);
     'Antes de guardar un alta, siempre podés revisar los datos que encontré.',
     'Puedo prepararte los datos de una póliza tabulados, listos para pegar en Excel.',
     'Si una póliza trae varios vehículos, la distingo de una póliza individual.',
-    'Podés adjuntar PDF, TXT o imágenes con el 📎 o arrastrarlos directo sobre el chat.',
+    'Podés adjuntar Excel, PDF, TXT, CSV o imágenes desde el + o arrastrarlos directo sobre el chat.',
     'Si mandás un archivo sin escribir nada, igual lo proceso.',
-    'Los PDFs admiten hasta 20 MB; las imágenes hasta 15 MB y los TXT hasta 2 MB.',
+    'Los PDFs, CSV y Excel admiten hasta 20 MB; las imágenes hasta 15 MB y los TXT hasta 2 MB.',
     'Usá /flota para empezar a armar una flota.',
     'No hace falta mandar toda la flota junta: podés cargarla en tandas.',
     'También podés sumar vehículos de a uno.',
@@ -2410,13 +3198,9 @@ document.addEventListener('DOMContentLoaded',inicializarFechaGlobal);
     'El Excel 1 es Asegurados y el Excel 2 es Flotas.',
     'Antes de guardar un alta que salió de una póliza, podés revisar lo que encontré.',
     'Los datos de la póliza se acomodan según las columnas reales de tu Excel.',
-    'Usá /coti para cargar una cotización rápida.',
-    'El formato de /coti es: CIA COBERTURA SUMA PREMIO.',
-    'En /coti podés indicar compañía, cobertura, suma asegurada y premio.',
-    '/coti es un comando fijo: no depende de que Gemini lo interprete.',
-    'Usá /envios ya seguido de la patente.',
-    '/envios ya también acepta la patente entre paréntesis.',
-    'Los datos de Envíos Ya se guardan aparte del resto del asegurado.',
+    'Cotización ATM está visible directamente en el menú +.',
+    'En Cotización ATM podés calcular un precio manual o leer una captura del cotizador.',
+    'Si adjuntás un Excel de contactos al chat, puedo prepararlo y generar el CSV final para Envíos Ya.',
     'Cuando preparo un alta desde una póliza, Envíos Ya queda vacío para que lo completes vos.',
     'Podés preguntarme por coberturas, asistencia, remolques, grúas, límites o condiciones usando la documentación cargada.',
     'Si mencionás una compañía, busco directo en su documentación.',

@@ -147,6 +147,35 @@ def test_rango_con_hoy_inyectado():
     check(rango.desde == date(2026, 9, 5) and rango.hasta == date(2026, 9, 10), "Debe resolver del 5 para acá")
 
 
+def test_ultimo_y_nombre_exacto_se_resuelven_sin_gemini():
+    filas = [
+        {"ASEGURADO": "SANCHEZ AREVALO PAOLA NATALIA", "PATENTE": "A278WXP", "VEHICULO": "MONDIAL 110 LD S", "CIA": "ATM", "EMITIDO DÍA:": "10/09/2026"},
+        {"ASEGURADO": "LOPEZ PAVON JONATHAN GONZALO", "PATENTE": "A249UXD", "VEHICULO": "HONDA WAVE 110S NEW BASE", "CIA": "ATM", "EMITIDO DÍA:": "10/09/2026"},
+        {"ASEGURADO": "CAMARGO ALEJANDRO JONATAN", "PATENTE": "DHA277", "VEHICULO": "RENAULT CLIO RL DIESEL DA 5 P.", "CIA": "AGS", "EMITIDO DÍA:": "10/09/2026"},
+        {"ASEGURADO": "BAO GABRIEL ROBERTO", "PATENTE": "IDF853", "VEHICULO": "MERCEDES BENZ C 200 KOMPRESSOR AVANTGARDE 08 AUT", "CIA": "ATM", "EMITIDO DÍA:": "10/09/2026"},
+    ]
+    instalar_dataset(filas)
+    session = {"arca_context": {"fuente": "ARCA", "candidates": [{"nombre": "VIEJO"}]}}
+    r = ctx.responder_conteo_temporal("cuantos asegurados tuve hoy", session_obj=session, chat_id=77)
+    check("4" in r, "Debe contar los cuatro asegurados")
+    check("arca_context" not in session, "Activar cartera debe invalidar el contexto ARCA viejo")
+
+    opciones = ctx.responder_followup_registro("decime sus detalles", session_obj=session, chat_id=77)
+    check("BAO GABRIEL ROBERTO" in opciones, "Debe listar Bao dentro del conjunto activo")
+
+    ultimo = ctx.responder_followup_registro("el último", session_obj=session, chat_id=77)
+    check("BAO GABRIEL ROBERTO" in ultimo and "IDF853" in ultimo, "'el último' debe seleccionar el cuarto registro localmente")
+
+    # Restauramos el conjunto original para probar selección exacta por nombre.
+    ctx.guardar_contexto(session, chat_id=77, filtros={"desde": "10/09/2026", "hasta": "10/09/2026", "campo_fecha": "EMITIDO DÍA:"}, cantidad=4, registros=filas, etiqueta="hoy", origen="test")
+    por_nombre = ctx.responder_followup_registro("bao gabriel roberto", session_obj=session, chat_id=77)
+    check("BAO GABRIEL ROBERTO" in por_nombre and "IDF853" in por_nombre, "Nombre exacto debe seleccionar desde cartera sin Gemini/ARCA")
+
+    ctx.guardar_contexto(session, chat_id=77, filtros={"desde": "10/09/2026", "hasta": "10/09/2026", "campo_fecha": "EMITIDO DÍA:"}, cantidad=4, registros=filas, etiqueta="hoy", origen="test")
+    por_patente = ctx.responder_followup_registro("IDF853", session_obj=session, chat_id=77)
+    check("BAO GABRIEL ROBERTO" in por_patente, "Patente exacta debe seleccionar desde el conjunto activo")
+
+
 if __name__ == "__main__":
     tests = [v for k, v in sorted(globals().items()) if k.startswith("test_")]
     ok = 0

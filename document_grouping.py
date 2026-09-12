@@ -10,7 +10,7 @@ from dataclasses import dataclass, field
 
 
 TIPOS_PERSONALES = {"dni", "licencia"}
-TIPOS_DOCUMENTO = {"cedula", "dni", "licencia", "poliza", "otro"}
+TIPOS_DOCUMENTO = {"cedula", "dni", "licencia", "poliza", "cotizacion_atm", "otro"}
 
 
 @dataclass

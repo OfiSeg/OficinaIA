@@ -27,14 +27,19 @@ class ChatStore:
         with closing(self._conectar_db()) as db:
             return db.execute("SELECT id FROM conversaciones WHERE id=? AND usuario=?", (chat_id, usuario)).fetchone() is not None
 
-    def guardar_mensaje(self, chat_id, rol, contenido):
+    def guardar_mensaje(self, chat_id, rol, contenido, metadata=None):
+        import json
+        metadata = metadata if isinstance(metadata, dict) else {}
         if self._usar_pg():
-            self._pg["agregar_mensaje"](chat_id, rol, contenido)
-            return
+            return self._pg["agregar_mensaje"](chat_id, rol, contenido, metadata)
         with closing(self._conectar_db()) as db:
-            db.execute("INSERT INTO mensajes (conversacion_id,rol,contenido) VALUES (?,?,?)", (chat_id, rol, contenido))
+            cur = db.execute(
+                "INSERT INTO mensajes (conversacion_id,rol,contenido,metadata) VALUES (?,?,?,?)",
+                (chat_id, rol, contenido, json.dumps(metadata, ensure_ascii=False)),
+            )
             db.execute("UPDATE conversaciones SET actualizado_en=CURRENT_TIMESTAMP WHERE id=?", (chat_id,))
             db.commit()
+            return cur.lastrowid
 
     def historial(self, chat_id, usuario, limite=10):
         if not chat_id:
@@ -47,6 +52,30 @@ class ChatStore:
             rows = db.execute("SELECT rol, contenido FROM mensajes WHERE conversacion_id=? ORDER BY id DESC LIMIT ?", (chat_id, limite)).fetchall()
             return [{"rol": r["rol"], "contenido": r["contenido"]} for r in reversed(list(rows))
                     if r["rol"] in ("user", "assistant") and str(r["contenido"] or "").strip()]
+
+    def actualizar_metadata_mensaje(self, message_id, chat_id, usuario, patch):
+        import json
+        if not isinstance(patch, dict):
+            return False
+        if self._usar_pg():
+            fn = self._pg.get("actualizar_metadata_mensaje")
+            return bool(fn and fn(message_id, chat_id, usuario, patch))
+        with closing(self._conectar_db()) as db:
+            row = db.execute(
+                """SELECT m.metadata FROM mensajes m JOIN conversaciones c ON c.id=m.conversacion_id
+                   WHERE m.id=? AND m.conversacion_id=? AND c.usuario=?""",
+                (message_id, chat_id, usuario),
+            ).fetchone()
+            if not row:
+                return False
+            try:
+                current = json.loads(row["metadata"] or "{}")
+            except Exception:
+                current = {}
+            current.update(patch)
+            db.execute("UPDATE mensajes SET metadata=? WHERE id=?", (json.dumps(current, ensure_ascii=False), message_id))
+            db.commit()
+            return True
 
     def listar(self, usuario):
         if self._usar_pg():
@@ -62,8 +91,21 @@ class ChatStore:
             chat = db.execute("SELECT id,titulo FROM conversaciones WHERE id=? AND usuario=?", (chat_id, usuario)).fetchone()
             if not chat:
                 return None, []
-            mensajes = db.execute("SELECT id,rol,contenido,creado_en FROM mensajes WHERE conversacion_id=? ORDER BY id", (chat_id,)).fetchall()
-            return dict(chat), [dict(x) for x in mensajes]
+            mensajes = db.execute("SELECT id,rol,contenido,metadata,creado_en FROM mensajes WHERE conversacion_id=? ORDER BY id", (chat_id,)).fetchall()
+            out = []
+            import json
+            for x in mensajes:
+                item = dict(x)
+                raw = item.get("metadata")
+                if isinstance(raw, str):
+                    try:
+                        item["metadata"] = json.loads(raw)
+                    except Exception:
+                        item["metadata"] = {}
+                elif not isinstance(raw, dict):
+                    item["metadata"] = {}
+                out.append(item)
+            return dict(chat), out
 
     def eliminar(self, chat_id, usuario):
         if self._usar_pg():

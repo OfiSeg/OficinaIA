@@ -103,6 +103,34 @@ def _motivo_error(exc: Exception) -> str | None:
     return None
 
 
+
+
+def clasificar_error_ia(exc: Exception) -> str:
+    """Clasificación técnica estable para diagnóstico de IA, sin exponer payloads."""
+    if isinstance(exc, RecoverablePayloadError):
+        return "INVALID_RESPONSE"
+    if isinstance(exc, (TimeoutError, socket.timeout)):
+        return "TIMEOUT"
+    if isinstance(exc, (ConnectionError, ConnectionResetError, BrokenPipeError)):
+        return "NETWORK_ERROR"
+    status = _status_code(exc)
+    texto = str(exc or "").upper()
+    if status == 429 or "RESOURCE_EXHAUSTED" in texto or "RATE LIMIT" in texto or "TOO MANY REQUESTS" in texto:
+        return "RATE_LIMIT"
+    if status in {500, 502, 503, 504, 520, 521, 522, 523, 524} or "UNAVAILABLE" in texto or "SERVICE UNAVAILABLE" in texto:
+        return "SERVICE_UNAVAILABLE"
+    if status in {401, 403} or "UNAUTHENTICATED" in texto or "PERMISSION DENIED" in texto or "INVALID API KEY" in texto:
+        return "AUTH_ERROR"
+    if status == 404 or "MODEL_NOT_FOUND" in texto or "MODEL NOT FOUND" in texto:
+        return "MODEL_UNAVAILABLE"
+    if "JSON" in texto and ("INVALID" in texto or "PARSE" in texto or "TRUNC" in texto):
+        return "JSON_ERROR"
+    if "TIMEOUT" in texto or "TIMED OUT" in texto or "DEADLINE_EXCEEDED" in texto:
+        return "TIMEOUT"
+    if status is not None and 400 <= status < 500:
+        return "REQUEST_ERROR"
+    return "INTERNAL_APP_ERROR"
+
 def describir_error_seguro(
     exc: Exception,
     *,
@@ -113,7 +141,7 @@ def describir_error_seguro(
     sequence_id: str | None = None,
 ) -> str:
     """Detalle técnico mínimo para logs, sin prompts, documentos ni secretos."""
-    partes = [type(exc).__name__]
+    partes = [type(exc).__name__, f"categoria={clasificar_error_ia(exc)}"]
     code = _status_code(exc)
     motivo = _motivo_error(exc)
     if code is not None:

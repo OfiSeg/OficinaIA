@@ -56,6 +56,7 @@ from database_pg import (
     obtener_chat_con_mensajes as pg_obtener_chat_con_mensajes,
     eliminar_chat as pg_eliminar_chat,
     agregar_mensaje as pg_agregar_mensaje,
+    actualizar_metadata_mensaje as pg_actualizar_metadata_mensaje,
     listar_mensajes_historial as pg_listar_mensajes_historial,
     actualizar_tipo_chat as pg_actualizar_tipo_chat,
     obtener_titulo_chat as pg_obtener_titulo_chat,
@@ -99,6 +100,9 @@ from document_search import (
 )
 import estudio_ops
 import envios_masivos
+import atm_cotizador
+import atm_quote_service
+import atm_coberturas
 import alta_ops
 from flota_store import FlotaStore
 from chat_store import ChatStore
@@ -122,10 +126,12 @@ import system_health
 import service_diagnostics
 import dispatch_service
 import chat_attachments
+import chat_media_store
 import excel_conversation_context
 from excel_records import ExcelRecordService, normalizar_encabezado
 from envios_ya_utils import preparar_envios_ya
 from excel_books import obtener_catalogo_libros
+from office_time import office_today
 
 # ==========================================================
 # CONFIGURACIÓN
@@ -313,9 +319,13 @@ def inicializar_base_datos():
             conversacion_id INTEGER NOT NULL,
             rol TEXT NOT NULL,
             contenido TEXT NOT NULL,
+            metadata TEXT NOT NULL DEFAULT '{}',
             creado_en TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
             FOREIGN KEY(conversacion_id) REFERENCES conversaciones(id) ON DELETE CASCADE
         )""")
+        cols_msg = {fila[1] for fila in db.execute("PRAGMA table_info(mensajes)").fetchall()}
+        if "metadata" not in cols_msg:
+            db.execute("ALTER TABLE mensajes ADD COLUMN metadata TEXT NOT NULL DEFAULT '{}' ")
         db.execute("""CREATE TABLE IF NOT EXISTS flotas_activas (
             conversacion_id INTEGER PRIMARY KEY,
             estado TEXT NOT NULL DEFAULT 'nueva',
@@ -910,6 +920,62 @@ def notas():
     return render_template("notas.html", usuario=session["usuario"], carpetas=obtener_companias())
 
 
+@app.route("/api/atm/catalogo", methods=["GET"])
+@requiere_login
+def api_atm_catalogo():
+    return jsonify({"ok": True, "coberturas": atm_coberturas.catalogo_publico()})
+
+
+@app.route("/api/atm/cotizar", methods=["POST"])
+@requiere_login
+def api_atm_cotizar():
+    data = request.get_json(silent=True) or {}
+    try:
+        resultado = atm_cotizador.cotizar_atm(
+            data.get("precio_base"),
+            tipo=data.get("tipo"),
+            descuento=data.get("descuento"),
+        )
+        return jsonify({"ok": True, **resultado})
+    except ValueError as error:
+        return jsonify({"ok": False, "error": str(error)}), 400
+    except Exception as error:
+        logger.exception("Error calculando cotización ATM: %s", error)
+        return jsonify({"ok": False, "error": "No se pudo calcular la cotización ATM."}), 500
+
+
+@app.route("/api/atm/leer-captura", methods=["POST"])
+@requiere_login
+def api_atm_leer_captura():
+    archivo = request.files.get("captura")
+    if not archivo or not getattr(archivo, "filename", ""):
+        return jsonify({"ok": False, "error": "Adjuntá una captura de la cotización ATM."}), 400
+    try:
+        adjunto = extract_attachment(
+            archivo,
+            max_pdf_bytes=MAX_PDF_FILE_SIZE_BYTES,
+            max_pages=1,
+            max_chars=4000,
+        )
+        if adjunto is None or adjunto.tipo != "imagen":
+            return jsonify({"ok": False, "error": "Usá una captura PNG, JPG, JPEG o WEBP."}), 400
+        begin_request(
+            runtime_config.get_float("GEMINI_ATM_CAPTURE_BUDGET_SECONDS", 45.0),
+            request_id=getattr(g, "chat_request_id", None),
+        )
+        resultado = atm_quote_service.extraer_cotizacion_atm(adjunto)
+        if not resultado.get("es_cotizacion_atm"):
+            return jsonify({"ok": False, "error": "La imagen no parece ser una pantalla de cotización ATM."}), 422
+        return jsonify({"ok": True, **resultado})
+    except ChatRequestError as error:
+        return jsonify({"ok": False, "error": str(error)}), error.status_code
+    except ValueError as error:
+        return jsonify({"ok": False, "error": str(error)}), 400
+    except Exception as error:
+        logger.exception("Error leyendo captura ATM: %s", error)
+        return jsonify({"ok": False, "error": "No pude leer la captura ATM en este intento. Reintentá o cargá el precio manualmente."}), 500
+
+
 @app.route("/api/excel", methods=["GET"])
 @requiere_login
 def api_excel():
@@ -1151,10 +1217,10 @@ def _validar_chat(chat_id, usuario):
     return _chat_store.validar(chat_id, usuario)
 
 
-def _guardar_mensaje(chat_id, rol, contenido):
+def _guardar_mensaje(chat_id, rol, contenido, metadata=None):
     # Los errores de persistencia se propagan: un turno no debe fingir que
     # quedó guardado cuando PostgreSQL falló.
-    return _chat_store.guardar_mensaje(chat_id, rol, contenido)
+    return _chat_store.guardar_mensaje(chat_id, rol, contenido, metadata=metadata)
 
 
 def _historial_desde_db(chat_id, usuario, limite=10):
@@ -1301,6 +1367,7 @@ _chat_store = ChatStore(
         "obtener": pg_obtener_chat_con_mensajes,
         "eliminar": pg_eliminar_chat,
         "agregar_mensaje": pg_agregar_mensaje,
+        "actualizar_metadata_mensaje": pg_actualizar_metadata_mensaje,
         "historial": pg_listar_mensajes_historial,
         "actualizar_tipo": pg_actualizar_tipo_chat,
         "obtener_titulo": pg_obtener_titulo_chat,
@@ -1355,6 +1422,69 @@ def obtener_chat(chat_id):
     if not chat:
         return jsonify({"ok": False, "error": "Conversación no encontrada."}), 404
     return jsonify({"ok": True, "chat": chat, "mensajes": mensajes})
+
+@app.route("/api/chats/<int:chat_id>/assets/<asset_id>", methods=["GET"])
+@requiere_login
+def obtener_chat_asset(chat_id, asset_id):
+    if not _validar_chat(chat_id, session["usuario"]):
+        return jsonify({"ok": False, "error": "Conversación no encontrada."}), 404
+    try:
+        _chat, mensajes = _chat_store.obtener(chat_id, session["usuario"])
+        asset = None
+        for msg in mensajes or []:
+            md = msg.get("metadata") if isinstance(msg, dict) else {}
+            for item in (md or {}).get("attachments", []) if isinstance(md, dict) else []:
+                if str(item.get("id") or "") == str(asset_id):
+                    asset = item
+                    break
+            if asset:
+                break
+        if not asset:
+            return jsonify({"ok": False, "error": "Adjunto no disponible."}), 404
+        abierto = chat_media_store.abrir_asset(asset)
+        if not abierto:
+            return jsonify({"ok": False, "error": "Adjunto no disponible."}), 404
+        backend, objeto = abierto
+        mime = str(asset.get("mime") or "application/octet-stream")
+        nombre = secure_filename(str(asset.get("name") or "adjunto")) or "adjunto"
+        if backend == "local":
+            return send_file(objeto, mimetype=mime, download_name=nombre, as_attachment=False)
+        body = objeto.get("Body")
+        def generar():
+            try:
+                for bloque in iter(lambda: body.read(1024 * 256), b""):
+                    yield bloque
+            finally:
+                try:
+                    body.close()
+                except Exception:
+                    pass
+        resp = Response(stream_with_context(generar()), mimetype=mime)
+        resp.headers["Content-Disposition"] = f'inline; filename="{nombre}"'
+        return resp
+    except Exception as error:
+        logger.warning("No se pudo abrir adjunto persistente chat=%s asset=%s: %s", chat_id, asset_id, error)
+        return jsonify({"ok": False, "error": "Adjunto no disponible."}), 404
+
+
+@app.route("/api/chats/<int:chat_id>/messages/<int:message_id>/ui-state", methods=["PATCH"])
+@requiere_login
+def actualizar_estado_ui_mensaje(chat_id, message_id):
+    data = request.get_json(silent=True) or {}
+    ui_state = data.get("ui_state")
+    if not isinstance(ui_state, dict):
+        return jsonify({"ok": False, "error": "Estado visual inválido."}), 400
+    permitido = {}
+    for clave in ("saved_excel", "confirmed", "selected_variant", "cedula_confirmaciones"):
+        if clave in ui_state:
+            permitido[clave] = ui_state[clave]
+    if not permitido:
+        return jsonify({"ok": False, "error": "No hay estado permitido para guardar."}), 400
+    ok = _chat_store.actualizar_metadata_mensaje(
+        message_id, chat_id, session["usuario"], {"ui_state": permitido}
+    )
+    return jsonify({"ok": bool(ok)}) if ok else (jsonify({"ok": False, "error": "Mensaje no encontrado."}), 404)
+
 
 @app.route("/api/chats/<int:chat_id>", methods=["DELETE"])
 @requiere_login
@@ -1572,7 +1702,13 @@ def chat():
 
     # V20: cada turno recibe estado efímero propio para timeout/circuit breaker.
     # El historial conversacional sigue persistiendo por separado.
-    begin_request(request_id=getattr(g, "chat_request_id", None))
+    # Chat interactivo: presupuesto corto. Si hay adjuntos/documentos, el bloque
+    # de abajo reemplaza este presupuesto por el presupuesto documental existente.
+    # Así aceleramos el chat general SIN alterar el flujo actual de cédulas.
+    begin_request(
+        runtime_config.get_float("GEMINI_CHAT_BUDGET_SECONDS", 35.0),
+        request_id=getattr(g, "chat_request_id", None),
+    )
 
     # El chat acepta JSON para consultas normales y multipart/form-data con
     # un adjunto efímero (PDF, TXT o imagen). El archivo no se incorpora a la
@@ -1580,6 +1716,7 @@ def chat():
     logger.info("CHAT[%s] etapa=request_parse", getattr(g, "chat_request_id", "-"))
     entrada = parse_incoming(request)
     mensaje = entrada.mensaje
+    mensaje_usuario_original = str(mensaje or "")
     chat_id = entrada.chat_id
     historial = entrada.historial
     archivos = list(getattr(entrada, "archivos", None) or ([entrada.archivo] if entrada.archivo else []))
@@ -1691,6 +1828,8 @@ def chat():
             mensaje = _MENSAJE_PDF_POR_DEFECTO
         elif adjunto_actual.tipo == "imagen":
             mensaje = "Analizá esta imagen según su contenido."
+        elif adjunto_actual.tipo == "tabla":
+            mensaje = "Prepará esta base de contactos para Envíos Ya."
         else:
             mensaje = "Analizá este archivo de texto según su contenido."
 
@@ -1705,8 +1844,80 @@ def chat():
     if nombre_adjunto:
         etiqueta = "Adjuntos" if len(nombres_adjuntos) > 1 else "Adjunto"
         mensaje_guardado = f"[{etiqueta}: {nombre_adjunto}]\n{mensaje}"
-    _guardar_mensaje(chat_id, "user", mensaje_guardado)
+    assets_persistidos = []
+    if adjuntos_actuales:
+        try:
+            assets_persistidos = chat_media_store.persistir_adjuntos(session["usuario"], chat_id, adjuntos_actuales)
+        except Exception as error:
+            logger.warning("CHAT[%s] persistencia_visual_adjuntos_fallo: %s", getattr(g, "chat_request_id", "-"), error)
+    user_metadata = {
+        "attachments": assets_persistidos,
+        "display_text": mensaje_usuario_original.strip(),
+        "auto_prompt": bool(adjuntos_actuales and not mensaje_usuario_original.strip()),
+    }
+    _guardar_mensaje(chat_id, "user", mensaje_guardado, metadata=user_metadata)
     logger.info("CHAT[%s] mensaje usuario guardado chat_id=%s", getattr(g, "chat_request_id", "-"), chat_id)
+
+    # ======================================================
+    # PLANILLAS DE CONTACTOS — Excel directo desde el chat (CSV secundario)
+    # ======================================================
+    adjuntos_tabla = [a for a in adjuntos_actuales if getattr(a, "tipo", "") == "tabla"]
+    if adjuntos_tabla:
+        if len(adjuntos_tabla) != len(adjuntos_actuales):
+            respuesta_tabla = "Para preparar contactos de Envíos Ya, adjuntá las planillas sin mezclarlas con PDFs o imágenes en el mismo mensaje."
+            assistant_message_id = _guardar_mensaje(chat_id, "assistant", respuesta_tabla)
+            return jsonify({
+                "respuesta": respuesta_tabla, "chat_id": chat_id,
+                "assistant_message_id": assistant_message_id,
+                "archivo_adjunto": nombre_adjunto or None,
+            })
+        payload_tabla = [(a.nombre, bytes(a.datos_binarios or b"")) for a in adjuntos_tabla]
+        try:
+            token_fuente = envios_masivos.guardar_fuentes_pendientes(payload_tabla)
+            resultado_tabla = envios_masivos.procesar_bases(
+                payload_tabla,
+                generar_archivo=False,
+                token_pendiente=token_fuente,
+            )
+            if resultado_tabla.get("requiere_mapeo"):
+                envios_payload = {
+                    "estado": "mapeo",
+                    "token": token_fuente,
+                    "mapeos": resultado_tabla.get("mapeos") or [],
+                    "resumen": resultado_tabla.get("resumen") or {},
+                }
+                respuesta_tabla = "Necesito confirmar algunas columnas antes de preparar los contactos."
+            else:
+                envios_masivos.eliminar_fuentes_pendientes(token_fuente)
+                resumen_tabla = resultado_tabla.get("resumen") or {}
+                envios_payload = {
+                    "estado": "confirmar",
+                    "token": resultado_tabla.get("token"),
+                    "resumen": resumen_tabla,
+                    "preview": resultado_tabla.get("preview") or [],
+                }
+                respuesta_tabla = (
+                    f"Encontré {int(resumen_tabla.get('exportables') or 0)} contacto(s) válido(s)"
+                    f" y {int(resumen_tabla.get('revisar') or 0)} para revisar. "
+                    "Confirmá y genero el CSV para Envíos Ya."
+                )
+            ui_payload = {"envios_chat": envios_payload}
+            assistant_message_id = _guardar_mensaje(chat_id, "assistant", respuesta_tabla, metadata={"ui": ui_payload})
+            return jsonify({
+                "respuesta": respuesta_tabla, "chat_id": chat_id,
+                "assistant_message_id": assistant_message_id,
+                "archivo_adjunto": nombre_adjunto or None,
+                "envios_chat": envios_payload,
+            })
+        except ValueError as error:
+            respuesta_tabla = str(error)
+            assistant_message_id = _guardar_mensaje(chat_id, "assistant", respuesta_tabla)
+            return jsonify({"respuesta": respuesta_tabla, "chat_id": chat_id, "assistant_message_id": assistant_message_id}), 400
+        except Exception as error:
+            logger.exception("CHAT planilla Envíos Ya falló: %s", error)
+            respuesta_tabla = "No pude preparar esa base en este intento. El archivo original no se modificó."
+            assistant_message_id = _guardar_mensaje(chat_id, "assistant", respuesta_tabla)
+            return jsonify({"respuesta": respuesta_tabla, "chat_id": chat_id, "assistant_message_id": assistant_message_id}), 500
 
     # ======================================================
     # CONTEXTO DETERMINÍSTICO DE CARTERA — referencias y fechas
@@ -1782,10 +1993,16 @@ def chat():
             campos_alta = especial.payload_extra.get("campos_guardar_alta_asegurado")
             if isinstance(campos_alta, dict):
                 session["alta_activa"] = {"chat_id": chat_id, "campos": dict(campos_alta)}
-        _guardar_mensaje(chat_id, "assistant", str(especial.respuesta))
+        ui_payload = {
+            "propuesta_excel": None,
+            "propuesta_metadato": None,
+            **(especial.payload_extra or {}),
+        }
+        assistant_message_id = _guardar_mensaje(chat_id, "assistant", str(especial.respuesta), metadata={"ui": ui_payload})
         return jsonify({
             "respuesta": especial.respuesta,
             "chat_id": chat_id,
+            "assistant_message_id": assistant_message_id,
             "archivo_adjunto": nombre_adjunto or None,
             "propuesta_excel": None,
             "propuesta_metadato": None,
@@ -1795,13 +2012,20 @@ def chat():
     # ======================================================
     # COMANDOS DETERMINÍSTICOS — /envios ya, /guardar asegurado
     # ======================================================
+    arca_context_activo = session.get("arca_context")
+    if isinstance(arca_context_activo, dict):
+        # ARCA también es contexto conversacional: no debe filtrarse entre chats.
+        if str(arca_context_activo.get("chat_id") or "") != str(chat_id or ""):
+            arca_context_activo = None
+            session.pop("arca_context", None)
+
     comando = chat_commands.procesar(
         mensaje,
         leer_excel=leer_excel_interno,
         normalizar_encabezado=normalizar_encabezado,
         libros_excel=LIBROS_EXCEL,
         historial=historial,
-        arca_context=session.get("arca_context"),
+        arca_context=arca_context_activo,
         adjuntos=adjuntos_actuales,
     )
     if comando.atendido:
@@ -1810,11 +2034,23 @@ def chat():
             # El destino vive sólo hasta el próximo turno.
             session["guardar_asegurado_libro_id"] = comando.libro_id
         if isinstance(comando.payload_extra, dict) and comando.payload_extra.get("arca_context"):
-            session["arca_context"] = comando.payload_extra.get("arca_context")
-        _guardar_mensaje(chat_id, "assistant", str(comando.respuesta))
+            # Si ARCA fue la fuente realmente usada, pasa a ser el contexto activo
+            # de ESTE chat y se invalida el conjunto conversacional de cartera.
+            nuevo_arca_context = dict(comando.payload_extra.get("arca_context") or {})
+            nuevo_arca_context["chat_id"] = str(chat_id or "")
+            session["arca_context"] = nuevo_arca_context
+            excel_conversation_context.limpiar_contexto(session)
+        ui_payload = {
+            "propuesta_excel": comando.propuesta_excel,
+            "propuesta_metadato": None,
+            "texto_envios_ya": comando.texto_envios_ya,
+            **(comando.payload_extra or {}),
+        }
+        assistant_message_id = _guardar_mensaje(chat_id, "assistant", str(comando.respuesta), metadata={"ui": ui_payload})
         return jsonify({
             "respuesta": comando.respuesta,
             "chat_id": chat_id,
+            "assistant_message_id": assistant_message_id,
             "archivo_adjunto": nombre_adjunto or None,
             "propuesta_excel": comando.propuesta_excel,
             "propuesta_metadato": None,
@@ -1837,17 +2073,21 @@ def chat():
             tabulado_actual = alta_ops.armar_tabulado_desde_campos(actualizacion_alta.campos)
             preparado_envios = preparar_envios_ya(actualizacion_alta.campos)
             respuesta_actualizacion = "Actualicé " + ", ".join(actualizacion_alta.cambios) + " en el alta actual."
-            _guardar_mensaje(chat_id, "assistant", respuesta_actualizacion)
-            return jsonify({
-                "respuesta": respuesta_actualizacion,
-                "chat_id": chat_id,
-                "propuesta_excel": None,
-                "propuesta_metadato": None,
+            ui_payload = {
                 "actualizacion_alta_asegurado": actualizacion_alta.campos,
                 "tabulado_alta_asegurado": tabulado_actual,
                 "texto_envios_ya": preparado_envios.texto,
                 "envios_ya_advertencias": preparado_envios.advertencias,
                 "envios_ya_telefono_valido": preparado_envios.telefono_valido,
+            }
+            assistant_message_id = _guardar_mensaje(chat_id, "assistant", respuesta_actualizacion, metadata={"ui": ui_payload})
+            return jsonify({
+                "respuesta": respuesta_actualizacion,
+                "chat_id": chat_id,
+                "assistant_message_id": assistant_message_id,
+                "propuesta_excel": None,
+                "propuesta_metadato": None,
+                **ui_payload,
             })
 
     # ======================================================
@@ -1855,10 +2095,16 @@ def chat():
     # ======================================================
     accion_contextual = chat_context_actions.procesar(mensaje, historial)
     if accion_contextual.atendido:
-        _guardar_mensaje(chat_id, "assistant", str(accion_contextual.respuesta))
+        ui_payload = {
+            "propuesta_excel": None,
+            "propuesta_metadato": accion_contextual.propuesta_metadato,
+            **(accion_contextual.payload_extra or {}),
+        }
+        assistant_message_id = _guardar_mensaje(chat_id, "assistant", str(accion_contextual.respuesta), metadata={"ui": ui_payload})
         return jsonify({
             "respuesta": accion_contextual.respuesta,
             "chat_id": chat_id,
+            "assistant_message_id": assistant_message_id,
             "archivo_adjunto": nombre_adjunto or None,
             "propuesta_excel": None,
             "propuesta_metadato": accion_contextual.propuesta_metadato,
@@ -1903,12 +2149,17 @@ def chat():
                 "Intentá nuevamente en unos segundos."
             )
 
-    _guardar_mensaje(chat_id, "assistant", str(respuesta))
+    ui_payload = {
+        "propuesta_excel": propuesta_excel,
+        "propuesta_metadato": propuesta_metadato,
+    }
+    assistant_message_id = _guardar_mensaje(chat_id, "assistant", str(respuesta), metadata={"ui": ui_payload})
     logger.info("CHAT[%s] etapa=respuesta_guardada chat_id=%s", getattr(g, "chat_request_id", "-"), chat_id)
 
     return jsonify({
         "respuesta": respuesta,
         "chat_id": chat_id,
+        "assistant_message_id": assistant_message_id,
         "archivo_adjunto": nombre_adjunto or None,
         "propuesta_excel": propuesta_excel,
         "propuesta_metadato": propuesta_metadato,
@@ -2576,6 +2827,54 @@ def estudio_eliminar_ejemplo(ejemplo_id):
 # ENVÍOS MASIVOS — importador inteligente + salida EnvíosYA
 # ==========================================================
 
+@app.route("/api/chat/envios/reprocesar", methods=["POST"])
+@requiere_login
+def api_chat_envios_reprocesar():
+    data = request.get_json(silent=True) or {}
+    token = str(data.get("token") or "").strip()
+    mapping = data.get("manual_mapping") if isinstance(data.get("manual_mapping"), dict) else {}
+    try:
+        fuentes = envios_masivos.recuperar_fuentes_pendientes(token)
+        resultado = envios_masivos.procesar_bases(
+            fuentes, manual_mapping=mapping, generar_archivo=False, token_pendiente=token
+        )
+        if resultado.get("requiere_mapeo"):
+            return jsonify(ok=True, envios_chat={
+                "estado": "mapeo", "token": token,
+                "mapeos": resultado.get("mapeos") or [],
+                "resumen": resultado.get("resumen") or {},
+            })
+        envios_masivos.eliminar_fuentes_pendientes(token)
+        return jsonify(ok=True, envios_chat={
+            "estado": "confirmar", "token": resultado.get("token") or token,
+            "resumen": resultado.get("resumen") or {},
+            "preview": resultado.get("preview") or [],
+        })
+    except ValueError as error:
+        return jsonify(ok=False, error=str(error)), 400
+    except Exception as error:
+        logger.exception("Reprocesamiento de planilla desde chat falló: %s", error)
+        return jsonify(ok=False, error="No pude aplicar ese mapeo. Volvé a adjuntar la base."), 500
+
+
+@app.route("/api/chat/envios/generar", methods=["POST"])
+@requiere_login
+def api_chat_envios_generar():
+    data = request.get_json(silent=True) or {}
+    token = str(data.get("token") or "").strip()
+    try:
+        archivo = envios_masivos.generar_exportacion_pendiente(token)
+        return jsonify(
+            ok=True, token=token, archivo=archivo.name,
+            download_url=url_for("envios_masivos_descargar", token=token),
+        )
+    except ValueError as error:
+        return jsonify(ok=False, error=str(error)), 400
+    except Exception as error:
+        logger.exception("Generación CSV final para Envíos Ya falló: %s", error)
+        return jsonify(ok=False, error="No pude generar el CSV. Volvé a preparar la base."), 500
+
+
 @app.route("/envios-masivos")
 @requiere_login
 def envios_masivos_pagina():
@@ -2597,11 +2896,20 @@ def envios_masivos_procesar():
             if not datos:
                 continue
             payload.append((nombre, datos))
-        fecha_modo = (request.form.get("fecha_modo") or "conservar").strip().lower()
-        if fecha_modo not in {"conservar", "vencimiento"}:
-            fecha_modo = "conservar"
-        usar_compania_fuente = (request.form.get("usar_compania_fuente") or "").lower() in {"1", "true", "si", "on"}
-        resultado = envios_masivos.procesar_bases(payload, fecha_modo=fecha_modo, usar_compania_fuente=usar_compania_fuente)
+        try:
+            manual_mapping = json.loads(request.form.get("manual_mapping") or "{}")
+            if not isinstance(manual_mapping, dict):
+                manual_mapping = {}
+        except Exception:
+            manual_mapping = {}
+        dedupe_mode = (request.form.get("dedupe_mode") or "all").strip().lower()
+        if dedupe_mode not in {"all", "one"}:
+            dedupe_mode = "all"
+        resultado = envios_masivos.procesar_bases(
+            payload,
+            manual_mapping=manual_mapping,
+            dedupe_mode=dedupe_mode,
+        )
         logger.info(
             "ENVIOS MASIVOS listo archivos=%s bytes=%s exportables=%s revisar=%s tiempo=%.2fs",
             len(payload), sum(len(datos) for _, datos in payload),
@@ -2620,14 +2928,15 @@ def envios_masivos_procesar():
 @app.route("/api/envios-masivos/descargar/<token>", methods=["GET"])
 @requiere_login
 def envios_masivos_descargar(token):
-    archivo = envios_masivos.obtener_excel(token)
+    archivo = envios_masivos.obtener_csv(token)
     if not archivo:
         return jsonify(ok=False, error="La exportación venció o no existe. Procesá la base nuevamente."), 404
+    fecha = office_today().isoformat()
     return send_file(
         archivo,
         as_attachment=True,
-        download_name="EnviosYA! - Contactos.xlsx",
-        mimetype="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        download_name=f"EnviosYA_{fecha}.csv",
+        mimetype="text/csv; charset=utf-8",
     )
 
 @app.route("/api/envios-masivos/descargar-notificaciones/<token>", methods=["GET"])

@@ -858,6 +858,10 @@ def procesar_cedula(adjunto, *, clasificacion_confirmada: bool = False) -> Cedul
     )
 
     datos = {
+        # ETAPA 5: este flag no dispara ninguna lectura adicional. Sólo expone a
+        # la UI que el extractor especializado confirmó que el conjunto recibido
+        # corresponde a una cédula multicara (frente+dorso / PDF multipágina).
+        "caras_combinadas": bool(es_multicara),
         "titular": _limpio(primera.get("titular")),
         "dni": re.sub(r"\D", "", _limpio(primera.get("dni"))),
         "patente": patente,
@@ -885,8 +889,11 @@ def procesar_cedula(adjunto, *, clasificacion_confirmada: bool = False) -> Cedul
         "alternativas_chasis": alternativas_chasis,
         "evidencia_textual_motor": bool(texto_ids.get('motor')),
         "evidencia_textual_chasis": bool(texto_ids.get('chasis')),
-        "recorte_motor": crop_motor.preview_data_url if crop_motor and estado_motor != "verificado" else "",
-        "recorte_chasis": crop_chasis.preview_data_url if crop_chasis and estado_chasis != "verificado" else "",
+        # La evidencia visual forma parte del resultado operativo de la cédula.
+        # Si el pipeline ya obtuvo un crop válido lo conservamos también cuando
+        # el dato quedó verificado; no se realiza ninguna llamada adicional de IA.
+        "recorte_motor": crop_motor.preview_data_url if crop_motor else "",
+        "recorte_chasis": crop_chasis.preview_data_url if crop_chasis else "",
         "calidad_documento": calidad_documento,
         "problemas_imagen": problemas_imagen,
         "orientacion_normalizada": bool(orientacion_corregida),

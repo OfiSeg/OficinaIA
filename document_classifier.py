@@ -24,7 +24,7 @@ Mirá el adjunto y decidí únicamente el tipo documental.
 
 Devolvé SOLO JSON válido:
 {
-  "tipo_documento": "cedula|dni|licencia|poliza|otro",
+  "tipo_documento": "cedula|dni|licencia|poliza|cotizacion_atm|otro",
   "confianza": "alta|media|baja",
   "evidencia": ["frase breve"]
 }
@@ -49,6 +49,12 @@ POLIZA:
 - frente/certificado/póliza emitida por una aseguradora;
 - suele contener asegurado, póliza/certificado, vigencia, cobertura, prima,
   premio, suma asegurada, compañía.
+
+COTIZACION_ATM:
+- captura de pantalla del cotizador web de ATM Seguros con un listado de alternativas;
+- suele mostrar títulos como Terceros Completos Plus/Black/Premium, Todo Riesgo,
+  Robo e Incendio, Responsabilidad Civil y precios en pesos;
+- puede mostrar varias filas/tarjetas de coberturas y porcentajes de franquicia.
 
 OTRO: cualquier otro documento.
 
@@ -110,6 +116,11 @@ def _score_texto(texto: str):
             ("VIGENCIA", 2), ("COBERTURA", 2), ("PREMIO", 2), ("PRIMA", 2),
             ("SUMA ASEGURADA", 2), ("ENDOSO", 2), ("FORMA DE PAGO", 1),
         ),
+        "cotizacion_atm": (
+            ("TERCEROS COMPLETOS PLUS", 6), ("TERCEROS COMPLETOS BLACK", 6),
+            ("TERCEROS COMPLETOS PREMIUM", 6), ("TODO RIESGO", 4),
+            ("ROBO E INCENDIO", 3), ("SIN ASISTENCIA", 2),
+        ),
     }
     salida = {}
     for tipo, reglas_tipo in reglas.items():
@@ -144,7 +155,7 @@ def clasificar_por_texto(texto: str) -> ClasificacionAdjunto | None:
     tipo, (score, evidencia) = orden[0]
     segundo = orden[1][1][0] if len(orden) > 1 else 0
 
-    umbrales = {"cedula": 9, "dni": 7, "licencia": 7, "poliza": 7}
+    umbrales = {"cedula": 9, "dni": 7, "licencia": 7, "poliza": 7, "cotizacion_atm": 8}
     # Requerimos una ventaja razonable. DNI/licencia comparten muchos campos y,
     # si quedan cerca, la visión debe decidir en vez de forzar una etiqueta.
     if score >= umbrales[tipo] and score >= segundo + 2:
@@ -180,6 +191,8 @@ def _parse_json_robusto(texto: str) -> dict:
         return {"tipo_documento": "licencia", "confianza": "media", "evidencia": ["respuesta visual menciona licencia"]}
     if "DNI" in low or "DOCUMENTO NACIONAL" in low:
         return {"tipo_documento": "dni", "confianza": "media", "evidencia": ["respuesta visual menciona DNI"]}
+    if "COTIZACION_ATM" in low or ("ATM" in low and "COTIZACION" in low):
+        return {"tipo_documento": "cotizacion_atm", "confianza": "media", "evidencia": ["respuesta visual identifica cotización ATM"]}
     if "POLIZA" in low:
         return {"tipo_documento": "poliza", "confianza": "media", "evidencia": ["respuesta visual menciona póliza"]}
     if "OTRO" in low:
@@ -190,7 +203,7 @@ def _parse_json_robusto(texto: str) -> dict:
 
 def _resultado_clasificacion_visual(dato: dict, *, fuente: str = "gemini_visual") -> ClasificacionAdjunto:
     tipo = str(dato.get("tipo_documento") or "otro").strip().lower()
-    if tipo not in {"cedula", "dni", "licencia", "poliza", "otro"}:
+    if tipo not in {"cedula", "dni", "licencia", "poliza", "cotizacion_atm", "otro"}:
         tipo = "otro"
     confianza = str(dato.get("confianza") or "baja").strip().lower()
     if confianza not in {"alta", "media", "baja"}:

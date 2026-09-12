@@ -198,7 +198,7 @@ def test_frontend_limpia_solo_snapshot_enviado():
 
 def test_frontend_no_borra_adjuntos_nuevos():
     js = Path("static/js/app.js").read_text(encoding="utf-8")
-    assert_true("quitarAdjuntosEnviados(archivos,attachmentSeqAlEnviar)" in js, "Debe retirar sólo adjuntos enviados")
+    assert_true("quitarAdjuntosEnviados(archivos)" in js, "Debe retirar sólo adjuntos enviados")
     assert_true("archivosAdjuntosChat=archivosAdjuntosChat.filter(f=>!enviadosSet.has(f))" in js, "Debe conservar adjuntos agregados luego")
     enviar = js[js.index("async function enviarMensaje") : js.index("async function initChat")]
     assert_true("quitarAdjunto();" not in enviar, "Enviar no debe vaciar todos los adjuntos")

@@ -94,12 +94,27 @@ def main():
         cmd4 = _procesar("el segundo", arca_context=ctx)
         assert cmd4.atendido and "DOS" in cmd4.respuesta and "20-22222222-0" in cmd4.respuesta, cmd4.respuesta
 
+        cmd4b = _procesar("el último", arca_context=ctx)
+        assert cmd4b.atendido and "DOS" in cmd4b.respuesta, cmd4b.respuesta
+
+        # Una mención ARCA vieja no debe ganar si la fuente relevante más reciente es cartera.
+        hist_fuentes = [
+            {"rol": "user", "contenido": "/cuit 43384856"},
+            {"rol": "assistant", "contenido": "Resultado ARCA CUIT/CUIL"},
+            {"rol": "user", "contenido": "Buscá en mi cartera cuantos asegurados tuve hoy"},
+            {"rol": "assistant", "contenido": "Hoy encontré 4 asegurados únicos en la cartera."},
+        ]
+        assert chat_commands._contexto_es_cartera(hist_fuentes), "La última fuente relevante debe ser CARTERA"
+        assert not chat_commands._contexto_es_arca(hist_fuentes, None), "ARCA viejo no debe quedar pegado por historial"
+        cmd_nombre_cartera = _procesar("Bao Gabriel Roberto", historial=hist_fuentes)
+        assert not cmd_nombre_cartera.atendido, "Un nombre tras contexto cartera no debe ser secuestrado por ARCA"
+
         # Contexto de cartera gana: número compatible con póliza no debe ir a ARCA.
         hist = [{"rol": "user", "contenido": "buscame la póliza"}]
         cmd5 = _procesar("1764648", historial=hist)
         assert not cmd5.atendido, cmd5
 
-    print("VALIDACION_ETAPA6_ARCA_CUIT OK - 10/10")
+    print("VALIDACION_ETAPA6_ARCA_CUIT OK - contexto ARCA/cartera validado")
 
 
 if __name__ == "__main__":

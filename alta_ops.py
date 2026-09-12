@@ -329,6 +329,92 @@ def armar_tabulado(columnas):
     return "\t".join(valores)
 
 
+def _estado_cedula_confiable(datos: dict, clave: str) -> bool:
+    return str((datos or {}).get(f"estado_{clave}") or "").strip().lower() in {
+        "verificado", "alta", "confirmado_productor"
+    }
+
+
+def campos_alta_desde_cedula(datos: dict) -> dict:
+    """Prefill del formulario YA existente de Alta usando sólo datos reales de cédula."""
+    datos = datos or {}
+    partes_vehiculo = []
+    for clave in ("marca", "modelo", "anio"):
+        valor = re.sub(r"\s+", " ", str(datos.get(clave) or "")).strip()
+        if valor and valor.upper() not in {x.upper() for x in partes_vehiculo}:
+            partes_vehiculo.append(valor)
+    return {
+        "LIBRO_ID": "1",
+        "ASEGURADO": re.sub(r"\s+", " ", str(datos.get("titular") or "")).strip(),
+        "POLIZA": "",
+        "NUMERO": "",
+        "VEHICULO": " ".join(partes_vehiculo).strip(),
+        "PATENTE": re.sub(r"\s+", "", str(datos.get("patente") or "")).upper(),
+        "ENVIOS YA": "",
+        "CIA": "",
+        "MEDIO DE PAGO": "",
+        "CP": "",
+        "EMITIDO DÍA:": "",
+        "IMPORTE APROX": "",
+        "MAIL": "",
+        "TELEFONO": "",
+    }
+
+
+def revisiones_alta_desde_cedula(datos: dict) -> dict:
+    """Sólo marca campos que realmente se guardan en el Alta existente."""
+    datos = datos or {}
+    revisiones = {}
+    patente = str(datos.get("patente") or "").strip()
+    if patente and not _estado_cedula_confiable(datos, "patente"):
+        revisiones["PATENTE"] = "Lectura de patente para confirmar con la cédula antes de guardar."
+    return revisiones
+
+
+def _norm_merge(valor) -> str:
+    import unicodedata
+    texto = unicodedata.normalize("NFKD", str(valor or "").upper())
+    texto = "".join(c for c in texto if not unicodedata.combining(c))
+    return re.sub(r"[^A-Z0-9]", "", texto)
+
+
+def fusionar_alta_con_cedula(campos_poliza: dict, datos_cedula: dict) -> tuple[dict, dict, list[str]]:
+    """Completa un único Alta con póliza+cédula sin resolver conflictos en silencio."""
+    campos = dict(campos_poliza or {})
+    base_cedula = campos_alta_desde_cedula(datos_cedula)
+    revisiones = revisiones_alta_desde_cedula(datos_cedula)
+    advertencias: list[str] = []
+
+    # La cédula completa huecos del Alta; nunca pisa silenciosamente un dato de póliza.
+    for clave in ("ASEGURADO", "VEHICULO"):
+        if not str(campos.get(clave) or "").strip() and str(base_cedula.get(clave) or "").strip():
+            campos[clave] = base_cedula[clave]
+
+    pat_poliza = str(campos.get("PATENTE") or "").strip().upper()
+    pat_cedula = str(base_cedula.get("PATENTE") or "").strip().upper()
+    if pat_poliza and pat_cedula:
+        if _norm_merge(pat_poliza) == _norm_merge(pat_cedula):
+            campos["PATENTE"] = pat_poliza
+            # Dos documentos coincidentes elevan confianza aunque el OCR de la cédula haya quedado en revisión.
+            revisiones.pop("PATENTE", None)
+        else:
+            campos["PATENTE"] = ""
+            revisiones["PATENTE"] = f"Conflicto de patente: póliza {pat_poliza} / cédula {pat_cedula}. Elegí el dato correcto."
+            advertencias.append(revisiones["PATENTE"])
+    elif pat_cedula:
+        campos["PATENTE"] = pat_cedula
+
+    titular_poliza = str(campos.get("ASEGURADO") or "").strip()
+    titular_cedula = str(base_cedula.get("ASEGURADO") or "").strip()
+    if titular_poliza and titular_cedula and _norm_merge(titular_poliza) != _norm_merge(titular_cedula):
+        # No vaciamos el nombre porque diferencias de orden/segundos nombres son frecuentes;
+        # sí lo mostramos para revisión humana.
+        revisiones["ASEGURADO"] = f"Revisá titular: póliza '{titular_poliza}' / cédula '{titular_cedula}'."
+        advertencias.append(revisiones["ASEGURADO"])
+
+    return campos, revisiones, list(dict.fromkeys(advertencias))
+
+
 def a_campos_guardar_asegurado(columnas):
     columnas = columnas or {}
     return {

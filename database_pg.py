@@ -98,6 +98,7 @@ CREATE TABLE IF NOT EXISTS mensajes (
     conversacion_id INTEGER NOT NULL REFERENCES conversaciones(id) ON DELETE CASCADE,
     rol VARCHAR(20) NOT NULL,
     contenido TEXT NOT NULL,
+    metadata JSONB NOT NULL DEFAULT '{}'::jsonb,
     creado_en TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
 """
@@ -174,7 +175,9 @@ def conectar_pg():
     reintentan globalmente.
     """
     return call_read_with_resilience(
-        lambda: psycopg2.connect(_database_url()),
+        # Un Neon inaccesible no debe dejar el chat esperando indefinidamente
+        # durante el handshake. psycopg2 aplica este límite sólo a la conexión.
+        lambda: psycopg2.connect(_database_url(), connect_timeout=3),
         operation="postgres_connect",
         provider="postgres",
         attempts=3,
@@ -209,6 +212,7 @@ def inicializar_postgres():
             cursor.execute(CREATE_TABLE_DOCUMENTO_INTERNO_SQL)
             cursor.execute(CREATE_TABLE_CONVERSACIONES_SQL)
             cursor.execute(CREATE_TABLE_MENSAJES_SQL)
+            cursor.execute("ALTER TABLE mensajes ADD COLUMN IF NOT EXISTS metadata JSONB NOT NULL DEFAULT '{}'::jsonb")
             cursor.execute(CREATE_TABLE_FLOTAS_ACTIVAS_SQL)
             cursor.execute(CREATE_TABLE_PENDIENTES_SQL)
             cursor.execute(CREATE_TABLE_EVENTOS_SISTEMA_SQL)
@@ -775,7 +779,7 @@ def obtener_chat_con_mensajes(chat_id, usuario):
                 return None, None
             cursor.execute(
                 """
-                SELECT id, rol, contenido, creado_en
+                SELECT id, rol, contenido, metadata, creado_en
                 FROM mensajes
                 WHERE conversacion_id = %s
                 ORDER BY id
@@ -832,18 +836,55 @@ def actualizar_titulo_chat(chat_id, usuario, titulo):
         return ok
 
 
-def agregar_mensaje(chat_id, rol, contenido):
+def agregar_mensaje(chat_id, rol, contenido, metadata=None):
+    import json
+    metadata = metadata if isinstance(metadata, dict) else {}
     with closing(conectar_pg()) as db:
-        with db.cursor() as cursor:
+        with db.cursor(cursor_factory=RealDictCursor) as cursor:
             cursor.execute(
-                "INSERT INTO mensajes (conversacion_id, rol, contenido) VALUES (%s, %s, %s)",
-                (chat_id, rol, contenido),
+                "INSERT INTO mensajes (conversacion_id, rol, contenido, metadata) VALUES (%s, %s, %s, %s::jsonb) RETURNING id",
+                (chat_id, rol, contenido, json.dumps(metadata, ensure_ascii=False)),
             )
+            message_id = cursor.fetchone()["id"]
             cursor.execute(
                 "UPDATE conversaciones SET actualizado_en = CURRENT_TIMESTAMP WHERE id = %s",
                 (chat_id,),
             )
         db.commit()
+        return message_id
+
+
+def actualizar_metadata_mensaje(message_id, chat_id, usuario, patch):
+    import json
+    if not isinstance(patch, dict):
+        return False
+    with closing(conectar_pg()) as db:
+        with db.cursor(cursor_factory=RealDictCursor) as cursor:
+            cursor.execute(
+                """
+                SELECT m.metadata
+                FROM mensajes m
+                JOIN conversaciones c ON c.id=m.conversacion_id
+                WHERE m.id=%s AND m.conversacion_id=%s AND c.usuario=%s
+                """,
+                (message_id, chat_id, usuario),
+            )
+            row = cursor.fetchone()
+            if not row:
+                return False
+            current = row.get("metadata") or {}
+            if isinstance(current, str):
+                try:
+                    current = json.loads(current)
+                except Exception:
+                    current = {}
+            current.update(patch)
+            cursor.execute(
+                "UPDATE mensajes SET metadata=%s::jsonb WHERE id=%s",
+                (json.dumps(current, ensure_ascii=False), message_id),
+            )
+        db.commit()
+        return True
 
 
 # ==========================================================

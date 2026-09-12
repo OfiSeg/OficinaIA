@@ -46,11 +46,15 @@ EXTENSIONES = {
     ".jpg": ("imagen", "image/jpeg"),
     ".jpeg": ("imagen", "image/jpeg"),
     ".webp": ("imagen", "image/webp"),
+    ".csv": ("tabla", "text/csv"),
+    ".xlsx": ("tabla", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"),
+    ".xlsm": ("tabla", "application/vnd.ms-excel.sheet.macroEnabled.12"),
 }
 MAX_ADJUNTO_BYTES = {
     "pdf": 20 * 1024 * 1024,
     "imagen": 15 * 1024 * 1024,
     "texto": 2 * 1024 * 1024,
+    "tabla": 20 * 1024 * 1024,
 }
 # Colección del compositor del chat. El límite es por mensaje, no por selector:
 # seleccionar A y luego B debe conservar A+B. El total evita cargas accidentales
@@ -130,7 +134,7 @@ def extract_attachment(archivo, *, max_pdf_bytes, max_pages, max_chars) -> Adjun
     ext = Path(nombre).suffix.lower()
     detectado = EXTENSIONES.get(ext)
     if not detectado:
-        raise ChatRequestError("Podés adjuntar PDF, TXT, PNG, JPG, JPEG o WEBP.", 400)
+        raise ChatRequestError("Podés adjuntar Excel (XLSX/XLSM), PDF, TXT, CSV, PNG, JPG, JPEG o WEBP.", 400)
     tipo, mime_default = detectado
     # La extensión permitida define el MIME; no confiamos en un Content-Type arbitrario del cliente.
     mime = mime_default
@@ -156,6 +160,12 @@ def extract_attachment(archivo, *, max_pdf_bytes, max_pages, max_chars) -> Adjun
         return Adjunto(
             nombre=nombre, tipo=tipo, mime_type="application/pdf",
             datos_binarios=datos, contexto=contexto, paginas=paginas, chars=total_chars,
+        )
+
+    if tipo == "tabla":
+        return Adjunto(
+            nombre=nombre, tipo="tabla", mime_type=mime_default,
+            datos_binarios=datos, contexto="", chars=0,
         )
 
     if tipo == "texto":

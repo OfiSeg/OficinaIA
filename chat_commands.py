@@ -9,6 +9,7 @@ import re
 
 import dispatch_service
 import arca_service
+import insured_profile
 from companias import normalizar_compania
 from envios_ya_utils import normalizar_patente, normalizar_telefono_argentina, preparar_envios_ya
 
@@ -115,6 +116,7 @@ _ORDINALES = {
     "octavo": 8, "octava": 8, "ocho": 8, "8": 8,
     "noveno": 9, "novena": 9, "nueve": 9, "9": 9,
     "decimo": 10, "decima": 10, "décimo": 10, "décima": 10, "diez": 10, "10": 10,
+    "ultimo": -1, "ultima": -1, "último": -1, "última": -1,
 }
 
 
@@ -135,16 +137,37 @@ def _historial_texto(historial, limite=6):
     return "\n".join(partes)
 
 
+def _fuente_contextual_historial(historial):
+    """Devuelve la fuente relevante MÁS RECIENTE, no cualquier mención vieja.
+
+    Antes una búsqueda CUIT de varios mensajes atrás podía dejar ARCA "pegado"
+    porque se escaneaban en bloque los últimos mensajes. Eso hacía que un nombre
+    suelto posterior pudiera terminar en ARCA aunque la conversación ya estuviera
+    trabajando con cartera.
+    """
+    for item in reversed(list(historial or [])[-8:]):
+        if not isinstance(item, dict):
+            continue
+        h = _norm_chat(item.get("contenido") or "")
+        if not h:
+            continue
+        es_arca = any(x in h for x in ("arca", "cuit", "cuil", "/cuit", "padron"))
+        es_cartera = any(x in h for x in ("cartera", "asegurado", "asegurados", "poliza", "polizas", "patente", "vehiculo", "excel", "planilla"))
+        if es_arca and not es_cartera:
+            return "ARCA"
+        if es_cartera:
+            return "CARTERA"
+    return None
+
+
 def _contexto_es_arca(historial, arca_context=None):
     if isinstance(arca_context, dict) and arca_context.get("fuente") == "ARCA":
         return True
-    h = _norm_chat(_historial_texto(historial))
-    return any(x in h for x in ("arca", "cuit", "cuil", "/cuit", "padron"))
+    return _fuente_contextual_historial(historial) == "ARCA"
 
 
 def _contexto_es_cartera(historial):
-    h = _norm_chat(_historial_texto(historial))
-    return any(x in h for x in ("cartera", "asegurado", "asegurados", "poliza", "polizas", "patente", "vehiculo", "excel", "planilla")) and not any(x in h for x in ("arca", "cuit", "cuil"))
+    return _fuente_contextual_historial(historial) == "CARTERA"
 
 
 def _indice_seleccion(texto):
@@ -276,15 +299,16 @@ def parsear_cuit_arca(mensaje, *, historial=None, arca_context=None, adjuntos=No
         return None
 
     seleccion = _indice_seleccion(texto)
-    if seleccion and isinstance(arca_context, dict):
+    if seleccion is not None and isinstance(arca_context, dict):
         candidatos = list(arca_context.get("candidates") or [])
-        if 1 <= seleccion <= len(candidatos):
-            elegido = dict(candidatos[seleccion - 1])
+        seleccion_real = len(candidatos) if seleccion == -1 else seleccion
+        if 1 <= seleccion_real <= len(candidatos):
+            elegido = dict(candidatos[seleccion_real - 1])
             elegido["status"] = "found"
             elegido["ok"] = True
-            return {"resultado": elegido, "contexto": {"fuente": "ARCA", "candidates": candidatos}, "seleccion": seleccion}
+            return {"resultado": elegido, "contexto": {"fuente": "ARCA", "candidates": candidatos}, "seleccion": seleccion_real}
 
-    m_cmd = re.match(r"^/cuit\b\s*(.*)$", texto, re.I)
+    m_cmd = re.match(r"^/(?:cuit|cuil)\b\s*(.*)$", texto, re.I)
     if m_cmd:
         resto = m_cmd.group(1).strip()
         if not resto and adjuntos:
@@ -296,7 +320,7 @@ def parsear_cuit_arca(mensaje, *, historial=None, arca_context=None, adjuntos=No
             estado = arca_service.estado_padron()
             if resto.lower() in {"estado", "status"}:
                 return {"estado": estado, "contexto": {"fuente": "ARCA"}}
-            return {"error": "Usá `/cuit 43384856`, `/cuit Ramiro Herrera` o adjuntá un DNI con `/cuit`.", "contexto": {"fuente": "ARCA"}}
+            return {"error": "Usá `/cuit 43384856`, `/cuil 43384856`, `/cuit Ramiro Herrera` o adjuntá un DNI con `/cuit`.", "contexto": {"fuente": "ARCA"}}
         if _parece_dni_aislado(resto):
             resultado = arca_service.resolver_cuit_por_dni(resto)
         elif _parece_cuit_aislado(resto):
@@ -338,7 +362,56 @@ def parsear_cuit_arca(mensaje, *, historial=None, arca_context=None, adjuntos=No
             }
     return None
 
+
+def parsear_ficha_operativa(mensaje):
+    """Detecta sólo pedidos explícitos de ficha/expediente de cartera."""
+    texto = str(mensaje or "").strip()
+    if not texto:
+        return None
+    m = re.match(r"^/(?:ficha|expediente)\b\s*(.*)$", texto, re.I)
+    if m:
+        objetivo = m.group(1).strip(" :;,.()")
+        return {"query": objetivo} if objetivo else {"error": "Usá `/ficha Nombre Apellido` o `/ficha PATENTE`."}
+    n = _norm_chat(texto)
+    if not re.search(r"\b(?:ficha|expediente)\b", n):
+        return None
+    # Lenguaje natural explícito: no secuestra nombres sueltos ni consultas generales.
+    objetivo = re.sub(
+        r"(?i)\b(?:mostrame|mostrar|ver|abrir|armame|arma|ficha|expediente|operativa|operativo|del|de|la|el|asegurado|cliente)\b",
+        " ", texto,
+    )
+    objetivo = re.sub(r"\s+", " ", objetivo).strip(" :;,.¿?¡!")
+    return {"query": objetivo} if objetivo else {"error": "Decime de qué asegurado, patente o póliza querés ver la ficha."}
+
+
+def _formatear_ficha_operativa(ficha):
+    status = (ficha or {}).get("status")
+    if status == "not_found":
+        return f"No encontré registros de cartera para {ficha.get('query') or 'esa búsqueda'}."
+    if status == "multiple":
+        candidatos = list(ficha.get("candidates") or [])[:10]
+        lineas = ["Encontré más de un asegurado. Elegí uno:", ""]
+        lineas += [f"{i}. {nombre}" for i, nombre in enumerate(candidatos, 1)]
+        return "\n".join(lineas)
+    if status != "found":
+        return ficha.get("error") or "No pude armar la ficha operativa."
+    nombre = ficha.get("asegurado") or ficha.get("query") or "Asegurado"
+    total = int(ficha.get("total_registros") or 0)
+    veh = len(ficha.get("vehiculos") or [])
+    return f"Ficha de {nombre}: {total} registro{'s' if total != 1 else ''} y {veh} vehículo{'s' if veh != 1 else ''} relacionado{'s' if veh != 1 else ''}."
+
 def procesar(mensaje, *, leer_excel, normalizar_encabezado, libros_excel, historial=None, arca_context=None, adjuntos=None):
+    ficha_req = parsear_ficha_operativa(mensaje)
+    if ficha_req is not None:
+        if ficha_req.get("error"):
+            return CommandResult(True, ficha_req["error"])
+        ficha = insured_profile.construir_ficha(ficha_req.get("query"), leer_excel)
+        return CommandResult(
+            True,
+            _formatear_ficha_operativa(ficha),
+            payload_extra={"ficha_operativa_asegurado": ficha},
+        )
+
     arca = parsear_cuit_arca(mensaje, historial=historial, arca_context=arca_context, adjuntos=adjuntos)
     if arca is not None:
         if arca.get("estado") is not None:

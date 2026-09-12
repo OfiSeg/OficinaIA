@@ -7,6 +7,10 @@ from office_time import office_date_string, office_year
 from pathlib import Path
 from google.genai import types
 from ai_gateway import obtener_cliente_gemini, generate_with_fallback, DEFAULT_MODELS
+
+# Charla trivial prioriza el modelo Flash-Lite de baja latencia; si falla de
+# forma transitoria, el gateway puede probar 3.8 Flash una vez antes del fallback local.
+SMALLTALK_MODELS = ("gemini-3.5-flash-lite", "gemini-3.8-flash")
 from companias import normalizar_compania, aliases_companias
 from context_router import construir_plan_base, es_consulta_comparativa
 from sofia_prompt import build_sofia_prompt
@@ -19,6 +23,7 @@ import google_sheets_service
 import dispatch_service
 import system_health
 import document_grouping
+import runtime_config
 import arca_service
 
 
@@ -40,6 +45,79 @@ TTL_CACHE_EXCEL_SEGUNDOS = 10
 # ==========================================================
 # GEMINI
 # ==========================================================
+
+
+def _chat_thinking_config():
+    """Thinking bajo para chat interactivo; documentos conservan su configuración."""
+    nivel = str(runtime_config.get_text("GEMINI_CHAT_THINKING_LEVEL", "low") or "low").strip().lower()
+    if nivel not in {"low", "medium", "high"}:
+        nivel = "low"
+    try:
+        return types.ThinkingConfig(thinking_level=nivel)
+    except Exception:
+        # Compatibilidad defensiva con un SDK anterior. No rompe el chat.
+        return None
+
+
+def _es_charla_informal_breve(pregunta: str) -> bool:
+    """Detecta sólo small-talk inequívoco para evitar cargar todo Sofia + tools."""
+    n = _normalizar_texto(str(pregunta or ""))
+    if not n or len(n) > 120:
+        return False
+    # Si hay señales de trabajo/consulta concreta, usar el flujo completo.
+    if re.search(r"\b(?:seguro|poliza|póliza|asegurad|atm|federacion|mercantil|siniestro|cuit|cuil|dni|patente|motor|chasis|excel|cartera|precio|cobertura|auto|moto|mail|envio|envío)\b", n):
+        return False
+    patrones = (
+        r"^(?:hola|holaa+|buenas|buen dia|buen día|buenas tardes|buenas noches)[!. ]*$",
+        r"^(?:como|cómo) (?:estas|estás|andas|andás|te va|va)(?: hoy)?(?: .{0,30})?[!?., ]*$",
+        r"^(?:todo bien|que tal|qué tal|como va|cómo va)(?: .{0,30})?[!?., ]*$",
+    )
+    return any(re.match(p, n, flags=re.I) for p in patrones)
+
+
+def _fallback_charla_informal(_pregunta: str) -> str:
+    return "Todo bien 😄 ¿Qué necesitás hacer hoy?"
+
+
+def _consultar_charla_informal(pregunta: str, historial=None) -> str:
+    """Mismo Gemini, pero sin prompt gigante ni herramientas para una charla trivial."""
+    timeout_ms = runtime_config.get_int("GEMINI_CHAT_SMALLTALK_TIMEOUT_MS", 5500)
+    cliente = obtener_cliente_gemini(timeout_ms=timeout_ms)
+    if cliente is None:
+        return _fallback_charla_informal(pregunta)
+    partes_historial = []
+    for item in list(historial or [])[-2:]:
+        if not isinstance(item, dict):
+            continue
+        rol = str(item.get("rol") or "").strip().lower()
+        contenido = str(item.get("contenido") or "").strip()
+        if rol in {"user", "assistant"} and contenido:
+            partes_historial.append(f"{rol}: {contenido[:300]}")
+    prompt = (
+        "Sos el asistente interno de una oficina de seguros argentina. "
+        "Respondé este saludo o charla informal de forma natural, breve y amistosa, en español rioplatense. "
+        "No inventes tareas ni datos de la oficina.\n"
+        + ("Contexto reciente:\n" + "\n".join(partes_historial) + "\n" if partes_historial else "")
+        + "Usuario: " + str(pregunta or "").strip()
+    )
+    kwargs = {"max_output_tokens": 320}
+    thinking = _chat_thinking_config()
+    if thinking is not None:
+        kwargs["thinking_config"] = thinking
+    try:
+        respuesta, _modelo = generate_with_fallback(
+            client=cliente,
+            models=SMALLTALK_MODELS,
+            contents=prompt,
+            config=types.GenerateContentConfig(**kwargs),
+            log_prefix="GEMINI CHAT SMALLTALK",
+            max_attempts=2,
+        )
+        texto = str(getattr(respuesta, "text", "") or "").strip()
+        return texto or _fallback_charla_informal(pregunta)
+    except Exception as error:
+        print("AVISO GEMINI SMALLTALK FALLBACK:", type(error).__name__)
+        return _fallback_charla_informal(pregunta)
 
 
 def _texto_fila(fila):
@@ -2008,11 +2086,20 @@ def _mensaje_fuente_interna_no_disponible(error: Exception) -> str | None:
 
 
 def consultar_gemini(pregunta, contexto="", historial=None, adjunto=None, adjuntos=None):
-    cliente = obtener_cliente_gemini()
+    historial = historial or []
+    adjuntos_lista = [a for a in list(adjuntos or ([] if adjunto is None else [adjunto])) if a is not None]
+    if not str(contexto or "").strip() and not adjuntos_lista and _es_charla_informal_breve(pregunta):
+        return _consultar_charla_informal(pregunta, historial)
+
+    # El chat interactivo usa timeout propio, menor que el documental. Antes una
+    # sola llamada podía tener 30s de timeout dentro de un presupuesto de chat de
+    # 20s, impidiendo un fallback útil cuando el proveedor se demoraba.
+    cliente = obtener_cliente_gemini(
+        timeout_ms=runtime_config.get_int("GEMINI_CHAT_HTTP_TIMEOUT_MS", 10000)
+    )
     if cliente is None:
         return "La IA todavía no está configurada. Falta GEMINI_API_KEY."
 
-    historial = historial or []
     historial_texto = _compactar_historial_para_modelo(historial)
     # Cache estrictamente efímero: nace y muere dentro de este turno.
     tool_cache = {}
@@ -2113,7 +2200,7 @@ def consultar_gemini(pregunta, contexto="", historial=None, adjunto=None, adjunt
     # pueden seguir pasando sólo ``adjunto``. Cada imagen o PDF escaneado del
     # mismo mensaje se incluye en el MISMO payload multimodal y el texto de PDFs
     # digitales/TXT ya viaja dentro de ``contexto``.
-    adjuntos_actuales = [a for a in list(adjuntos or ([] if adjunto is None else [adjunto])) if a is not None]
+    adjuntos_actuales = adjuntos_lista
     media_parts = [types.Part.from_text(text=prompt)]
     media_agregada = 0
     max_media_parts = 8
@@ -2192,16 +2279,17 @@ def consultar_gemini(pregunta, contexto="", historial=None, adjunto=None, adjunt
         respuesta = None
 
         try:
-            config = types.GenerateContentConfig(
-                temperature=0.05,
-                max_output_tokens=4096,
-                tools=_tools_para_plan(plan),
+            config_kwargs = {
+                "max_output_tokens": 4096,
+                "tools": _tools_para_plan(plan),
                 # OficinaIA administra manualmente el ciclo Gemini -> tool -> Gemini.
                 # Desactivar AFC evita tener dos orquestadores superpuestos.
-                automatic_function_calling=types.AutomaticFunctionCallingConfig(
-                    disable=True
-                ),
-            )
+                "automatic_function_calling": types.AutomaticFunctionCallingConfig(disable=True),
+            }
+            thinking = _chat_thinking_config()
+            if thinking is not None:
+                config_kwargs["thinking_config"] = thinking
+            config = types.GenerateContentConfig(**config_kwargs)
             respuesta, _modelo_usado = generate_with_fallback(
                 client=cliente,
                 models=DEFAULT_MODELS,

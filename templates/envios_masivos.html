@@ -2,38 +2,39 @@
 {% block title %}Envíos Masivos · {{config_global.nombre_oficina}}{% endblock %}
 {% block content %}
 <div class="page envios-page">
-  <header class="top clean-page-head envios-head"><div><h1>Envíos Masivos</h1></div></header>
+  <header class="top clean-page-head envios-head"><div><h1>Envíos Masivos</h1><p>Convertí una planilla de contactos en un CSV listo para Envíos Ya.</p></div></header>
 
   <section class="envios-card envios-upload-card">
-    <div class="envios-card-head"><div><h2>Cargar bases</h2></div></div>
-    <label class="envios-drop" id="enviosDrop"><input id="enviosFiles" type="file" accept=".xlsx,.xlsm,.csv" multiple hidden><span class="envios-file-mark" aria-hidden="true">XLS</span><b>Arrastrá las bases acá</b><span>o hacé clic para seleccionarlas</span></label>
+    <div class="envios-card-head"><div><h2>Cargar planilla</h2><p>OficinaIA usa únicamente apellido, nombre y celular. La fecha se agrega automáticamente.</p></div></div>
+    <label class="envios-drop" id="enviosDrop"><input id="enviosFiles" type="file" accept=".xlsx,.xlsm,.csv" multiple hidden><span class="envios-file-mark" aria-hidden="true">XLS</span><b>Arrastrá la planilla acá</b><span>o hacé clic para seleccionarla</span></label>
     <div class="envios-selected" id="enviosSelected"><div class="envios-empty">Todavía no seleccionaste archivos.</div></div>
 
     <div class="envios-toolbar">
-      <div class="envios-options-inline" aria-label="Opciones de importación">
-        <label class="envios-inline-check" title="Activá esta opción sólo si sabés que la fecha genérica de la base corresponde al vencimiento."><input type="checkbox" id="enviosFechaVencimiento"><span>Fecha genérica = vencimiento</span></label>
-        <label class="envios-inline-check" title="Completa Compañía usando el nombre del archivo cuando éste identifica realmente a la compañía."><input type="checkbox" id="enviosCompaniaFuente"><span>Usar compañía del nombre del archivo</span></label>
+      <div class="envios-options-inline" aria-label="Duplicados">
+        <label class="envios-inline-check"><input type="radio" name="enviosDedupe" value="all" checked><span>Conservar duplicados</span></label>
+        <label class="envios-inline-check"><input type="radio" name="enviosDedupe" value="one"><span>Uno por celular</span></label>
       </div>
-      <div class="envios-actions"><button class="primary" id="enviosProcess" type="button" disabled>Procesar bases</button><button class="secondary" id="enviosClear" type="button">Limpiar</button></div>
+      <div class="envios-actions"><button class="primary" id="enviosProcess" type="button" disabled>Preparar contactos</button><button class="secondary" id="enviosClear" type="button">Limpiar</button></div>
     </div>
     <div class="envios-progress" id="enviosProgress" hidden><div><span id="enviosProgressBar"></span></div><p id="enviosProgressText"></p></div>
   </section>
 
+  <section class="envios-card envios-mapping-card" id="enviosMapping" hidden>
+    <div class="envios-card-head"><div><h2>Confirmá las columnas</h2><p>No pude identificar con seguridad todos los datos. Elegí las columnas correctas y continuá.</p></div></div>
+    <div id="enviosMappingRows"></div>
+    <div class="envios-actions"><button class="primary" id="enviosApplyMapping" type="button">Aplicar y preparar</button></div>
+  </section>
+
   <section class="envios-results" id="enviosResults" hidden>
-    <div class="envios-result-head"><div><h2>Base preparada</h2><p id="enviosResultSummary"></p></div></div>
+    <div class="envios-result-head"><div><h2>Contactos preparados</h2><p id="enviosResultSummary"></p></div></div>
     <div class="envios-stats" id="enviosStats"></div>
-    <div class="envios-quality-note" id="enviosQualityNote" hidden></div>
 
     <div class="envios-exports">
-      <div class="envios-export-card"><div><span class="envios-export-tag">CONTACTOS</span><h3>Excel EnvíosYA</h3></div><a class="primary envios-download" id="enviosDownload" href="#">Descargar Excel</a></div>
-      <div class="envios-export-card"><div><span class="envios-export-tag">NOTIFICACIONES</span><h3>CSV de notificaciones</h3></div><a class="primary envios-download" id="enviosNotifDownload" href="#">Descargar CSV</a></div>
-      <div class="envios-export-card"><div><span class="envios-export-tag">OFICINAIA</span><h3>Base completa</h3></div><a class="secondary envios-download alt" id="enviosMasterDownload" href="#">Descargar base</a></div>
+      <div class="envios-export-card"><div><span class="envios-export-tag">ENVÍOS YA</span><h3>CSV listo para importar</h3><small>Sin encabezados · 10 campos por contacto</small></div><a class="primary envios-download" id="enviosDownload" href="#">Descargar CSV para Envíos Ya</a></div>
     </div>
 
-    
-
-    <div class="envios-source-card"><div class="envios-source-head"><div><h3>Qué entendió OficinaIA</h3></div></div><div class="envios-source-list" id="enviosSources"></div></div>
-    <div class="envios-preview-card"><div class="envios-preview-head"><div><h3>Vista previa</h3></div><div class="envios-filters" role="group"><button type="button" class="active" data-envios-filter="TODOS">Todos</button><button type="button" data-envios-filter="VALIDO">Válidos</button><button type="button" data-envios-filter="REVISAR">Revisar</button></div></div><div class="envios-table-wrap"><table class="envios-table"><thead><tr><th>Estado</th><th>Apellido</th><th>Nombre</th><th>Celular</th><th>Email</th><th>Localidad</th><th>CP</th><th>Compañía</th><th>Patente</th><th>Tipo</th><th>Origen</th></tr></thead><tbody id="enviosPreview"></tbody></table></div></div>
+    <div class="envios-source-card"><div class="envios-source-head"><div><h3>Columnas detectadas</h3></div></div><div class="envios-source-list" id="enviosSources"></div></div>
+    <div class="envios-preview-card"><div class="envios-preview-head"><div><h3>Vista previa</h3><p>Se muestran sólo los datos que usa esta exportación.</p></div><div class="envios-filters" role="group"><button type="button" class="active" data-envios-filter="TODOS">Todos</button><button type="button" data-envios-filter="VALIDO">Listos</button><button type="button" data-envios-filter="REVISAR">Revisar</button></div></div><div class="envios-table-wrap"><table class="envios-table"><thead><tr><th>Estado</th><th>Apellido</th><th>Nombre</th><th>Celular</th><th>Fecha</th><th>Origen</th></tr></thead><tbody id="enviosPreview"></tbody></table></div></div>
   </section>
 </div>
 {% endblock %}

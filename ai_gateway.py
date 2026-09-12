@@ -96,14 +96,75 @@ def current_state() -> AIRequestState:
     return state
 
 
-def obtener_cliente_gemini():
+def obtener_cliente_gemini(timeout_ms: int | None = None):
     api_key = runtime_config.get_text("GEMINI_API_KEY")
     if not api_key:
         return None
+    timeout = int(timeout_ms or SDK_TIMEOUT_MS)
     return genai.Client(
         api_key=api_key,
-        http_options=types.HttpOptions(timeout=SDK_TIMEOUT_MS),
+        http_options=types.HttpOptions(timeout=timeout),
     )
+
+
+def _input_metrics(contents: Any) -> tuple[int, int, int]:
+    """Devuelve (caracteres_texto, partes_media, bytes_media) sin loguear contenido."""
+    chars = 0
+    media_parts = 0
+    media_bytes = 0
+    vistos: set[int] = set()
+
+    def walk(value: Any) -> None:
+        nonlocal chars, media_parts, media_bytes
+        if value is None:
+            return
+        if isinstance(value, str):
+            chars += len(value)
+            return
+        ident = id(value)
+        if ident in vistos:
+            return
+        vistos.add(ident)
+        if isinstance(value, (bytes, bytearray, memoryview)):
+            media_parts += 1
+            media_bytes += len(value)
+            return
+        if isinstance(value, dict):
+            for item in value.values():
+                walk(item)
+            return
+        if isinstance(value, (list, tuple, set)):
+            for item in value:
+                walk(item)
+            return
+        try:
+            text = getattr(value, "text", None)
+        except Exception:
+            text = None
+        if isinstance(text, str):
+            chars += len(text)
+        try:
+            inline = getattr(value, "inline_data", None)
+        except Exception:
+            inline = None
+        if inline is not None:
+            try:
+                data = getattr(inline, "data", None)
+            except Exception:
+                data = None
+            if isinstance(data, (bytes, bytearray, memoryview)):
+                media_parts += 1
+                media_bytes += len(data)
+        for attr in ("parts", "contents", "content"):
+            try:
+                child = getattr(value, attr, None)
+            except Exception:
+                child = None
+            if child is not None:
+                walk(child)
+
+    walk(contents)
+    return chars, media_parts, media_bytes
 
 
 def _es_429(error: Exception) -> bool:
@@ -188,6 +249,7 @@ def generate_with_fallback(
     client: Any | None = None,
     log_prefix: str = "GEMINI",
     response_validator: Any | None = None,
+    max_attempts: int | None = None,
 ):
     """Llamada central resiliente de SOLO LECTURA a Gemini.
 
@@ -208,11 +270,13 @@ def generate_with_fallback(
         raise RuntimeError("No quedan modelos Gemini habilitados para este request.")
 
     ultimo_error: Exception | None = None
+    limite_intentos = max(1, min(AI_READ_ATTEMPTS, int(max_attempts or AI_READ_ATTEMPTS)))
     intentos_realizados = 0
     indice_modelo = 0
     sequence_id = state.next_sequence_id(log_prefix)
+    input_chars, input_media_parts, input_media_bytes = _input_metrics(contents)
 
-    while intentos_realizados < AI_READ_ATTEMPTS and candidatos:
+    while intentos_realizados < limite_intentos and candidatos:
         try:
             _assert_time_available(state)
         except AIDeadlineExceeded as error:
@@ -220,7 +284,7 @@ def generate_with_fallback(
                 nivel="error",
                 mensaje="IA no inició un nuevo intento por presupuesto/deadline",
                 detalle=describir_error_seguro(
-                    error, attempt=intentos_realizados + 1, attempts=AI_READ_ATTEMPTS,
+                    error, attempt=intentos_realizados + 1, attempts=limite_intentos,
                     sequence_id=sequence_id,
                 ),
                 codigo="AI_BUDGET_EXHAUSTED",
@@ -246,10 +310,19 @@ def generate_with_fallback(
                     if isinstance(validation_error, RecoverablePayloadError):
                         raise
                     raise RecoverablePayloadError(str(validation_error)) from validation_error
+            duracion_ok = time.monotonic() - inicio
+            print(
+                f"IA_METRIC operation={log_prefix} provider=gemini model={modelo} "
+                f"attempt={intentos_realizados}/{limite_intentos} duration={duracion_ok:.2f}s "
+                f"input_chars={input_chars} media_parts={input_media_parts} media_bytes={input_media_bytes} "
+                f"sequence={sequence_id}"
+            )
             if intentos_realizados > 1:
                 detalle = (
                     f"operation={log_prefix} | provider=gemini | "
-                    f"modelo={modelo} | intento={intentos_realizados}/{AI_READ_ATTEMPTS} | "
+                    f"modelo={modelo} | intento={intentos_realizados}/{limite_intentos} | "
+                    f"duracion={duracion_ok:.2f}s | input_chars={input_chars} | "
+                    f"media_parts={input_media_parts} | media_bytes={input_media_bytes} | "
                     f"secuencia={sequence_id}"
                 )
                 print(
@@ -258,7 +331,7 @@ def generate_with_fallback(
                 )
                 registrar_evento_ia_seguro(
                     nivel="ok",
-                    mensaje=f"IA recuperada correctamente en intento {intentos_realizados}/{AI_READ_ATTEMPTS}",
+                    mensaje=f"IA recuperada correctamente en intento {intentos_realizados}/{limite_intentos}",
                     detalle=detalle,
                     codigo="AI_RECOVERED",
                 )
@@ -271,12 +344,15 @@ def generate_with_fallback(
                 error,
                 model=modelo,
                 attempt=intentos_realizados,
-                attempts=AI_READ_ATTEMPTS,
+                attempts=limite_intentos,
                 duration_seconds=duracion,
                 sequence_id=sequence_id,
+            ) + (
+                f" | operation={log_prefix} | input_chars={input_chars} "
+                f"| media_parts={input_media_parts} | media_bytes={input_media_bytes}"
             )
             print(
-                f"ERROR {log_prefix} model={modelo} attempt={intentos_realizados}/{AI_READ_ATTEMPTS} "
+                f"ERROR {log_prefix} model={modelo} attempt={intentos_realizados}/{limite_intentos} "
                 f"duration={duracion:.2f}s error={detalle_error}"
             )
 
@@ -307,7 +383,7 @@ def generate_with_fallback(
                 # Error no clasificado como transitorio: permitir fallback a un
                 # modelo distinto una sola vez, pero no repetir ciegamente el
                 # mismo proveedor hasta agotar presupuesto.
-                if len(candidatos) > 1 and intentos_realizados < AI_READ_ATTEMPTS:
+                if len(candidatos) > 1 and intentos_realizados < limite_intentos:
                     continue
                 registrar_evento_ia_seguro(
                     nivel="error",
@@ -317,10 +393,10 @@ def generate_with_fallback(
                 )
                 raise
 
-            if intentos_realizados >= AI_READ_ATTEMPTS:
+            if intentos_realizados >= limite_intentos:
                 registrar_evento_ia_seguro(
                     nivel="error",
-                    mensaje=f"IA agotó {AI_READ_ATTEMPTS}/{AI_READ_ATTEMPTS} intentos; operación no completada",
+                    mensaje=f"IA agotó {limite_intentos}/{limite_intentos} intentos; operación no completada",
                     detalle=detalle_error,
                     codigo="AI_RETRIES_EXHAUSTED",
                 )
@@ -337,7 +413,7 @@ def generate_with_fallback(
                 break
             registrar_evento_ia_seguro(
                 nivel="aviso",
-                mensaje=f"Fallo temporal de IA absorbido; reintento {intentos_realizados + 1}/{AI_READ_ATTEMPTS}",
+                mensaje=f"Fallo temporal de IA absorbido; reintento {intentos_realizados + 1}/{limite_intentos}",
                 detalle=detalle_error,
                 codigo="AI_TRANSIENT_RETRY",
             )

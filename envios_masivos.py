@@ -18,6 +18,7 @@ from xml.sax.saxutils import escape as _xml_escape
 
 from openpyxl import Workbook, load_workbook
 from envios_ya_utils import normalizar_telefono_argentina as _normalizar_telefono_argentina_compartido
+from office_time import office_today, office_year
 
 BASE_DIR = Path(__file__).resolve().parent
 PLANTILLA_ENVIOSYA = BASE_DIR / "plantillas" / "enviosya_contactos.xlsx"
@@ -35,9 +36,9 @@ CAMPOS_SALIDA = [
 ALIASES_CAMPOS = {
     "apellido": {"apellido", "apellidos", "surname", "last name"},
     "nombre": {"nombre", "nombres", "first name", "name"},
-    "nombre_completo": {"nombre completo", "apellido y nombre", "apellidos y nombres", "cliente nombre", "razon social", "razón social", "titular"},
+    "nombre_completo": {"nombre completo", "apellido y nombre", "apellido nombre", "apellidos y nombres", "cliente nombre", "razon social", "razón social", "titular", "cliente", "asegurado"},
     "dni": {"dni", "documento", "nro doc", "nro. doc", "nro documento", "numero documento", "número documento", "doc"},
-    "celular": {"celular", "telefono", "teléfono", "telefono celular", "tel celular", "tel", "movil", "móvil", "whatsapp", "cel", "nro celular", "numero celular", "número celular"},
+    "celular": {"celular", "telefono", "teléfono", "telefono celular", "teléfono celular", "tel celular", "tel", "movil", "móvil", "whatsapp", "whatsapp contacto", "cel", "nro celular", "nro. celular", "numero celular", "número celular", "numero", "número"},
     "localidad": {"localidad", "ciudad", "city", "poblacion", "población"},
     "cp": {"cp", "codigo postal", "código postal", "cod postal", "postal", "cpa"},
     "direccion": {"direccion", "dirección", "domicilio", "calle", "address"},
@@ -147,6 +148,69 @@ def _digits(v: Any) -> str:
 def normalizar_telefono_argentina(valor: Any) -> tuple[str, str]:
     """Compatibilidad pública: delega en la regla canónica compartida."""
     return _normalizar_telefono_argentina_compartido(valor)
+
+
+def normalizar_celular_envios_masivos(valor: Any) -> tuple[str, str]:
+    """Limpieza conservadora para el CSV masivo.
+
+    En este flujo el Excel es fuente de verdad: se eliminan sólo caracteres
+    visuales y nunca se agregan/quitan prefijos telefónicos.
+    """
+    texto = _texto_limpio(valor)
+    if not texto:
+        return "", "Sin celular"
+    # Evita .0 proveniente de celdas numéricas y notación científica visible.
+    if re.fullmatch(r"\d+\.0", texto):
+        texto = texto[:-2]
+    digitos = re.sub(r"\D", "", texto)
+    if not digitos:
+        return "", "Sin celular"
+    if len(digitos) < 6:
+        return "", "Celular demasiado corto"
+    if len(digitos) > 16:
+        return "", "Celular demasiado largo"
+    return digitos, ""
+
+
+def _mapping_suficiente(mapping: dict[int, str]) -> bool:
+    campos = set(mapping.values())
+    return "celular" in campos and (("apellido" in campos and "nombre" in campos) or "nombre_completo" in campos)
+
+
+def _aplicar_mapping_manual(mapping: dict[int, str], manual: dict[str, Any] | None) -> dict[int, str]:
+    if not manual:
+        return mapping
+    out = {i: c for i, c in mapping.items() if c not in {"apellido", "nombre", "nombre_completo", "celular"}}
+    for campo in ("apellido", "nombre", "nombre_completo", "celular"):
+        raw = manual.get(campo)
+        if raw in (None, "", -1, "-1"):
+            continue
+        try:
+            idx = int(raw)
+        except Exception:
+            continue
+        out[idx] = campo
+    return out
+
+
+def _opciones_columnas(headers: list[Any], data_rows: list[list[Any]]) -> list[dict[str, Any]]:
+    ancho = max([len(headers)] + [len(r) for r in data_rows[:20]] + [0])
+    out = []
+    for idx in range(ancho):
+        titulo = _texto_limpio(headers[idx]) if idx < len(headers) else ""
+        muestras = []
+        for r in data_rows[:8]:
+            if idx < len(r):
+                v = _texto_limpio(r[idx])
+                if v and v not in muestras:
+                    muestras.append(v[:50])
+            if len(muestras) >= 2:
+                break
+        label = titulo or f"Columna {idx + 1}"
+        if muestras:
+            label += " · " + " / ".join(muestras)
+        out.append({"index": idx, "label": label})
+    return out
 
 
 def _es_email(v: Any) -> bool:
@@ -447,83 +511,48 @@ def _valor(row: list[Any], mapping: dict[int, str], campo: str) -> Any:
     return ""
 
 
-def _normalizar_registro(row: list[Any], mapping: dict[int, str], fuente: str, compania_fuente: str, fecha_modo: str = "conservar", usar_compania_fuente: bool = False) -> dict[str, Any]:
-    nombre, rep_nombre, bad_nombre = _reparar_texto_fuente(_valor(row, mapping, "nombre"), "nombre")
-    apellido, rep_apellido, bad_apellido = _reparar_texto_fuente(_valor(row, mapping, "apellido"), "apellido")
-    nombre_completo, rep_completo, bad_completo = _reparar_texto_fuente(_valor(row, mapping, "nombre_completo"), "nombre_completo")
+def _normalizar_registro(row: list[Any], mapping: dict[int, str], fuente: str, compania_fuente: str = "", fecha_modo: str = "actual", usar_compania_fuente: bool = False) -> dict[str, Any]:
+    """Normaliza sólo los cuatro datos necesarios para Envíos Masivos."""
+    nombre, _, bad_nombre = _reparar_texto_fuente(_valor(row, mapping, "nombre"), "nombre")
+    apellido, _, bad_apellido = _reparar_texto_fuente(_valor(row, mapping, "apellido"), "apellido")
+    nombre_completo, _, bad_completo = _reparar_texto_fuente(_valor(row, mapping, "nombre_completo"), "nombre_completo")
     if nombre_completo and not (nombre and apellido):
         ap2, no2 = separar_nombre_completo(nombre_completo)
         apellido = apellido or ap2
         nombre = nombre or no2
 
-    tel_original = _texto_limpio(_valor(row, mapping, "celular"))
-    tel, error_tel = normalizar_telefono_argentina(tel_original)
-
-    fecha = _parse_fecha(_valor(row, mapping, "vencimiento"))
-    vencimiento = fecha.strftime("%d/%m/%Y") if fecha else ""
-    anio_raw = _valor(row, mapping, "anio")
-    anio = ""
-    if _es_anio(anio_raw):
-        anio = str(int(float(_texto_limpio(anio_raw))))
-
-    compania = _texto_limpio(_valor(row, mapping, "compania"))
-    if not compania and usar_compania_fuente:
-        compania = compania_fuente
-    patente = re.sub(r"[^A-Za-z0-9]", "", _texto_limpio(_valor(row, mapping, "patente"))).upper()
-    if patente and not _es_patente(patente):
-        patente = _texto_limpio(_valor(row, mapping, "patente")).upper()
-
-    fecha_origen_obj = _parse_fecha(_valor(row, mapping, "fecha_origen"))
-    fecha_origen = fecha_origen_obj.strftime("%d/%m/%Y") if fecha_origen_obj else ""
-    if not vencimiento and fecha_modo == "vencimiento" and fecha_origen:
-        vencimiento = fecha_origen
-
-    localidad, rep_localidad, bad_localidad = _reparar_texto_fuente(_valor(row, mapping, "localidad"), "localidad")
-    direccion, rep_direccion, bad_direccion = _reparar_texto_fuente(_valor(row, mapping, "direccion"), "direccion")
-    provincia, rep_provincia, bad_provincia = _reparar_texto_fuente(_valor(row, mapping, "provincia"), "provincia")
-    marca, rep_marca, bad_marca = _reparar_texto_fuente(_valor(row, mapping, "marca"), "marca")
-    modelo, rep_modelo, bad_modelo = _reparar_texto_fuente(_valor(row, mapping, "modelo"), "modelo")
-    cliente, rep_cliente, bad_cliente = _reparar_texto_fuente(_valor(row, mapping, "cliente"), "cliente")
-    tipo, rep_tipo, bad_tipo = _reparar_texto_fuente(_valor(row, mapping, "tipo"), "tipo")
-    hubo_reparacion = any((rep_nombre, rep_apellido, rep_completo, rep_localidad, rep_direccion, rep_provincia, rep_marca, rep_modelo, rep_cliente, rep_tipo))
-    texto_danado_critico = any((bad_nombre, bad_apellido, bad_completo, bad_localidad))
-    texto_danado = any((bad_nombre, bad_apellido, bad_completo, bad_localidad, bad_direccion, bad_provincia, bad_marca, bad_modelo, bad_cliente, bad_tipo))
+    celular_original = _texto_limpio(_valor(row, mapping, "celular"))
+    celular, error_tel = normalizar_celular_envios_masivos(celular_original)
+    fecha_fuente = _parse_fecha(_valor(row, mapping, "fecha_origen"))
+    fecha_iso = fecha_fuente.isoformat() if fecha_fuente else office_today().isoformat()
+    incompletos = []
+    if not apellido:
+        incompletos.append("apellido")
+    if not nombre:
+        incompletos.append("nombre")
+    if not celular:
+        incompletos.append("celular")
+    texto_danado = any((bad_nombre, bad_apellido, bad_completo))
+    if texto_danado:
+        incompletos.append("texto ilegible")
 
     return {
         "apellido": apellido,
         "nombre": nombre,
-        "nombre_completo": nombre_completo or (f"{apellido} {nombre}".strip()),
-        "dni": _digits(_valor(row, mapping, "dni")),
-        "celular_original": tel_original,
-        "celular": tel,
+        "nombre_completo": nombre_completo or f"{apellido} {nombre}".strip(),
+        "celular_original": celular_original,
+        "celular": celular,
         "telefono_error": error_tel,
-        "localidad": localidad,
-        "cp": _texto_limpio(_valor(row, mapping, "cp")),
-        "direccion": direccion,
-        "compania": compania,
-        "patente": patente,
-        "marca": marca,
-        "modelo": modelo,
-        "anio": anio,
-        "cliente": cliente,
-        "vencimiento": vencimiento,
-        "fecha_origen": fecha_origen,
-        "email": _texto_limpio(_valor(row, mapping, "email")),
-        "tipo": tipo,
-        "poliza": _texto_limpio(_valor(row, mapping, "poliza")),
-        "provincia": provincia,
-        "pais": _texto_limpio(_valor(row, mapping, "pais")) or "Argentina",
+        "fecha": fecha_iso,
         "fuente": fuente,
-        "compania_fuente": compania_fuente,
-        "caracteres_reparados": hubo_reparacion,
         "texto_danado": texto_danado,
-        "texto_danado_critico": texto_danado_critico,
+        "incompletos": incompletos,
+        "estado": "VALIDO" if not incompletos else "REVISAR",
     }
 
 
 def _score_riqueza(r: dict[str, Any]) -> int:
-    campos = ("apellido", "nombre", "dni", "celular", "localidad", "cp", "direccion", "compania", "patente", "marca", "modelo", "anio", "vencimiento", "email", "tipo", "poliza", "provincia")
-    return sum(1 for c in campos if _texto_limpio(r.get(c)))
+    return sum(1 for c in ("apellido", "nombre", "celular") if _texto_limpio(r.get(c)))
 
 
 def _limpiar_temporales() -> None:
@@ -536,224 +565,273 @@ def _limpiar_temporales() -> None:
         pass
 
 
-def _generar_excel_enviosya(registros: list[dict[str, Any]], token: str) -> Path:
-    """Genera el XLSX sobre la plantilla real de EnvíosYA con memoria acotada.
+def generar_csv_envios_ya(registros: list[dict[str, Any]], token: str) -> Path:
+    """Genera el CSV rígido confirmado de Envíos Ya.
 
-    Se conservan título/encabezados/estructura del archivo original y se
-    reescribe sólo sheetData. Las filas se escriben en streaming dentro del ZIP
-    para que una base grande no haga caer al worker por memoria.
+    Sin encabezados. Cada registro tiene exactamente 10 posiciones:
+    apellido,nombre,celular,fecha,XXX,XXX,XXX,,XXX,
     """
-    if not PLANTILLA_ENVIOSYA.exists():
-        raise RuntimeError("Falta la plantilla oficial de EnvíosYA.")
+    salida = TMP_DIR / f"envios_{token}.csv"
+    with salida.open("w", encoding="utf-8", newline="") as f:
+        writer = csv.writer(f, delimiter=",", lineterminator="\r\n")
+        for r in registros:
+            fila = [
+                _texto_limpio(r.get("apellido")),
+                _texto_limpio(r.get("nombre")),
+                _texto_limpio(r.get("celular")),
+                _texto_limpio(r.get("fecha")) or office_today().isoformat(),
+                "XXX", "XXX", "XXX", "", "XXX", "",
+            ]
+            if len(fila) != 10:
+                raise RuntimeError("Fila inválida: Envíos Ya requiere exactamente 10 campos.")
+            writer.writerow(fila)
 
-    def cell_text(col: str, row_n: int, value: Any) -> str:
-        text = _texto_limpio(value)
-        if not text:
-            return ""
-        return f'<c t="inlineStr" r="{col}{row_n}"><is><t>{_xml_escape(text)}</t></is></c>'
-
-    def cell_num(col: str, row_n: int, value: Any) -> str:
-        d = _digits(value)
-        if not d:
-            return ""
-        return f'<c r="{col}{row_n}" s="65"><v>{int(d)}</v></c>'
-
-    salida = TMP_DIR / f"envios_{token}.xlsx"
-    with zipfile.ZipFile(PLANTILLA_ENVIOSYA, "r") as zin, zipfile.ZipFile(salida, "w", compression=zipfile.ZIP_DEFLATED) as zout:
-        for item in zin.infolist():
-            if item.filename != "xl/worksheets/sheet1.xml":
-                zout.writestr(item, zin.read(item.filename))
-                continue
-
-            original = zin.read(item.filename).decode("utf-8")
-            m = re.search(r'(<sheetData[^>]*>)(.*?)(</sheetData>)', original, re.S)
-            if not m:
-                raise RuntimeError("La plantilla de EnvíosYA no contiene sheetData.")
-            filas_base = []
-            for rm in re.finditer(r'<row\b[^>]*\br="(\d+)"[^>]*>.*?</row>', m.group(2), re.S):
-                if int(rm.group(1)) < 3:
-                    filas_base.append(rm.group(0))
-            prefix = original[:m.start()] + m.group(1) + "".join(filas_base)
-            suffix = m.group(3) + original[m.end():]
-
-            with zout.open(item, "w") as out:
-                out.write(prefix.encode("utf-8"))
-                for row_n, r in enumerate(registros, start=3):
-                    cells = [
-                        cell_text("B", row_n, r.get("apellido")),
-                        cell_text("C", row_n, r.get("nombre")),
-                        cell_num("D", row_n, r.get("dni")),
-                        cell_num("E", row_n, r.get("celular")),
-                        cell_text("F", row_n, r.get("localidad")),
-                        cell_text("G", row_n, r.get("compania")),
-                        cell_text("H", row_n, r.get("patente")),
-                        cell_text("I", row_n, r.get("marca")),
-                        cell_text("J", row_n, r.get("modelo")),
-                        cell_num("K", row_n, r.get("anio")),
-                        cell_text("L", row_n, r.get("cliente")),
-                        cell_text("M", row_n, r.get("vencimiento")),
-                    ]
-                    fila = f'<row r="{row_n}">{"".join(cells)}</row>'
-                    out.write(fila.encode("utf-8"))
-                out.write(suffix.encode("utf-8"))
+    # Verificación posterior real del archivo generado.
+    with salida.open("r", encoding="utf-8", newline="") as f:
+        filas = list(csv.reader(f, delimiter=","))
+    for i, fila in enumerate(filas, start=1):
+        if len(fila) != 10:
+            salida.unlink(missing_ok=True)
+            raise RuntimeError(f"CSV inválido: la fila {i} no contiene 10 campos.")
+        if fila[4:7] != ["XXX", "XXX", "XXX"] or fila[8] != "XXX":
+            salida.unlink(missing_ok=True)
+            raise RuntimeError(f"CSV inválido: posiciones reservadas incorrectas en fila {i}.")
+        if fila[7] != "" or fila[9] != "":
+            salida.unlink(missing_ok=True)
+            raise RuntimeError(f"CSV inválido: patente/póliza deben quedar vacías en fila {i}.")
     return salida
 
 
-def _generar_csv_notificaciones(registros: list[dict[str, Any]], token: str) -> tuple[Path, int]:
-    """CSV de importación de notificaciones según el orden exigido por EnvíosYA.
-
-    apellido,nombre,celular,fecha,XXX,XXX,XXX,patente,XXX,poliza
-    Los XXX son posiciones reservadas y se escriben literalmente.
-    """
-    salida = TMP_DIR / f"envios_notificaciones_{token}.csv"
-    aptos = [r for r in registros if r.get("apellido") and r.get("nombre") and r.get("celular") and r.get("vencimiento")]
-    with salida.open("w", encoding="utf-8-sig", newline="") as f:
-        w = csv.writer(f, delimiter=",", lineterminator="\r\n")
-        for r in aptos:
-            w.writerow([
-                r.get("apellido", ""), r.get("nombre", ""), r.get("celular", ""),
-                r.get("vencimiento", ""), "XXX", "XXX", "XXX", r.get("patente", ""),
-                "XXX", r.get("poliza", ""),
-            ])
-    return salida, len(aptos)
-
-
-def _generar_excel_maestro(registros: list[dict[str, Any]], token: str) -> Path:
-    salida = TMP_DIR / f"envios_maestro_{token}.xlsx"
-    wb = Workbook(write_only=True)
-    ws = wb.create_sheet()
-    ws.title = "Base normalizada"
-    headers = [
-        "Apellido", "Nombre", "Nombre original", "DNI", "Celular original", "Celular EnvíosYA",
-        "Email", "Dirección", "CP", "Localidad", "Provincia", "País", "Compañía", "Patente",
-        "Marca", "Modelo", "Año", "Póliza", "Vencimiento", "Fecha origen", "Tipo", "Fuente",
-        "Compañía sugerida por fuente", "Estado teléfono", "Caracteres reparados", "Observaciones",
-    ]
-    ws.append(headers)
+def _detectar_duplicados(registros: list[dict[str, Any]]) -> int:
+    vistos: set[str] = set()
+    duplicados = 0
     for r in registros:
-        ws.append([
-            r.get("apellido",""), r.get("nombre",""), r.get("nombre_completo",""), r.get("dni",""),
-            r.get("celular_original",""), r.get("celular",""), r.get("email",""), r.get("direccion",""),
-            r.get("cp",""), r.get("localidad",""), r.get("provincia",""), r.get("pais",""), r.get("compania",""),
-            r.get("patente",""), r.get("marca",""), r.get("modelo",""), r.get("anio",""), r.get("poliza",""),
-            r.get("vencimiento",""), r.get("fecha_origen",""), r.get("tipo",""), r.get("fuente",""),
-            r.get("compania_fuente",""), "VALIDO" if r.get("celular") else "REVISAR",
-            "SI" if r.get("caracteres_reparados") else "",
-            (r.get("telefono_error", "") + (" | Texto de origen con carácter ilegible (�)" if r.get("texto_danado") else "")).strip(" |"),
-        ])
-    wb.save(salida)
-    wb.close()
+        tel = _texto_limpio(r.get("celular"))
+        if not tel:
+            continue
+        if tel in vistos:
+            duplicados += 1
+        else:
+            vistos.add(tel)
+    return duplicados
+
+
+def _pending_path(token: str) -> Path:
+    seguro = re.sub(r"[^a-f0-9]", "", str(token or "").lower())[:64]
+    if not seguro:
+        raise ValueError("Token pendiente inválido.")
+    return TMP_DIR / f"envios_pending_{seguro}.json"
+
+
+def _guardar_exportacion_pendiente(token: str, registros: list[dict[str, Any]]) -> Path:
+    ruta = _pending_path(token)
+    payload = {"creado": time.time(), "registros": registros}
+    ruta.write_text(json.dumps(payload, ensure_ascii=False), encoding="utf-8")
+    return ruta
+
+
+def generar_exportacion_pendiente(token: str) -> Path:
+    _limpiar_temporales()
+    ruta = _pending_path(token)
+    if not ruta.is_file():
+        raise ValueError("La preparación venció o no existe. Volvé a adjuntar la base.")
+    try:
+        payload = json.loads(ruta.read_text(encoding="utf-8"))
+    except Exception as exc:
+        raise ValueError("No pude recuperar la preparación de contactos.") from exc
+    registros = payload.get("registros") if isinstance(payload, dict) else None
+    if not isinstance(registros, list):
+        raise ValueError("La preparación de contactos no es válida.")
+    salida = generar_csv_envios_ya(registros, token)
+    ruta.unlink(missing_ok=True)
     return salida
 
 
-def procesar_bases(archivos: list[tuple[str, bytes]], fecha_modo: str = "conservar", usar_compania_fuente: bool = False) -> dict[str, Any]:
+def guardar_fuentes_pendientes(archivos: list[tuple[str, bytes]]) -> str:
+    _limpiar_temporales()
+    token = uuid.uuid4().hex
+    ruta = TMP_DIR / f"envios_sources_{token}.json"
+    serial = []
+    import base64
+    for nombre, datos in archivos:
+        serial.append({"nombre": str(nombre), "datos": base64.b64encode(bytes(datos)).decode("ascii")})
+    ruta.write_text(json.dumps({"creado": time.time(), "archivos": serial}), encoding="utf-8")
+    return token
+
+
+def recuperar_fuentes_pendientes(token: str) -> list[tuple[str, bytes]]:
+    seguro = re.sub(r"[^a-f0-9]", "", str(token or "").lower())[:64]
+    ruta = TMP_DIR / f"envios_sources_{seguro}.json"
+    if not ruta.is_file():
+        raise ValueError("La preparación venció o no existe. Volvé a adjuntar la base.")
+    try:
+        import base64
+        payload = json.loads(ruta.read_text(encoding="utf-8"))
+        salida = []
+        for item in payload.get("archivos") or []:
+            salida.append((str(item.get("nombre") or "base.csv"), base64.b64decode(item.get("datos") or "")))
+        return salida
+    except Exception as exc:
+        raise ValueError("No pude recuperar la base pendiente.") from exc
+
+
+def eliminar_fuentes_pendientes(token: str) -> None:
+    seguro = re.sub(r"[^a-f0-9]", "", str(token or "").lower())[:64]
+    if seguro:
+        (TMP_DIR / f"envios_sources_{seguro}.json").unlink(missing_ok=True)
+
+
+def procesar_bases(
+    archivos: list[tuple[str, bytes]],
+    fecha_modo: str = "actual",
+    usar_compania_fuente: bool = False,
+    manual_mapping: dict[str, Any] | None = None,
+    dedupe_mode: str = "all",
+    *,
+    generar_archivo: bool = True,
+    token_pendiente: str | None = None,
+) -> dict[str, Any]:
     _limpiar_temporales()
     if not archivos:
-        raise ValueError("Seleccioná al menos una base.")
+        raise ValueError("Seleccioná al menos una planilla.")
     if len(archivos) > MAX_ARCHIVOS:
         raise ValueError(f"Podés procesar hasta {MAX_ARCHIVOS} archivos por lote.")
 
+    manual_mapping = manual_mapping or {}
     todos: list[dict[str, Any]] = []
-    info_archivos = []
+    info_archivos: list[dict[str, Any]] = []
+    mapping_requests: list[dict[str, Any]] = []
     total_entrada = 0
-    for nombre, datos in archivos:
+
+    for file_index, (nombre, datos) in enumerate(archivos):
         rows, hoja = _leer_archivo(nombre, datos)
         if not rows:
             info_archivos.append({"nombre": nombre, "filas": 0, "estado": "vacío", "columnas": {}})
             continue
+
         tiene_header = _fila_es_header(rows[0])
         if tiene_header:
             headers = rows[0]
-            mapping = {i: c for i, v in enumerate(headers) if (c := _campo_por_header(v))}
             data_rows = rows[1:]
+            mapping = {i: c for i, v in enumerate(headers) if (c := _campo_por_header(v))}
         else:
             headers = []
             data_rows = rows
             mapping = _inferir_columnas(data_rows)
-        mapping = _mapear_con_gemini(data_rows, mapping)
-        compania_fuente = _detectar_compania_filename(nombre)
+
+        # Este módulo no manda la planilla completa a Gemini. El mapeo dudoso
+        # se resuelve explícitamente con el productor.
+        mapping = _aplicar_mapping_manual(mapping, manual_mapping.get(str(file_index)) or manual_mapping.get(file_index))
+
+        if not _mapping_suficiente(mapping):
+            mapping_requests.append({
+                "file_index": file_index,
+                "nombre": nombre,
+                "columnas": _opciones_columnas(headers, data_rows),
+                "detectado": {campo: idx for idx, campo in mapping.items() if campo in {"apellido", "nombre", "nombre_completo", "celular"}},
+                "acepta_nombre_completo": True,
+            })
+            info_archivos.append({
+                "nombre": nombre,
+                "hoja": hoja,
+                "filas": len(data_rows),
+                "encabezados": bool(tiene_header),
+                "columnas": {str(i + 1): campo for i, campo in sorted(mapping.items())},
+                "estado": "mapear",
+            })
+            continue
+
         total_entrada += len(data_rows)
         for row in data_rows:
-            reg = _normalizar_registro(row, mapping, nombre, compania_fuente, fecha_modo=fecha_modo, usar_compania_fuente=usar_compania_fuente)
-            # Ignoramos filas sin ningún dato de persona/contacto.
-            if not any(reg.get(k) for k in ("nombre_completo", "celular_original", "dni", "email", "localidad")):
+            if not any(_texto_limpio(v) for v in row):
+                continue
+            reg = _normalizar_registro(row, mapping, nombre)
+            # Filas de relleno sin datos reales no generan registro.
+            if not any((reg.get("nombre_completo"), reg.get("celular_original"))):
                 continue
             todos.append(reg)
-        columnas = {str(i + 1): campo for i, campo in sorted(mapping.items())}
+
         info_archivos.append({
             "nombre": nombre,
             "hoja": hoja,
             "filas": len(data_rows),
             "encabezados": bool(tiene_header),
-            "columnas": columnas,
-            "compania_detectada": compania_fuente,
+            "columnas": {str(i + 1): campo for i, campo in sorted(mapping.items()) if campo in {"apellido", "nombre", "nombre_completo", "celular"}},
+            "estado": "listo",
         })
 
-    validos_por_tel: dict[str, dict[str, Any]] = {}
-    invalidos = []
-    duplicados = 0
-    for r in todos:
-        tel = r.get("celular") or ""
-        if not tel or r.get("texto_danado_critico"):
-            if r.get("texto_danado_critico") and not r.get("telefono_error"):
-                r["telefono_error"] = "Texto principal del origen contiene un carácter ilegible (�)"
-            invalidos.append(r)
-            continue
-        if tel in validos_por_tel:
-            duplicados += 1
-            actual = validos_por_tel[tel]
-            if _score_riqueza(r) > _score_riqueza(actual):
-                validos_por_tel[tel] = r
-        else:
-            validos_por_tel[tel] = r
+    if mapping_requests:
+        return {
+            "requiere_mapeo": True,
+            "mapeos": mapping_requests,
+            "archivos": info_archivos,
+            "resumen": {"filas_entrada": total_entrada, "contactos_detectados": len(todos)},
+        }
 
-    validos = list(validos_por_tel.values())
-    validos.sort(key=lambda r: (_norm_texto(r.get("localidad")), _norm_texto(r.get("apellido")), _norm_texto(r.get("nombre"))))
-    token = uuid.uuid4().hex
-    salida = _generar_excel_enviosya(validos, token)
-    salida_notif, notificaciones_aptas = _generar_csv_notificaciones(validos, token)
-    salida_maestro = _generar_excel_maestro(todos, token)
+    validos = [r for r in todos if r.get("estado") == "VALIDO"]
+    invalidos = [r for r in todos if r.get("estado") != "VALIDO"]
+    duplicados = _detectar_duplicados(validos)
 
-    preview = []
-    for r in validos[:120]:
-        preview.append({**{k: r.get(k, "") for k in ("apellido", "nombre", "celular", "email", "localidad", "cp", "compania", "patente", "tipo", "fuente")}, "estado": "VALIDO", "motivo": ""})
+    if dedupe_mode == "one":
+        por_tel: dict[str, dict[str, Any]] = {}
+        for r in validos:
+            tel = r.get("celular") or ""
+            actual = por_tel.get(tel)
+            if actual is None or _score_riqueza(r) > _score_riqueza(actual):
+                por_tel[tel] = r
+        exportables = list(por_tel.values())
+    else:
+        exportables = list(validos)
+
+    exportables.sort(key=lambda r: (_norm_texto(r.get("apellido")), _norm_texto(r.get("nombre")), _texto_limpio(r.get("celular"))))
+    token = token_pendiente or uuid.uuid4().hex
+    salida = generar_csv_envios_ya(exportables, token) if generar_archivo else None
+    if not generar_archivo:
+        _guardar_exportacion_pendiente(token, exportables)
+
+    preview: list[dict[str, Any]] = []
+    for r in exportables[:120]:
+        preview.append({
+            "apellido": r.get("apellido", ""), "nombre": r.get("nombre", ""),
+            "celular": r.get("celular", ""), "fecha": r.get("fecha", ""),
+            "fuente": r.get("fuente", ""), "estado": "VALIDO", "motivo": "",
+        })
     for r in invalidos[:80]:
-        preview.append({**{k: r.get(k, "") for k in ("apellido", "nombre", "celular_original", "email", "localidad", "cp", "compania", "patente", "tipo", "fuente")}, "celular": r.get("celular_original", ""), "estado": "REVISAR", "motivo": r.get("telefono_error") or "Teléfono inválido"})
+        motivos = list(r.get("incompletos") or [])
+        if r.get("telefono_error") and "celular" in motivos:
+            motivos.append(r.get("telefono_error"))
+        preview.append({
+            "apellido": r.get("apellido", ""), "nombre": r.get("nombre", ""),
+            "celular": r.get("celular_original", ""), "fecha": r.get("fecha", ""),
+            "fuente": r.get("fuente", ""), "estado": "REVISAR",
+            "motivo": ", ".join(dict.fromkeys(motivos)) or "Datos incompletos",
+        })
 
     return {
+        "requiere_mapeo": False,
         "token": token,
-        "archivo": salida.name,
+        "archivo": salida.name if salida is not None else None,
+        "fecha": office_today().isoformat(),
         "resumen": {
             "filas_entrada": total_entrada,
             "contactos_detectados": len(todos),
-            "exportables": len(validos),
+            "exportables": len(exportables),
             "revisar": len(invalidos),
             "duplicados": duplicados,
-            "notificaciones_aptas": notificaciones_aptas,
-            "con_email": sum(1 for r in validos if _es_email(r.get("email"))),
-            "con_vencimiento": sum(1 for r in validos if r.get("vencimiento")),
-            "caracteres_reparados": sum(1 for r in todos if r.get("caracteres_reparados")),
-            "texto_danado": sum(1 for r in todos if r.get("texto_danado")),
+            "omitidos_sin_celular": sum(1 for r in invalidos if not r.get("celular")),
         },
         "archivos": info_archivos,
         "preview": preview,
-        "fecha_modo": fecha_modo,
-        "notificaciones_disponibles": notificaciones_aptas > 0,
+        "dedupe_mode": dedupe_mode,
     }
 
 
-def obtener_exportacion(token: str, tipo: str = "contactos") -> Path | None:
+def obtener_exportacion(token: str, tipo: str = "csv") -> Path | None:
     if not re.fullmatch(r"[a-f0-9]{32}", str(token or "")):
         return None
-    nombres = {
-        "contactos": f"envios_{token}.xlsx",
-        "notificaciones": f"envios_notificaciones_{token}.csv",
-        "maestro": f"envios_maestro_{token}.xlsx",
-    }
-    nombre = nombres.get(tipo)
-    if not nombre:
+    if tipo not in {"csv", "contactos"}:
         return None
-    p = TMP_DIR / nombre
+    p = TMP_DIR / f"envios_{token}.csv"
     if not p.exists():
         return None
     if time.time() - p.stat().st_mtime > TTL_TEMP_SEGUNDOS:
@@ -762,5 +840,10 @@ def obtener_exportacion(token: str, tipo: str = "contactos") -> Path | None:
     return p
 
 
+def obtener_csv(token: str) -> Path | None:
+    return obtener_exportacion(token, "csv")
+
+
 def obtener_excel(token: str) -> Path | None:
-    return obtener_exportacion(token, "contactos")
+    """Alias legado del endpoint histórico; ahora devuelve el CSV final."""
+    return obtener_csv(token)

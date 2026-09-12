@@ -147,7 +147,7 @@ def test_chat_ai_reenvia_coleccion_a_servicios():
         else: sys.modules["servicios_ia"] = previo
 
 
-def test_frontend_acumula_elimina_y_no_limpia_antes_de_respuesta():
+def test_frontend_acumula_elimina_y_limpia_composer_al_enviar():
     text = Path(__file__).with_name("static").joinpath("js", "app.js").read_text(encoding="utf-8")
     assert "validarYAdjuntarArchivos(files,pdf,{reemplazar:false})" in text
     assert "validarYAdjuntarArchivos(archivos,pdf,{reemplazar:false})" in text
@@ -157,7 +157,11 @@ def test_frontend_acumula_elimina_y_no_limpia_antes_de_respuesta():
     inicio = text.index("async function enviarMensaje()")
     fin = text.index("async function initChat()", inicio)
     bloque = text[inicio:fin]
-    assert bloque.index("if(!r.ok||d.ok===false)") < bloque.index("if(archivos.length)quitarAdjuntosEnviados(archivos,attachmentSeqAlEnviar)")
+    # La UX aprobada limpia visualmente texto/adjuntos antes de esperar al backend.
+    assert bloque.index("limpiarComposerDespuesDeEnvio(i,textoOriginal,editSeqAlEnviar)") < bloque.index("const r=await fetch('/api/chat'")
+    assert bloque.index("if(archivos.length)quitarAdjuntosEnviados(archivos)") < bloque.index("const r=await fetch('/api/chat'")
+    # El snapshot sigue en `textoOriginal` + `archivos` y se puede restaurar si falla.
+    assert "archivosAdjuntosChat=[...archivos]" in bloque
     assert "quitarAdjunto();" not in bloque
 
 

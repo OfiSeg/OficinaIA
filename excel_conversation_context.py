@@ -134,6 +134,10 @@ def _plural(n: int, uno: str, varios: str) -> str:
 
 
 def guardar_contexto(session_obj, *, chat_id, filtros: dict, cantidad: int, registros: list[dict] | None, etiqueta: str, origen: str):
+    # La última fuente realmente usada manda. Al activar un conjunto de cartera
+    # invalidamos cualquier selección ARCA vieja para que un nombre u ordinal
+    # posterior no sea secuestrado por el padrón público.
+    session_obj.pop("arca_context", None)
     session_obj["registro_contexto_activo"] = {
         "tipo": "registro_excel_set",
         "chat_id": str(chat_id or ""),
@@ -262,6 +266,14 @@ def _indice_ordinal(mensaje: str) -> int | None:
         "tercero": 2, "tercera": 2, "tres": 2,
         "cuarto": 3, "cuarta": 3, "cuatro": 3,
         "quinto": 4, "quinta": 4, "cinco": 4,
+        "sexto": 5, "sexta": 5, "seis": 5,
+        "septimo": 6, "septima": 6, "siete": 6,
+        "octavo": 7, "octava": 7, "ocho": 7,
+        "noveno": 8, "novena": 8, "nueve": 8,
+        "decimo": 9, "decima": 9, "diez": 9,
+        # -1 significa "último elemento del conjunto activo" y se resuelve
+        # contra el tamaño real de la lista, no como un número fijo.
+        "ultimo": -1, "ultima": -1,
     }
     m = re.match(r"^(?:el|la)?\s*(\d{1,2})\s*$", t)
     if m:
@@ -270,6 +282,38 @@ def _indice_ordinal(mensaje: str) -> int | None:
         if re.search(rf"\b{palabra}\b", t):
             return idx
     return None
+
+
+def _indices_por_identidad_contextual(mensaje: str, registros: list[dict]) -> list[int]:
+    """Resuelve nombre/patente/vehículo dentro del conjunto activo sin Gemini.
+
+    Es deliberadamente conservador: coincidencia exacta o, para nombres de dos
+    o más palabras, todas las palabras contenidas en un único nombre. No usa
+    fuzzy matching para no elegir un asegurado arbitrariamente.
+    """
+    q = normalizar(mensaje).strip(" .,:;¿?¡!")
+    q = re.sub(r"^(?:mostrame|mostrar|ver|dame|decime|pasame|el de|la de)\s+", "", q).strip()
+    if not q:
+        return []
+
+    exactos: list[int] = []
+    nombres_parciales: list[int] = []
+    palabras_q = [x for x in q.split() if len(x) >= 2]
+
+    for idx, fila in enumerate(registros[:10]):
+        nombre = normalizar(_valor(fila, "ASEGURADO", "CLIENTE", "NOMBRE", "NOMBRE Y APELLIDO"))
+        patente = normalizar(_valor(fila, "PATENTE", "DOMINIO"))
+        vehiculo = normalizar(_valor(fila, "VEHICULO", "VEHÍCULO", "MARCA MODELO", "MODELO"))
+        if q and q in {nombre, patente, vehiculo}:
+            exactos.append(idx)
+            continue
+        # Nombre completo escrito en otro orden o con pequeñas diferencias de
+        # espacios: exige al menos dos tokens para evitar que "juan" elija a
+        # una persona al azar.
+        if len(palabras_q) >= 2 and nombre and all(p in nombre.split() for p in palabras_q):
+            nombres_parciales.append(idx)
+
+    return exactos or nombres_parciales
 
 
 def responder_followup_registro(mensaje: str, *, session_obj, chat_id) -> str | None:
@@ -297,20 +341,40 @@ def responder_followup_registro(mensaje: str, *, session_obj, chat_id) -> str | 
             return "¿De qué registro querés los detalles? Decime nombre, patente o fecha para ubicarlo."
         return None
 
+    # Un contexto viejo de cartera no debe disparar una lectura de Sheets ante
+    # mensajes independientes como "hola". Además de pronombres/ordinales,
+    # permitimos seleccionar por nombre o patente exactos dentro del conjunto
+    # anterior, por ejemplo "BAO GABRIEL ROBERTO".
+    registros_ctx = list(ctx.get("registros") or [])[:10]
+    coincidencias_ctx = _indices_por_identidad_contextual(mensaje, registros_ctx)
+    if indice is None and not coincidencias_ctx and not _es_pronombre_o_followup_registro(mensaje):
+        return None
+
     filtros = dict(ctx.get("filtros") or {})
     resultado = servicios_ia.buscar_registros_estructurados(**filtros, limite=25)
     registros = list(resultado.get("registros") or []) if isinstance(resultado, dict) else []
     cantidad = int(resultado.get("cantidad") or ctx.get("cantidad") or 0) if isinstance(resultado, dict) else int(ctx.get("cantidad") or 0)
 
     if indice is not None and registros:
-        if 0 <= indice < min(len(registros), 10):
-            elegido = registros[indice]
+        indice_real = len(registros[:10]) - 1 if indice == -1 else indice
+        if 0 <= indice_real < min(len(registros), 10):
+            elegido = registros[indice_real]
             guardar_contexto(session_obj, chat_id=chat_id, filtros=filtros, cantidad=1, registros=[elegido], etiqueta=ctx.get("etiqueta", ""), origen="seleccion_productor")
             return "Listo, tomo ese registro como referencia:\n\n" + _formatear_registro(elegido)
         return "No tengo esa opción en la lista anterior."
 
-    if not _es_pronombre_o_followup_registro(mensaje):
-        return None
+    # Recalcula la coincidencia contra los registros frescos del mismo filtro.
+    coincidencias = _indices_por_identidad_contextual(mensaje, registros)
+    if len(coincidencias) == 1:
+        elegido = registros[coincidencias[0]]
+        guardar_contexto(session_obj, chat_id=chat_id, filtros=filtros, cantidad=1, registros=[elegido], etiqueta=ctx.get("etiqueta", ""), origen="seleccion_productor_identidad")
+        return "Listo, tomo ese registro como referencia:\n\n" + _formatear_registro(elegido)
+    if len(coincidencias) > 1:
+        opciones = [registros[i] for i in coincidencias[:10]]
+        return (
+            "Encontré más de un registro que coincide dentro del conjunto anterior. Elegí uno:\n\n"
+            + _resumen_opciones(opciones)
+        )
 
     if cantidad <= 0 or not registros:
         return "No tengo un registro activo para detallar. En la consulta anterior no había resultados con esos filtros."

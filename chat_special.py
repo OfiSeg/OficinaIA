@@ -1,6 +1,6 @@
 """Handlers especiales previos a Sofia.
 
-Extiende el router V20 sin reemplazarlo: /coti y /flota conservan prioridad;
+Extiende el router V20 sin reemplazarlo: /coti abre Cotización ATM y /flota conserva prioridad;
 los adjuntos operativos se clasifican como cédula/DNI/licencia/póliza/otro y disparan su
 pipeline natural sin exigir comandos.
 """
@@ -13,7 +13,8 @@ import cedula_ops
 import personal_document_ops
 import document_grouping
 from document_classifier import clasificar_adjunto, clasificar_adjuntos
-from coti import procesar_comando_coti
+from atm_cotizador import respuesta_chat_atm
+import atm_quote_service
 
 
 @dataclass
@@ -128,8 +129,103 @@ def _resultado_cedula(adjunto, clasificacion, on_stage=None, *, confirmada=False
             "clasificacion_confianza": getattr(clasificacion, "confianza", None),
             "cedula_detectada": resultado.datos,
             "cedula_advertencias": resultado.advertencias,
+            # No crea otro Alta: sólo prepara el prefill para abrir, a demanda,
+            # el mismo formulario/guardado que ya usa una póliza.
+            "borrador_alta_desde_cedula": alta_ops.campos_alta_desde_cedula(resultado.datos),
+            "alta_revisiones": alta_ops.revisiones_alta_desde_cedula(resultado.datos),
         },
         handler="cedula",
+    )
+
+
+def _resultado_cedula_y_poliza(cedula_adjunto, cedula_clasificacion, poliza_adjunto, poliza_clasificacion, on_stage=None):
+    """Dos entradas, un único Alta existente. Si una lectura falla, conserva la otra."""
+    resultado_cedula = None
+    propuesta_poliza = None
+    error_cedula = None
+    error_poliza = None
+
+    try:
+        if on_stage:
+            on_stage("cedula_inicio")
+        resultado_cedula = cedula_ops.procesar_cedula(cedula_adjunto, clasificacion_confirmada=True)
+        if on_stage:
+            on_stage("cedula_resuelta")
+    except Exception as exc:
+        error_cedula = exc
+        print("AVISO CEDULA EN ALTA COMBINADA:", exc)
+
+    try:
+        contexto = str(getattr(poliza_adjunto, "contexto", "") or "").strip()
+        propuesta_poliza = (
+            alta_ops.interpretar_poliza_a_json(contexto)
+            if contexto
+            else alta_ops.interpretar_poliza_adjunto(poliza_adjunto)
+        )
+    except Exception as exc:
+        error_poliza = exc
+        print("AVISO POLIZA EN ALTA COMBINADA:", exc)
+
+    if resultado_cedula is not None and propuesta_poliza is not None:
+        columnas = alta_ops.propuesta_a_columnas(propuesta_poliza)
+        campos_poliza = alta_ops.a_campos_guardar_asegurado(columnas)
+        campos, revisiones, conflictos = alta_ops.fusionar_alta_con_cedula(
+            campos_poliza, resultado_cedula.datos
+        )
+        advertencias_cedula = list(resultado_cedula.advertencias or [])
+        advertencias_cedula.extend(conflictos)
+        respuesta = "Cédula y póliza detectadas. Preparé un único alta con los datos de ambos documentos para revisar antes de guardar."
+        return SpecialResult(
+            True,
+            respuesta,
+            {
+                "tipo_documento": "cedula+poliza",
+                "cedula_detectada": resultado_cedula.datos,
+                "cedula_advertencias": list(dict.fromkeys(advertencias_cedula)),
+                "propuesta_alta_asegurado": columnas,
+                "campos_guardar_alta_asegurado": campos,
+                "tabulado_alta_asegurado": alta_ops.armar_tabulado_desde_campos(campos),
+                "alta_revisiones": revisiones,
+                "alta_origen": "cedula+poliza",
+            },
+            "alta",
+        )
+
+    if propuesta_poliza is not None:
+        columnas = alta_ops.propuesta_a_columnas(propuesta_poliza)
+        campos = alta_ops.a_campos_guardar_asegurado(columnas)
+        return SpecialResult(
+            True,
+            "Póliza detectada. No pude aprovechar la cédula en este intento, pero preparé el alta de la póliza para revisar.",
+            {
+                "tipo_documento": "poliza",
+                "propuesta_alta_asegurado": columnas,
+                "campos_guardar_alta_asegurado": campos,
+                "tabulado_alta_asegurado": alta_ops.armar_tabulado(columnas),
+                "alta_revisiones": {},
+                "alta_origen": "poliza",
+            },
+            "alta",
+        )
+
+    if resultado_cedula is not None:
+        return SpecialResult(
+            True,
+            "Cédula detectada. No pude aprovechar la póliza en este intento; podés preparar el alta desde la cédula y completar los campos faltantes.",
+            {
+                "tipo_documento": "cedula",
+                "cedula_detectada": resultado_cedula.datos,
+                "cedula_advertencias": resultado_cedula.advertencias,
+                "borrador_alta_desde_cedula": alta_ops.campos_alta_desde_cedula(resultado_cedula.datos),
+                "alta_revisiones": alta_ops.revisiones_alta_desde_cedula(resultado_cedula.datos),
+            },
+            "cedula",
+        )
+
+    raise RuntimeError(
+        "No pude leer ni la cédula ni la póliza del conjunto. "
+        f"cedula={type(error_cedula).__name__ if error_cedula else '-'} "
+        f"poliza={type(error_poliza).__name__ if error_poliza else '-'}"
     )
 
 
@@ -169,10 +265,20 @@ def _clasificar_con_cache(adjunto):
 
 
 def procesar(*, chat_id, mensaje, contexto_pdf, flota_store, adjunto=None, adjuntos=None, adjunto_anterior=None, on_stage=None):
-    # /coti histórico y determinístico.
-    respuesta_coti = procesar_comando_coti(mensaje)
-    if respuesta_coti is not None:
-        return SpecialResult(True, str(respuesta_coti), {}, "coti")
+    # /coti ya NO tiene calculadora propia: es un atajo a la única UI de Cotización ATM.
+    if re.match(r"^/coti(?:\s|$)", str(mensaje or "").strip(), re.I):
+        return SpecialResult(
+            True,
+            "Abrí Cotización ATM.",
+            {"abrir_cotizador_atm": True},
+            "atm_cotizador",
+        )
+
+    # Consulta textual ATM rápida y determinística, sin Gemini. Se conserva como
+    # compatibilidad, pero la interfaz principal es el módulo visual.
+    respuesta_atm = respuesta_chat_atm(mensaje)
+    if respuesta_atm is not None:
+        return SpecialResult(True, str(respuesta_atm), {}, "atm_cotizador")
 
     if on_stage:
         on_stage("flota_router")
@@ -217,6 +323,67 @@ def procesar(*, chat_id, mensaje, contexto_pdf, flota_store, adjunto=None, adjun
             on_stage("adjunto_coleccion_multiple")
 
     plan = document_grouping.planificar(adjuntos_actuales, clasificaciones) if clasificaciones else None
+
+    # Cédula + póliza en el mismo turno: no mandamos ambos al chat genérico.
+    # Reutilizamos los dos lectores existentes y terminamos en UN solo formulario
+    # de Alta / asegurado. Nunca se crean dos altas ni se guarda automáticamente.
+    if (
+        puede_auto and pedido_procesamiento_documental and not consulta_puntual_adjunto
+        and len(adjuntos_actuales) == 2 and len(clasificaciones) == 2
+    ):
+        tipos = [str(getattr(c, "tipo_documento", "") or "") for c in clasificaciones]
+        if set(tipos) == {"cedula", "poliza"}:
+            try:
+                idx_cedula = tipos.index("cedula")
+                idx_poliza = tipos.index("poliza")
+                return _resultado_cedula_y_poliza(
+                    adjuntos_actuales[idx_cedula], clasificaciones[idx_cedula],
+                    adjuntos_actuales[idx_poliza], clasificaciones[idx_poliza],
+                    on_stage,
+                )
+            except Exception as exc:
+                print("ERROR ALTA COMBINADA CEDULA+POLIZA:", exc)
+                # Si ambas lecturas fallan, no secuestrar el turno: continúa por
+                # el flujo multimodal general y conserva todos los adjuntos.
+
+    # Captura del cotizador ATM: reutiliza la clasificación visual que ya se iba
+    # a hacer para una imagen. Sólo si esa clasificación dice ATM ejecutamos la
+    # extracción especializada; no agrega una llamada previa a cédulas/pólizas.
+    if (
+        puede_auto
+        and len(adjuntos_actuales) == 1
+        and clasificacion is not None
+        and getattr(clasificacion, "tipo_documento", "") == "cotizacion_atm"
+        and pedido_procesamiento_documental
+        and not consulta_puntual_adjunto
+    ):
+        try:
+            if on_stage:
+                on_stage("atm_captura_inicio")
+            lectura = atm_quote_service.extraer_cotizacion_atm(adjuntos_actuales[0])
+            if on_stage:
+                on_stage("atm_captura_resuelta")
+            if lectura.get("es_cotizacion_atm"):
+                cantidad = len(lectura.get("coberturas") or [])
+                texto = (
+                    f"Detecté una cotización ATM con {cantidad} cobertura(s). "
+                    "Abrí el cotizador para que elijas cuáles ofrecer."
+                    if cantidad
+                    else "Detecté la cotización ATM, pero necesito que revises los precios antes de continuar."
+                )
+                return SpecialResult(
+                    True, texto,
+                    {"abrir_cotizador_atm": True, "atm_cotizacion_detectada": lectura},
+                    "atm_cotizador",
+                )
+        except Exception as exc:
+            print("ERROR COTIZACION ATM CAPTURA:", exc)
+            return SpecialResult(
+                True,
+                "Detecté una captura de cotización ATM, pero no pude terminar la lectura. Podés abrir Cotización ATM y cargar los precios manualmente o reintentar la captura.",
+                {"abrir_cotizador_atm": True, "atm_cotizacion_error": True},
+                "atm_cotizador",
+            )
     # Si la planificación de dos archivos concluyó que son documentos distintos
     # o que sólo uno encaja en un handler individual, no descartamos el resto.
     # El turno completo continúa por Sofia multimodal. Frente/dorso compatible
@@ -389,6 +556,8 @@ def procesar(*, chat_id, mensaje, contexto_pdf, flota_store, adjunto=None, adjun
                 "propuesta_alta_asegurado": propuesta_alta,
                 "tabulado_alta_asegurado": alta_ops.armar_tabulado(propuesta_alta) if propuesta_alta else None,
                 "campos_guardar_alta_asegurado": campos,
+                "alta_revisiones": {},
+                "alta_origen": "poliza",
             },
             handler="alta",
         )

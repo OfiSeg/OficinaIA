@@ -21,7 +21,7 @@ def ok(cond: bool, msg: str) -> None:
 
 def main() -> int:
     ok('id="chatWallpaperBtn"' in HTML, "existe botón brocha para cambiar fondo")
-    ok('id="chatWallpaperMenu"' in HTML and 'data-wallpaper="classic"' in HTML, "existe selector simple de fondos")
+    ok('id="chatWallpaperMenu"' in HTML and 'data-wallpaper="soft"' in HTML and 'data-wallpaper="clean"' in HTML, "existe selector simple Suave/Liso")
     ok('chat-header-actions' in HTML, "la brocha queda agrupada junto al eliminar chat")
     ok('chat-clear-danger' in HTML and 'aria-label="Eliminar chat"' in HTML, "eliminar chat queda como acción destructiva con ícono")
     ok('>Eliminar chat<' not in HTML, "no queda texto visible 'Eliminar chat' en el header")
@@ -32,7 +32,7 @@ def main() -> int:
     ok('limpiarMetadataVisualMensajes' in JS, "hay limpieza defensiva de horas/vistos/checks si existieran")
 
     ok('ETAPA 10' in CSS and 'WhatsApp Web' in CSS, "existen reglas CSS de etapa 10")
-    ok('body.chat-layout .chat[data-wallpaper="classic"] .history' in CSS, "fondo clásico tipo WhatsApp aplicado al historial")
+    ok('body.chat-layout .chat[data-wallpaper="soft"] .history' in CSS and 'body.chat-layout .chat[data-wallpaper="clean"] .history' in CSS, "fondos Suave/Liso aplicados al historial")
     ok('body.chat-layout .history .msg.assistant .bubble' in CSS, "burbuja del asistente adaptada visualmente")
     ok('body.chat-layout .file-attached-item' in CSS, "adjuntos/previews tienen estilo compacto tipo WhatsApp")
     ok('body.chat-layout .chat>header .chat-clear-danger.clear-chat' in CSS, "basura roja en el header")
