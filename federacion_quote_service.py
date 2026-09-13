@@ -263,6 +263,10 @@ def _cobertura(codigo: str, plan_nombre: str) -> tuple[str, str]:
         return "Terceros Completo", "Responsabilidad civil, incendio total y parcial y robo total y parcial."
     if c == "CF":
         return "Terceros Completo Full", "Responsabilidad civil, incendio total y parcial, robo total y parcial, destrucción total por accidente. Cubre ruedas, vidrios, granizo y cerraduras."
+    if c == "LB":
+        return "Cobertura LB", "Responsabilidad civil, incendio total y parcial, robo/hurto total, robo parcial al amparo del robo total y destrucción total por accidente."
+    if c == "LB1":
+        return "Cobertura LB1", "Responsabilidad civil, incendio total y parcial, robo/hurto total y robo parcial al amparo del robo total."
     if c.startswith("TD"):
         return "Todo Riesgo", "Responsabilidad civil, incendio total y parcial, robo total y parcial, destrucción total y daños parciales por accidente."
     # No inventar: si aparece un código desconocido, conservar el nombre del PDF

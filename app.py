@@ -14,13 +14,14 @@ from flask import (
 )
 
 from pathlib import Path
-from io import BytesIO
+from io import BytesIO, StringIO
 from functools import wraps
 import re
 import os
 import json
 import logging
 import traceback
+import csv
 import time
 from contextlib import closing
 from werkzeug.security import generate_password_hash, check_password_hash
@@ -106,6 +107,7 @@ import atm_coberturas
 import mercantil_quote_service
 import mercantil_cotizador
 import federacion_quote_service
+import quote_normalizer
 import alta_ops
 from flota_store import FlotaStore
 from chat_store import ChatStore
@@ -453,6 +455,8 @@ def contexto_usuario():
         "config_global": config,
         "cias_links": [(c["nombre"], c["url"]) for c in config.get("companias", []) if c.get("visible", True)],
         "cias_sidebar": [c for c in config.get("companias", []) if c.get("visible", True)],
+        "chat_shortcuts_global": config_service.resolver_chat_shortcuts(config),
+        "brand_icon_src": config_service.resolver_icono_marca,
         "static_asset": static_asset,
     }
 
@@ -1067,12 +1071,81 @@ def api_cotizaciones_leer_pdf():
                 return jsonify({"ok": False, "error": "Identifiqué Federación Patronal, pero no pude extraer plan y precio por cuota."}), 422
             return jsonify({"ok": True, "tipo": "federacion", **federacion})
 
-        return jsonify({"ok": False, "error": "No pude identificar el PDF como una cotización compatible de Mercantil Andina o Federación Patronal."}), 422
+        generica = quote_normalizer.extraer_cotizacion_generica_pdf(contenido)
+        if generica.get("es_cotizacion_generica") and generica.get("coberturas"):
+            return jsonify({"ok": True, "tipo": "generica", **generica})
+
+        # Último recurso: si el PDF es escaneado o su maquetación no permite
+        # reconstruir las coberturas por texto, leer visualmente hasta 2 páginas.
+        # La IA sólo transcribe; la clasificación final sigue siendo determinística.
+        try:
+            begin_request(
+                runtime_config.get_float("GEMINI_GENERIC_QUOTE_BUDGET_SECONDS", 45.0),
+                request_id=getattr(g, "chat_request_id", None),
+            )
+            visual = quote_normalizer.extraer_cotizacion_generica_pdf_vision(contenido)
+            if visual.get("es_cotizacion_generica") and visual.get("coberturas"):
+                return jsonify({"ok": True, "tipo": "generica", **visual})
+        except Exception as visual_error:
+            logger.info("Fallback visual de cotización PDF no disponible: %s", visual_error)
+
+        return jsonify({"ok": False, "error": "No pude identificar coberturas suficientes en este PDF. Si el documento usa códigos sin descripción, necesito que también incluya el detalle de riesgos."}), 422
     except ValueError as error:
         return jsonify({"ok": False, "error": str(error)}), 400
     except Exception as error:
         logger.exception("Error detectando PDF de cotización: %s", error)
         return jsonify({"ok": False, "error": "No pude leer el PDF de cotización en este intento."}), 500
+
+
+@app.route("/api/cotizaciones/normalizar-texto", methods=["POST"])
+@requiere_login
+def api_cotizaciones_normalizar_texto():
+    data = request.get_json(silent=True) or {}
+    texto = str(data.get("texto") or "").strip()
+    if not texto:
+        return jsonify({"ok": False, "error": "Pegá o escribí una cotización para analizar."}), 400
+    try:
+        resultado = quote_normalizer.normalizar_texto_cotizacion(texto, compania=str(data.get("compania") or "").strip())
+        if not resultado.get("es_cotizacion_generica") or not resultado.get("coberturas"):
+            return jsonify({"ok": False, "error": "No encontré suficiente información de cobertura para normalizar ese texto."}), 422
+        return jsonify({"ok": True, "tipo": "generica", **resultado})
+    except ValueError as error:
+        return jsonify({"ok": False, "error": str(error)}), 400
+    except Exception as error:
+        logger.exception("Error normalizando texto de cotización: %s", error)
+        return jsonify({"ok": False, "error": "No pude normalizar esa cotización en este intento."}), 500
+
+
+@app.route("/api/cotizaciones/leer-imagen", methods=["POST"])
+@requiere_login
+def api_cotizaciones_leer_imagen():
+    archivo = request.files.get("captura") or request.files.get("archivo")
+    if not archivo or not getattr(archivo, "filename", ""):
+        return jsonify({"ok": False, "error": "Adjuntá una captura de cotización."}), 400
+    try:
+        adjunto = extract_attachment(
+            archivo,
+            max_pdf_bytes=MAX_PDF_FILE_SIZE_BYTES,
+            max_pages=1,
+            max_chars=5000,
+        )
+        if adjunto is None or adjunto.tipo != "imagen":
+            return jsonify({"ok": False, "error": "Usá una captura PNG, JPG, JPEG o WEBP."}), 400
+        begin_request(
+            runtime_config.get_float("GEMINI_GENERIC_QUOTE_BUDGET_SECONDS", 45.0),
+            request_id=getattr(g, "chat_request_id", None),
+        )
+        resultado = quote_normalizer.extraer_cotizacion_generica_imagen(adjunto)
+        if not resultado.get("es_cotizacion_generica") or not resultado.get("coberturas"):
+            return jsonify({"ok": False, "error": "No pude identificar suficiente información de cobertura en la captura."}), 422
+        return jsonify({"ok": True, "tipo": "generica", **resultado})
+    except ChatRequestError as error:
+        return jsonify({"ok": False, "error": str(error)}), error.status_code
+    except ValueError as error:
+        return jsonify({"ok": False, "error": str(error)}), 400
+    except Exception as error:
+        logger.exception("Error leyendo captura universal de cotización: %s", error)
+        return jsonify({"ok": False, "error": "No pude leer esa captura de cotización en este intento."}), 500
 
 
 @app.route("/api/mercantil/cotizar", methods=["POST"])
@@ -1180,14 +1253,27 @@ def api_excel_importar():
 @requiere_login
 def excel_exportar():
     libro_id = request.args.get("libro_id", "1")
+    formato = str(request.args.get("formato", "xlsx") or "xlsx").strip().lower()
     if str(libro_id) not in LIBROS_EXCEL:
         return jsonify({"ok": False, "error": "Libro de Excel no válido."}), 400
+    if formato not in {"xlsx", "csv"}:
+        return jsonify({"ok": False, "error": "Formato de exportación no válido."}), 400
     try:
         datos = leer_excel_interno(libro_id)
+        filas = datos.get("filas") or []
+        base_nombre = "OficinaIA_Asegurados" if str(libro_id) == "1" else "OficinaIA_Flotas"
+        if formato == "csv":
+            texto = StringIO()
+            writer = csv.writer(texto, delimiter=";", lineterminator="\r\n")
+            for fila in filas:
+                writer.writerow(["" if v is None else str(v) for v in fila])
+            payload = BytesIO(("\ufeff" + texto.getvalue()).encode("utf-8"))
+            payload.seek(0)
+            return send_file(payload, as_attachment=True, download_name=base_nombre + ".csv", mimetype="text/csv; charset=utf-8")
+
         wb = Workbook()
         ws = wb.active
         ws.title = str(datos.get("hoja") or "Datos")[:31]
-        filas = datos.get("filas") or []
         for fila in filas:
             ws.append(["" if v is None else str(v) for v in fila])
         for c in range(1, max(1, int(datos.get("columnas") or 1)) + 1):
@@ -1197,10 +1283,9 @@ def excel_exportar():
         buffer = BytesIO()
         wb.save(buffer)
         buffer.seek(0)
-        nombre = "OficinaIA_Asegurados.xlsx" if str(libro_id) == "1" else "OficinaIA_Flotas.xlsx"
-        return send_file(buffer, as_attachment=True, download_name=nombre, mimetype="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+        return send_file(buffer, as_attachment=True, download_name=base_nombre + ".xlsx", mimetype="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
     except Exception as error:
-        system_health.registrar_evento("excel", "error", "No se pudo exportar Sheets a XLSX", str(error))
+        system_health.registrar_evento("excel", "error", "No se pudo exportar la planilla", str(error))
         return jsonify({"ok": False, "error": "No se pudo exportar la planilla."}), 500
 
 
@@ -2438,6 +2523,25 @@ def guardar_configuracion():
     except Exception as error_guardado:
         print("ERROR guardar_configuracion:", error_guardado)
         return jsonify(ok=False,error="No se pudo guardar la configuración."),500
+
+
+@app.route("/api/configuracion/chat-shortcuts", methods=["POST"])
+@requiere_admin
+def guardar_chat_shortcuts():
+    data = request.get_json(silent=True) or {}
+    actual = cargar_configuracion()
+    actual["chat_shortcuts"] = config_service.normalizar_chat_shortcuts(data.get("chat_shortcuts"), actual)
+    try:
+        config_service.guardar_configuracion(
+            actual,
+            usar_pg=_config_usar_pg(),
+            pg_guardar=pg_guardar_configuracion,
+            config_file=CONFIG_FILE,
+        )
+        return jsonify(ok=True, chat_shortcuts=actual["chat_shortcuts"])
+    except Exception as error_guardado:
+        print("ERROR guardar chat_shortcuts:", error_guardado)
+        return jsonify(ok=False, error="No se pudo guardar el orden de accesos."), 500
 
 
 @app.route("/api/usuarios", methods=["POST"])

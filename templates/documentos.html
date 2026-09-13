@@ -1,6 +1,25 @@
 {% extends 'base.html' %}
 {% from "_icons.html" import icon %}
 {% from "_global_actions.html" import render_global_actions %}
+{% macro render_chat_welcome(shortcuts) -%}
+<div id="chatWelcome" class="welcome">
+  <strong class="sofia-welcome-logo" aria-hidden="true"><img class="sofia-logo-img" src="{{ static_asset('img/favicon.png') }}" alt=""></strong>
+  <h2>¿Qué necesitás resolver?</h2>
+  <p>Accesos directos para las operaciones que más usás.</p>
+  <div class="workflow-grid" id="workflowGrid" aria-label="Accesos directos del chat">
+    {% for item in shortcuts %}
+    <button type="button" class="workflow-card workflow-shortcut" data-shortcut-key="{{ item.key }}"{% if item.action %} data-chat-action="{{ item.action }}"{% endif %}{% if item.url %} data-shortcut-url="{{ item.url }}"{% endif %}>
+      <span class="workflow-shortcut-icon{% if item.url %} is-external{% endif %}" aria-hidden="true">
+        {% if item.icon %}{{ icon(item.icon) }}{% elif item.url %}<img src="{{ brand_icon_src(item) }}" alt="" loading="lazy">{% endif %}
+      </span>
+      <span class="workflow-shortcut-copy"><b>{{ item.label }}</b><small>{{ item.subtitle }}</small></span>
+    </button>
+    {% else %}
+    <div class="workflow-shortcuts-empty">No hay accesos configurados.</div>
+    {% endfor %}
+  </div>
+</div>
+{%- endmacro %}
 {% block title %}Chat IA · {{config_global.nombre_oficina}}{% endblock %}
 {% block body_class %}chat-layout{% endblock %}
 {% block global_actions_slot %}{% endblock %}
@@ -50,11 +69,9 @@
     <button type="button" class="btn-primary chat-list-sheet-new" id="chatListSheetNew">{{ icon('plus') }} Nueva conversación</button>
   </div>
 </div>
+<template id="chatWelcomeTemplate">{{ render_chat_welcome(chat_shortcuts_global) }}</template>
 <div id="chat" class="history history-empty">
-  <div id="chatWelcome" class="welcome">
-    <strong class="sofia-welcome-logo" aria-hidden="true"><img class="sofia-logo-img" src="{{ static_asset('img/favicon.png') }}" alt=""></strong>
-    <h2>¿Qué necesitás resolver?</h2>
-  </div>
+  {{ render_chat_welcome(chat_shortcuts_global) }}
 </div>
 <div class="composer-wrap">
   <div id="chatCommandMenu" class="chat-command-menu" hidden role="listbox" aria-label="Comandos del chat"></div>
@@ -175,6 +192,7 @@
       </section>
 
       <div id="federacionQuoteSources"></div>
+      <div id="genericQuoteSources"></div>
       <div id="manualQuoteSources"></div>
     </div>
 
@@ -186,7 +204,7 @@
 
     <div class="atm-proposal atm-proposal-compact quotes-proposal" id="atmProposal" hidden>
       <label>Texto para WhatsApp<textarea id="atmProposalText" rows="7"></textarea></label>
-      <button type="button" class="secondary quotes-whatsapp-copy" id="atmCopyProposal" title="Copiar para WhatsApp" aria-label="Copiar para WhatsApp"><img src="{{ static_asset('img/herramientas/whatsapp.png') }}" alt="" aria-hidden="true"></button>
+      <button type="button" class="secondary quotes-whatsapp-copy" id="atmCopyProposal" title="Copiar para WhatsApp" aria-label="Copiar para WhatsApp"><img class="quotes-whatsapp-logo" src="{{ static_asset('img/herramientas/whatsapp.png') }}" alt="" aria-hidden="true"><span class="quotes-copy-check" aria-hidden="true">{{ icon('check') }}</span></button>
     </div>
 
     </div><!-- /quotes-scroll-body -->

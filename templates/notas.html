@@ -2,35 +2,160 @@
 {% from "_icons.html" import icon %}
 {% block title %}Excel · {{config_global.nombre_oficina}}{% endblock %}
 {% block content %}
-<div class="page">
+<div class="page notes-page">
 <header class="top clean-page-head"><h1>Excel</h1></header>
-<div class="workspace-tabs" data-tabs="workspace" role="tablist"><button class="workspace-tab active" data-tab="excelPanel">{{ icon('excel') }} Excel</button><button class="workspace-tab" data-tab="wordPanel">{{ icon('word') }} Word</button></div>
-<section class="panel workspace-panel" id="excelPanel"><div class="workspace-tabs" data-tabs="excel-books" role="tablist"><button class="workspace-tab active" data-libro-id="1">Asegurados</button><button class="workspace-tab" data-libro-id="2">Flotas</button></div><div class="workspace-head excel-head"><div><b>Excel interno</b></div><div class="excel-actions"><button class="btn-soft" id="agregarFila">+ Fila</button><button class="btn-soft" id="eliminarFila">- Fila</button><button class="btn-soft" id="agregarColumna">+ Columna</button><button class="btn-soft" id="eliminarColumna">- Columna</button><button class="btn-soft" id="limpiarFilas">Eliminar filas vacías</button><button class="btn-soft" id="limpiarColumnas">Eliminar columnas vacías</button><label class="btn-soft file-btn">Importar Excel<input id="importarExcel" type="file" accept=".xlsx,.xlsm"></label><a class="btn-primary" id="exportarExcel" href="/excel/exportar?libro_id=1">Exportar .xlsx</a></div></div><div class="excel-status" id="excelStatus">Cargando planilla...</div><div class="excel-wrap"><table class="excel-table" id="excelTable"></table></div></section>
-<section class="panel workspace-panel hidden" id="wordPanel"><div class="workspace-head"><div><b>Documento Word</b></div><div class="excel-actions"><a class="btn-primary" href="/word/exportar">Exportar .docx</a></div></div><div class="word-status" id="wordStatus">Cargando documento...</div><textarea class="word-editor" id="editorWord" placeholder="Escribí aquí el contenido del documento..."></textarea></section>
+
+<div class="workspace-tabs" data-tabs="workspace" role="tablist">
+  <button class="workspace-tab active" data-tab="excelPanel">{{ icon('excel') }} Excel</button>
+  <button class="workspace-tab" data-tab="wordPanel">{{ icon('word') }} Word</button>
+</div>
+
+<section class="panel workspace-panel" id="excelPanel">
+  <div class="workspace-tabs" data-tabs="excel-books" role="tablist">
+    <button class="workspace-tab active" data-libro-id="1">Asegurados</button>
+    <button class="workspace-tab" data-libro-id="2">Flotas</button>
+  </div>
+
+  <div class="workspace-head excel-head">
+    <div><b>Excel interno</b></div>
+    <div class="excel-actions">
+      <!-- Herramientas históricas: se conservan en DOM/lógica por compatibilidad, pero dejan de ocupar la UI. -->
+      <div class="excel-legacy-tools" hidden aria-hidden="true">
+        <button class="btn-soft" id="agregarFila" type="button">+ Fila</button>
+        <button class="btn-soft" id="eliminarFila" type="button">- Fila</button>
+        <button class="btn-soft" id="agregarColumna" type="button">+ Columna</button>
+        <button class="btn-soft" id="eliminarColumna" type="button">- Columna</button>
+        <button class="btn-soft" id="limpiarFilas" type="button">Eliminar filas vacías</button>
+        <button class="btn-soft" id="limpiarColumnas" type="button">Eliminar columnas vacías</button>
+      </div>
+
+      <label class="btn-soft file-btn">Importar Excel<input id="importarExcel" type="file" accept=".xlsx,.xlsm"></label>
+
+      <div class="export-menu" id="excelExportMenu">
+        <button class="btn-primary export-trigger" id="exportarExcel" type="button" aria-haspopup="menu" aria-expanded="false">
+          {{ icon('download') }}<span>Exportar</span><span class="export-caret" aria-hidden="true">⌄</span>
+        </button>
+        <div class="export-popover" id="excelExportPopover" role="menu" hidden>
+          <a role="menuitem" id="exportExcelXlsx" href="/excel/exportar?libro_id=1&formato=xlsx">{{ icon('excel') }}<span><b>Excel</b><small>.xlsx</small></span></a>
+          <a role="menuitem" id="exportExcelCsv" href="/excel/exportar?libro_id=1&formato=csv">{{ icon('csv') }}<span><b>CSV</b><small>.csv</small></span></a>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="excel-status" id="excelStatus">Cargando planilla...</div>
+  <div class="excel-wrap"><table class="excel-table" id="excelTable"></table></div>
+</section>
+
+<section class="panel workspace-panel hidden word-workspace" id="wordPanel">
+  <div class="workspace-head word-head">
+    <div>
+      <b>Documento Word</b>
+      <small>Editor interno con formato enriquecido.</small>
+    </div>
+    <div class="excel-actions"><a class="btn-primary" href="/word/exportar">{{ icon('download') }} Exportar .docx</a></div>
+  </div>
+
+  <div class="word-toolbar" id="wordToolbar" role="toolbar" aria-label="Formato del documento">
+    <div class="word-toolbar-group word-toolbar-selects">
+      <select id="wordBlock" title="Estilo de párrafo" aria-label="Estilo de párrafo">
+        <option value="p">Normal</option>
+        <option value="h1">Título 1</option>
+        <option value="h2">Título 2</option>
+        <option value="h3">Título 3</option>
+      </select>
+      <select id="wordFont" title="Fuente" aria-label="Fuente">
+        <option value="Arial">Arial</option>
+        <option value="Calibri" selected>Calibri</option>
+        <option value="Georgia">Georgia</option>
+        <option value="Times New Roman">Times New Roman</option>
+        <option value="Verdana">Verdana</option>
+      </select>
+      <select id="wordSize" title="Tamaño" aria-label="Tamaño de fuente">
+        <option value="2">10</option>
+        <option value="3" selected>12</option>
+        <option value="4">14</option>
+        <option value="5">18</option>
+        <option value="6">24</option>
+        <option value="7">36</option>
+      </select>
+    </div>
+
+    <div class="word-toolbar-group">
+      <button type="button" data-cmd="bold" title="Negrita"><b>B</b></button>
+      <button type="button" data-cmd="italic" title="Cursiva"><i>I</i></button>
+      <button type="button" data-cmd="underline" title="Subrayado"><u>U</u></button>
+      <button type="button" data-cmd="strikeThrough" title="Tachado"><s>S</s></button>
+    </div>
+
+    <div class="word-toolbar-group color-controls">
+      <label title="Color de texto" aria-label="Color de texto"><span>A</span><input id="wordColor" type="color" value="#111827"></label>
+      <label title="Resaltado" aria-label="Color de resaltado"><span class="marker-sample">A</span><input id="wordHighlight" type="color" value="#fff59d"></label>
+    </div>
+
+    <div class="word-toolbar-group">
+      <button type="button" data-cmd="justifyLeft" title="Alinear a la izquierda">≡</button>
+      <button type="button" data-cmd="justifyCenter" title="Centrar">≡</button>
+      <button type="button" data-cmd="justifyRight" title="Alinear a la derecha">≡</button>
+      <button type="button" data-cmd="justifyFull" title="Justificar">≡</button>
+    </div>
+
+    <div class="word-toolbar-group">
+      <button type="button" data-cmd="insertUnorderedList" title="Viñetas">• Lista</button>
+      <button type="button" data-cmd="insertOrderedList" title="Numeración">1. Lista</button>
+      <button type="button" data-cmd="outdent" title="Reducir sangría">←</button>
+      <button type="button" data-cmd="indent" title="Aumentar sangría">→</button>
+    </div>
+
+    <div class="word-toolbar-group">
+      <button type="button" id="wordLink" title="Insertar enlace">{{ icon('link') }}</button>
+      <button type="button" data-cmd="unlink" title="Quitar enlace">× link</button>
+      <button type="button" data-cmd="removeFormat" title="Quitar formato">Limpiar</button>
+    </div>
+
+    <div class="word-toolbar-group">
+      <button type="button" data-cmd="undo" title="Deshacer">↶</button>
+      <button type="button" data-cmd="redo" title="Rehacer">↷</button>
+    </div>
+  </div>
+
+  <div class="word-status" id="wordStatus">Cargando documento...</div>
+  <div class="word-paper-wrap">
+    <div class="word-paper">
+      <div class="word-editor" id="editorWord" contenteditable="true" spellcheck="true" role="textbox" aria-multiline="true" data-placeholder="Escribí aquí el contenido del documento..."></div>
+    </div>
+  </div>
+</section>
 </div>
 {% endblock %}
-{% block head %}<style>
-.workspace-tabs{display:flex;gap:6px;margin-bottom:12px;padding:5px;background:#eef2f4;border-radius:12px;width:max-content}.workspace-tab{border:0;background:transparent;padding:9px 15px;border-radius:9px;color:#667383;font-size:calc(10px * var(--font-scale,1));font-weight:700;cursor:pointer}.workspace-tab.active{background:#fff;color:var(--navy);box-shadow:0 2px 8px #12203310}.workspace-panel.hidden{display:none}.workspace-head{padding-bottom:14px;border-bottom:1px solid var(--line);display:flex;align-items:center;justify-content:space-between;gap:15px}.workspace-head b,.workspace-head small{display:block}.workspace-head b{font-size:calc(11px * var(--font-scale,1))}.workspace-head small{margin-top:3px;color:var(--soft);font-size:calc(8px * var(--font-scale,1))}.excel-actions{display:flex;gap:6px;align-items:center;flex-wrap:wrap;justify-content:flex-end}.btn-soft,.btn-primary{border-radius:8px;padding:8px 10px;font-size:calc(9px * var(--font-scale,1));font-weight:700;cursor:pointer;text-decoration:none}.btn-soft{border:1px solid var(--line);background:#fff;color:#526071}.btn-soft:hover{background:#f7f9fb}.btn-primary{border:0;background:var(--teal);color:#fff}.file-btn{position:relative;overflow:hidden}.file-btn input{position:absolute;inset:0;opacity:0;cursor:pointer}.excel-status,.word-status{font-size:calc(8px * var(--font-scale,1));color:var(--soft);padding:9px 0}.excel-wrap{border:1px solid var(--line);border-radius:11px;overflow:auto;max-height:570px;background:#fff}.excel-table{border-collapse:separate;border-spacing:0;width:100%;min-width:720px;font-size:calc(10px * var(--font-scale,1))}.excel-table th,.excel-table td{border-right:1px solid var(--line);border-bottom:1px solid var(--line);padding:0;min-width:120px;height:36px}.excel-table th{cursor:pointer;background:#f4f7f8;color:#536171;font-size:calc(8px * var(--font-scale,1));font-weight:800;position:sticky;top:0;z-index:2}.excel-table th:first-child{min-width:42px;width:42px}.excel-table td:first-child{background:#f8fafb;text-align:center;color:#9aa5b0;font-size:calc(8px * var(--font-scale,1));min-width:42px;width:42px}.excel-cell{width:100%;height:35px;border:0;outline:0;background:transparent;padding:7px 9px;color:var(--ink);font-size:calc(10px * var(--font-scale,1))}.excel-table th.excel-selected,.excel-table td.excel-selected{background:#dff3ee;color:var(--navy);font-weight:800}.excel-cell:focus{background:#eef9f6;box-shadow:inset 0 0 0 1px #8bcfc3}.excel-status.ok,.word-status.ok{color:var(--teal)}.excel-status.error,.word-status.error{color:#b44d4d}.excel-hint{margin-top:9px;color:var(--soft);font-size:calc(8px * var(--font-scale,1))}.word-editor{width:100%;min-height:520px;margin-top:14px;border:1px solid var(--line);border-radius:11px;padding:18px;font:14px/1.65 Inter,sans-serif;color:var(--ink);resize:vertical;outline:0}.word-editor:focus{box-shadow:inset 0 0 0 1px #8bcfc3}@media(max-width:800px){.excel-head{align-items:flex-start;flex-direction:column}.excel-actions{justify-content:flex-start}.workspace-tabs{width:100%}.workspace-tab{flex:1}}
-html[data-theme="dark"] .workspace-tabs{background:#1e2834}
-html[data-theme="dark"] .workspace-tab{color:var(--muted)}
-html[data-theme="dark"] .workspace-tab.active{background:var(--surface,#1a222d);color:var(--navy)}
-html[data-theme="dark"] .btn-soft{background:var(--surface,#1a222d);color:var(--muted);border-color:var(--line)}
-html[data-theme="dark"] .excel-wrap{background:var(--surface,#1a222d)}
-html[data-theme="dark"] .excel-table th{background:#1e2834;color:var(--muted)}
-html[data-theme="dark"] .excel-table td:first-child{background:#151b23;color:var(--soft)}
-html[data-theme="dark"] .excel-table th.excel-selected,html[data-theme="dark"] .excel-table td.excel-selected{background:var(--tealbg,#134e4a);color:var(--teal)}
-html[data-theme="dark"] .excel-cell:focus{background:rgba(45,212,191,.08)}
-html[data-theme="dark"] .word-editor{background:var(--surface-3,#121820);color:var(--ink)}
-</style>{% endblock %}
-{% block scripts %}<script>
+
+{% block head %}
+<style>
+.workspace-tabs{display:flex;gap:6px;margin-bottom:12px;padding:5px;background:#eef2f4;border-radius:12px;width:max-content}.workspace-tab{border:0;background:transparent;padding:9px 15px;border-radius:9px;color:#667383;font-size:calc(10px * var(--font-scale,1));font-weight:700;cursor:pointer}.workspace-tab.active{background:#fff;color:var(--navy);box-shadow:0 2px 8px #12203310}.workspace-panel.hidden{display:none}.workspace-head{padding-bottom:14px;border-bottom:1px solid var(--line);display:flex;align-items:center;justify-content:space-between;gap:15px}.workspace-head b,.workspace-head small{display:block}.workspace-head b{font-size:calc(11px * var(--font-scale,1))}.workspace-head small{margin-top:3px;color:var(--soft);font-size:calc(8px * var(--font-scale,1))}.excel-actions{display:flex;gap:8px;align-items:center;flex-wrap:wrap;justify-content:flex-end}.btn-soft,.btn-primary{border-radius:8px;padding:8px 10px;font-size:calc(9px * var(--font-scale,1));font-weight:700;cursor:pointer;text-decoration:none}.btn-soft{border:1px solid var(--line);background:#fff;color:#526071}.btn-soft:hover{background:#f7f9fb}.btn-primary{border:0;background:var(--teal);color:#fff;display:inline-flex;align-items:center;gap:7px}.file-btn{position:relative;overflow:hidden}.file-btn input{position:absolute;inset:0;opacity:0;cursor:pointer}.excel-status,.word-status{font-size:calc(8px * var(--font-scale,1));color:var(--soft);padding:9px 0}.excel-wrap{border:1px solid var(--line);border-radius:11px;overflow:auto;max-height:570px;background:#fff}.excel-table{border-collapse:separate;border-spacing:0;width:100%;min-width:720px;font-size:calc(10px * var(--font-scale,1))}.excel-table th,.excel-table td{border-right:1px solid var(--line);border-bottom:1px solid var(--line);padding:0;min-width:120px;height:36px}.excel-table th{cursor:pointer;background:#f4f7f8;color:#536171;font-size:calc(8px * var(--font-scale,1));font-weight:800;position:sticky;top:0;z-index:2}.excel-table th:first-child{min-width:42px;width:42px}.excel-table td:first-child{background:#f8fafb;text-align:center;color:#9aa5b0;font-size:calc(8px * var(--font-scale,1));min-width:42px;width:42px}.excel-cell{width:100%;height:35px;border:0;outline:0;background:transparent;padding:7px 9px;color:var(--ink);font-size:calc(10px * var(--font-scale,1))}.excel-table th.excel-selected,.excel-table td.excel-selected{background:#dff3ee;color:var(--navy);font-weight:800}.excel-cell:focus{background:#eef9f6;box-shadow:inset 0 0 0 1px #8bcfc3}.excel-status.ok,.word-status.ok{color:var(--teal)}.excel-status.error,.word-status.error{color:#b44d4d}.excel-hint{margin-top:9px;color:var(--soft);font-size:calc(8px * var(--font-scale,1))}
+
+.export-menu{position:relative}.export-trigger{white-space:nowrap}.export-caret{font-size:14px;line-height:1}.export-popover{position:absolute;right:0;top:calc(100% + 7px);z-index:20;min-width:180px;padding:6px;border:1px solid var(--line);border-radius:12px;background:var(--surface,#fff);box-shadow:0 12px 30px rgba(18,32,51,.14)}.export-popover a{display:flex;align-items:center;gap:10px;padding:9px 10px;border-radius:8px;color:var(--ink);text-decoration:none}.export-popover a:hover{background:var(--surface-2,#f4f7f8)}.export-popover .app-icon{width:21px;height:21px}.export-popover span{display:flex;align-items:baseline;gap:6px}.export-popover b{font-size:13px}.export-popover small{font-size:11.5px;color:var(--soft)}
+
+.word-workspace{overflow:visible}.word-head{align-items:center}.word-toolbar{margin-top:14px;padding:8px;display:flex;flex-wrap:wrap;gap:7px;border:1px solid var(--line);border-radius:12px;background:var(--surface-2,#f6f8fa)}.word-toolbar-group{display:flex;align-items:center;gap:4px;padding-right:7px;margin-right:1px;border-right:1px solid var(--line)}.word-toolbar-group:last-child{border-right:0;padding-right:0}.word-toolbar button,.word-toolbar select,.word-toolbar label{min-height:34px;height:34px;border:1px solid transparent;border-radius:8px;background:transparent;color:var(--ink);display:inline-flex;align-items:center;justify-content:center;font-size:13px;font-weight:650}.word-toolbar button{padding:0 9px;cursor:pointer}.word-toolbar button:hover,.word-toolbar label:hover{background:var(--surface,#fff);border-color:var(--line)}.word-toolbar select{padding:0 27px 0 8px;background:var(--surface,#fff);border-color:var(--line);cursor:pointer}.word-toolbar-selects #wordFont{min-width:128px}.word-toolbar-selects #wordBlock{min-width:105px}.word-toolbar-selects #wordSize{width:68px}.color-controls label{position:relative;width:36px;cursor:pointer}.color-controls input{position:absolute;inset:auto 4px 3px 4px;width:28px;height:5px;opacity:.95;border:0;padding:0;cursor:pointer}.marker-sample{background:#fff59d;padding:0 2px;border-radius:2px}.word-toolbar .app-icon{width:18px;height:18px}.word-paper-wrap{padding:18px 0 4px;overflow:auto;background:transparent}.word-paper{width:min(794px,100%);min-height:900px;margin:0 auto;padding:72px 74px;background:#fff;border:1px solid var(--line);border-radius:4px;box-shadow:0 7px 24px rgba(18,32,51,.08)}.word-editor{min-height:756px;outline:0;color:#111827;font-family:Calibri,Arial,sans-serif;font-size:12pt;line-height:1.5;white-space:normal}.word-editor:empty:before{content:attr(data-placeholder);color:#98a2ad;pointer-events:none}.word-editor p{margin:0 0 .75em}.word-editor h1,.word-editor h2,.word-editor h3{margin:.35em 0 .55em}.word-editor ul,.word-editor ol{padding-left:1.6em}.word-editor a{color:#1675a4;text-decoration:underline}
+
+@media(max-width:800px){.excel-head,.word-head{align-items:flex-start;flex-direction:column}.excel-actions{justify-content:flex-start}.workspace-tabs{width:100%}.workspace-tab{flex:1}.word-toolbar{overflow-x:auto;flex-wrap:nowrap}.word-toolbar-group{flex:0 0 auto}.word-paper{min-width:680px}}
+html[data-theme="dark"] .workspace-tabs{background:#1e2834}html[data-theme="dark"] .workspace-tab{color:var(--muted)}html[data-theme="dark"] .workspace-tab.active{background:var(--surface,#1a222d);color:var(--navy)}html[data-theme="dark"] .btn-soft{background:var(--surface,#1a222d);color:var(--muted);border-color:var(--line)}html[data-theme="dark"] .excel-wrap{background:var(--surface,#1a222d)}html[data-theme="dark"] .excel-table th{background:#1e2834;color:var(--muted)}html[data-theme="dark"] .excel-table td:first-child{background:#151b23;color:var(--soft)}html[data-theme="dark"] .excel-table th.excel-selected,html[data-theme="dark"] .excel-table td.excel-selected{background:var(--tealbg,#134e4a);color:var(--teal)}html[data-theme="dark"] .excel-cell:focus{background:rgba(45,212,191,.08)}html[data-theme="dark"] .export-popover{background:var(--surface,#1a222d)}html[data-theme="dark"] .export-popover a:hover{background:var(--surface-2,#202a36)}html[data-theme="dark"] .word-toolbar{background:var(--surface-2,#111820)}html[data-theme="dark"] .word-toolbar button,html[data-theme="dark"] .word-toolbar select,html[data-theme="dark"] .word-toolbar label{color:var(--ink)}html[data-theme="dark"] .word-toolbar button:hover,html[data-theme="dark"] .word-toolbar label:hover,html[data-theme="dark"] .word-toolbar select{background:var(--surface,#1a222d)}html[data-theme="dark"] .word-paper-wrap{background:transparent}html[data-theme="dark"] .word-paper{background:#fff;border-color:#33404d}
+</style>
+{% endblock %}
+
+{% block scripts %}
+<script>
 let excelData=[],excelCols=1,excelSaveTimer=null,excelHoja='Datos',excelLibroId='1';
 let selectedExcelRow=null,selectedExcelCol=null;
 const table=document.getElementById('excelTable'),excelStatus=document.getElementById('excelStatus');
 function setExcelStatus(t,type=''){excelStatus.textContent=t;excelStatus.className='excel-status '+type}
 function asegurarFormaExcel(){excelCols=Math.max(1,Math.min(excelCols,30));excelData=excelData.map(f=>{const r=Array.isArray(f)?f.slice(0,excelCols):[];while(r.length<excelCols)r.push('');return r});}
+function actualizarLinksExportacion(){
+  const id=encodeURIComponent(excelLibroId);
+  document.getElementById('exportExcelXlsx').href=`/excel/exportar?libro_id=${id}&formato=xlsx`;
+  document.getElementById('exportExcelCsv').href=`/excel/exportar?libro_id=${id}&formato=csv`;
+}
 async function cargarExcel(libroId=excelLibroId){
- excelLibroId=String(libroId||'1');
- document.getElementById('exportarExcel').href=`/excel/exportar?libro_id=${encodeURIComponent(excelLibroId)}`;
+ excelLibroId=String(libroId||'1');actualizarLinksExportacion();
  excelData=[];excelCols=1;excelHoja='Datos';selectedExcelRow=null;selectedExcelCol=null;
  setExcelStatus('Cargando planilla...');
  try{
@@ -74,22 +199,53 @@ async function guardarExcelAhora(reemplazarEstado=false){
   setExcelStatus('Guardado','ok')
  }catch(e){setExcelStatus('Error al guardar','error')}
 }
-document.getElementById('agregarFila').onclick=()=>{asegurarFormaExcel();excelData.push(Array(excelCols).fill(''));selectedExcelRow=excelData.length-1;selectedExcelCol=null;renderExcel();guardarExcelAhora()};
-document.getElementById('eliminarFila').onclick=()=>{if(excelData.length<=1){setExcelStatus('No hay filas para eliminar','error');return}let r=selectedExcelRow;if(r===null||r<1||r>=excelData.length)r=excelData.length-1;excelData.splice(r,1);selectedExcelRow=null;renderExcel();guardarExcelAhora()};
-document.getElementById('agregarColumna').onclick=()=>{if(excelCols>=30){setExcelStatus('Límite de 30 columnas','error');return}excelCols++;excelData.forEach(r=>r.push(''));selectedExcelCol=excelCols-1;selectedExcelRow=null;renderExcel();guardarExcelAhora()};
-document.getElementById('eliminarColumna').onclick=()=>{if(excelCols<=1){setExcelStatus('Debe quedar al menos una columna','error');return}let c=selectedExcelCol;if(c===null||c<0||c>=excelCols)c=excelCols-1;excelData.forEach(r=>r.splice(c,1));excelCols--;selectedExcelCol=null;renderExcel();guardarExcelAhora()};
-document.getElementById('limpiarFilas').onclick=async()=>{try{const r=await fetch(`/api/excel/limpiar?libro_id=${encodeURIComponent(excelLibroId)}`,{method:'POST'}),d=await r.json();if(!d.ok)throw Error();excelData=d.filas||[];excelCols=d.columnas||1;selectedExcelRow=selectedExcelCol=null;asegurarFormaExcel();renderExcel();setExcelStatus('Filas vacías eliminadas','ok')}catch(e){setExcelStatus('No se pudieron eliminar','error')}};
-document.getElementById('limpiarColumnas').onclick=async()=>{try{const r=await fetch(`/api/excel/limpiar-columnas?libro_id=${encodeURIComponent(excelLibroId)}`,{method:'POST'}),d=await r.json();if(!d.ok)throw Error();excelData=d.filas||[];excelCols=d.columnas||1;selectedExcelRow=selectedExcelCol=null;asegurarFormaExcel();renderExcel();setExcelStatus('Columnas vacías eliminadas','ok')}catch(e){setExcelStatus('No se pudieron eliminar las columnas','error')}};
+function bindIf(id,handler){const el=document.getElementById(id);if(el)el.onclick=handler}
+bindIf('agregarFila',()=>{asegurarFormaExcel();excelData.push(Array(excelCols).fill(''));selectedExcelRow=excelData.length-1;selectedExcelCol=null;renderExcel();guardarExcelAhora()});
+bindIf('eliminarFila',()=>{if(excelData.length<=1){setExcelStatus('No hay filas para eliminar','error');return}let r=selectedExcelRow;if(r===null||r<1||r>=excelData.length)r=excelData.length-1;excelData.splice(r,1);selectedExcelRow=null;renderExcel();guardarExcelAhora()});
+bindIf('agregarColumna',()=>{if(excelCols>=30){setExcelStatus('Límite de 30 columnas','error');return}excelCols++;excelData.forEach(r=>r.push(''));selectedExcelCol=excelCols-1;selectedExcelRow=null;renderExcel();guardarExcelAhora()});
+bindIf('eliminarColumna',()=>{if(excelCols<=1){setExcelStatus('Debe quedar al menos una columna','error');return}let c=selectedExcelCol;if(c===null||c<0||c>=excelCols)c=excelCols-1;excelData.forEach(r=>r.splice(c,1));excelCols--;selectedExcelCol=null;renderExcel();guardarExcelAhora()});
+bindIf('limpiarFilas',async()=>{try{const r=await fetch(`/api/excel/limpiar?libro_id=${encodeURIComponent(excelLibroId)}`,{method:'POST'}),d=await r.json();if(!d.ok)throw Error();excelData=d.filas||[];excelCols=d.columnas||1;selectedExcelRow=selectedExcelCol=null;asegurarFormaExcel();renderExcel();setExcelStatus('Filas vacías eliminadas','ok')}catch(e){setExcelStatus('No se pudieron eliminar','error')}});
+bindIf('limpiarColumnas',async()=>{try{const r=await fetch(`/api/excel/limpiar-columnas?libro_id=${encodeURIComponent(excelLibroId)}`,{method:'POST'}),d=await r.json();if(!d.ok)throw Error();excelData=d.filas||[];excelCols=d.columnas||1;selectedExcelRow=selectedExcelCol=null;asegurarFormaExcel();renderExcel();setExcelStatus('Columnas vacías eliminadas','ok')}catch(e){setExcelStatus('No se pudieron eliminar las columnas','error')}});
 document.getElementById('importarExcel').onchange=async e=>{const file=e.target.files[0];if(!file)return;const fd=new FormData();fd.append('archivo',file);fd.append('libro_id',excelLibroId);setExcelStatus('Importando...');try{const r=await fetch('/api/excel/importar',{method:'POST',body:fd}),d=await r.json();if(!d.ok)throw Error(d.error||'Error');excelData=d.filas||[];excelCols=d.columnas||1;excelHoja=d.hoja||'Datos';asegurarFormaExcel();selectedExcelRow=selectedExcelCol=null;renderExcel();window.excelLoaded=true;setExcelStatus('Excel importado correctamente','ok')}catch(e){setExcelStatus(e.message||'No se pudo importar','error')}e.target.value=''};
 
+// Un único botón de exportación abre las dos variantes disponibles.
+const exportTrigger=document.getElementById('exportarExcel'),exportPopover=document.getElementById('excelExportPopover');
+function cerrarExport(){exportPopover.hidden=true;exportTrigger.setAttribute('aria-expanded','false')}
+exportTrigger.addEventListener('click',e=>{e.stopPropagation();const abrir=exportPopover.hidden;exportPopover.hidden=!abrir;exportTrigger.setAttribute('aria-expanded',abrir?'true':'false')});
+exportPopover.addEventListener('click',()=>cerrarExport());document.addEventListener('click',e=>{if(!document.getElementById('excelExportMenu').contains(e.target))cerrarExport()});
+
+// WORD: editor enriquecido local, manteniendo el mismo endpoint de persistencia.
 let wordSaveTimer=null;const wordEditor=document.getElementById('editorWord'),wordStatus=document.getElementById('wordStatus');
-async function cargarWord(){try{const r=await fetch('/api/word'),d=await r.json();if(!d.ok)throw Error();wordEditor.value=d.contenido||'';wordStatus.textContent='Documento listo';wordStatus.className='word-status ok'}catch(e){wordStatus.textContent='No se pudo cargar el documento';wordStatus.className='word-status error'}}
-wordEditor.addEventListener('input',()=>{clearTimeout(wordSaveTimer);wordStatus.textContent='Guardando...';wordSaveTimer=setTimeout(async()=>{try{const r=await fetch('/api/word',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({contenido:wordEditor.value})}),d=await r.json();if(!d.ok)throw Error();wordStatus.textContent='Guardado';wordStatus.className='word-status ok'}catch(e){wordStatus.textContent='Error al guardar';wordStatus.className='word-status error'}},700)});
+async function cargarWord(){try{const r=await fetch('/api/word'),d=await r.json();if(!d.ok)throw Error();wordEditor.innerHTML=d.contenido||'<p><br></p>';wordStatus.textContent='Documento listo';wordStatus.className='word-status ok'}catch(e){wordStatus.textContent='No se pudo cargar el documento';wordStatus.className='word-status error'}}
+function guardarWordProgramado(){clearTimeout(wordSaveTimer);wordStatus.textContent='Guardando...';wordStatus.className='word-status';wordSaveTimer=setTimeout(async()=>{try{const r=await fetch('/api/word',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({contenido:wordEditor.innerHTML})}),d=await r.json();if(!d.ok)throw Error();wordStatus.textContent='Guardado';wordStatus.className='word-status ok'}catch(e){wordStatus.textContent='Error al guardar';wordStatus.className='word-status error'}},600)}
+wordEditor.addEventListener('input',guardarWordProgramado);
+function execWord(cmd,value=null){wordEditor.focus();document.execCommand(cmd,false,value);guardarWordProgramado()}
+document.querySelectorAll('#wordToolbar [data-cmd]').forEach(btn=>btn.addEventListener('click',()=>execWord(btn.dataset.cmd)));
+document.getElementById('wordBlock').addEventListener('change',e=>execWord('formatBlock',e.target.value));
+document.getElementById('wordFont').addEventListener('change',e=>execWord('fontName',e.target.value));
+document.getElementById('wordSize').addEventListener('change',e=>execWord('fontSize',e.target.value));
+document.getElementById('wordColor').addEventListener('input',e=>execWord('foreColor',e.target.value));
+document.getElementById('wordHighlight').addEventListener('input',e=>execWord('hiliteColor',e.target.value));
+document.getElementById('wordLink').addEventListener('click',()=>{const href=prompt('Pegá el enlace');if(href)execWord('createLink',href)});
+
+// Los cuatro botones de alineación comparten glifo deliberadamente; el title comunica la acción.
+const alignBtns=[...document.querySelectorAll('#wordToolbar [data-cmd^="justify"]')];
+if(alignBtns[0])alignBtns[0].textContent='≡';
+if(alignBtns[1])alignBtns[1].innerHTML='<span style="display:block;text-align:center;width:18px">≡</span>';
+if(alignBtns[2])alignBtns[2].innerHTML='<span style="display:block;text-align:right;width:18px">≡</span>';
+if(alignBtns[3])alignBtns[3].textContent='☰';
+
 document.querySelectorAll('.workspace-tabs[data-tabs="excel-books"] .workspace-tab').forEach(btn=>btn.onclick=async()=>{
  document.querySelectorAll('.workspace-tabs[data-tabs="excel-books"] .workspace-tab').forEach(b=>b.classList.remove('active'));
- btn.classList.add('active');
- await cargarExcel(btn.dataset.libroId);
+ btn.classList.add('active');await cargarExcel(btn.dataset.libroId);
 });
-document.querySelectorAll('.workspace-tabs[data-tabs="workspace"] .workspace-tab').forEach(btn=>btn.onclick=()=>{document.querySelectorAll('.workspace-tab').forEach(b=>b.classList.remove('active'));document.querySelectorAll('.workspace-panel').forEach(p=>p.classList.add('hidden'));btn.classList.add('active');document.getElementById(btn.dataset.tab).classList.remove('hidden');if(btn.dataset.tab==='excelPanel'&&!window.excelLoaded)cargarExcel();if(btn.dataset.tab==='wordPanel'&&!window.wordLoaded){cargarWord();window.wordLoaded=true}});
+document.querySelectorAll('.workspace-tabs[data-tabs="workspace"] .workspace-tab').forEach(btn=>btn.onclick=()=>{
+ document.querySelectorAll('.workspace-tabs[data-tabs="workspace"] .workspace-tab').forEach(b=>b.classList.remove('active'));
+ document.querySelectorAll('.workspace-panel').forEach(p=>p.classList.add('hidden'));
+ btn.classList.add('active');document.getElementById(btn.dataset.tab).classList.remove('hidden');
+ if(btn.dataset.tab==='excelPanel'&&!window.excelLoaded)cargarExcel();
+ if(btn.dataset.tab==='wordPanel'&&!window.wordLoaded){cargarWord();window.wordLoaded=true}
+});
 cargarExcel('1');
-</script>{% endblock %}
+</script>
+{% endblock %}

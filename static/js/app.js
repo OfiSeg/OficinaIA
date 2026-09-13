@@ -329,18 +329,17 @@ function agregarMensajeUsuarioHistorico(texto,metadata={}){
   r.appendChild(b);c.appendChild(r);limpiarMetadataVisualMensajes(r);return r;
 }
 
-function htmlWelcomeChat(variant){
-  const sub = variant==='vacio'
-    ? 'Elegí un acceso directo o escribí tu consulta abajo.'
-    : 'Accesos directos para las operaciones que más usás.';
-  const shortcut=(action,icon,title,subtitle)=>`<button type="button" class="workflow-card workflow-shortcut" data-chat-action="${action}">
+function htmlWelcomeChat(_variant){
+  const tpl=document.getElementById('chatWelcomeTemplate');
+  if(tpl&&typeof tpl.innerHTML==='string'&&tpl.innerHTML.trim())return tpl.innerHTML.trim();
+  const shortcut=(action,icon,title,subtitle)=>`<button type="button" class="workflow-card workflow-shortcut" data-shortcut-key="action:${action}" data-chat-action="${action}">
     <span class="workflow-shortcut-icon" aria-hidden="true">${oiaIconHtml(icon)}</span>
     <span class="workflow-shortcut-copy"><b>${title}</b><small>${subtitle}</small></span>
   </button>`;
   return `<div id="chatWelcome" class="welcome">
-  <strong class="welcome-icon">${oiaIconHtml('chat-spark')}</strong>
+  <strong class="sofia-welcome-logo" aria-hidden="true"><img class="sofia-logo-img" src="/static/img/favicon.png" alt=""></strong>
   <h2>¿Qué necesitás resolver?</h2>
-  <p>${sub}</p>
+  <p>Accesos directos para las operaciones que más usás.</p>
   <div class="workflow-grid" id="workflowGrid">
     ${shortcut('patente','patente','Patente','Consultar vehículo')}
     ${shortcut('cedula','cedula','Cédula','Adjuntá la cédula')}
@@ -351,13 +350,16 @@ function htmlWelcomeChat(variant){
 }
 function wireWelcomeWorkflows(root){
   const grid=(root||document).querySelector('#workflowGrid');
-  if(!grid||grid.dataset.wired)return;
-  grid.dataset.wired='1';
-  grid.addEventListener('click',e=>{
-    const card=e.target.closest('.workflow-card[data-chat-action]');
-    if(!card)return;
-    ejecutarAccionRapidaChat(card.dataset.chatAction);
-  });
+  if(!grid)return;
+  if(!grid.dataset.wired){
+    grid.dataset.wired='1';
+    grid.addEventListener('click',e=>{
+      const card=e.target.closest('.workflow-card[data-shortcut-key]');
+      if(!card||card.classList.contains('is-dragging'))return;
+      if(card.dataset.chatAction){ejecutarAccionRapidaChat(card.dataset.chatAction);return}
+      if(card.dataset.shortcutUrl){window.open(card.dataset.shortcutUrl,'_blank','noopener,noreferrer')}
+    });
+  }
 }
 
 function usarSugerencia(t){const i=document.getElementById('mensaje');if(i){i.value=t;size();i.focus()}}
@@ -2121,8 +2123,79 @@ let atmRecalculoTimer=null;
 let quoteSources=[];
 let mercantilFuente=null;
 let federacionQuoteSources=[];
+let genericQuoteSources=[];
 let manualQuoteSources=[];
 let quoteSourceSeq=1;
+let quoteVisualSeq=1;
+const quoteVisualOrder=new Map();
+
+function normalizarClaveMarca(valor){
+  return String(valor||'').normalize('NFD').replace(/[\u0300-\u036f]/g,'').toLowerCase().replace(/[^a-z0-9]+/g,' ').trim();
+}
+function iconoMarcaSrc(item){
+  const source=String(item?.icon_url||item?.url||'').trim();
+  if(!source)return '';
+  if(source.startsWith('/static/')||source.startsWith('data:')||/\.(?:png|jpe?g|webp|gif|svg|ico)(?:[?#].*)?$/i.test(source))return source;
+  if(/^https?:\/\//i.test(source))return 'https://www.google.com/s2/favicons?sz=64&domain_url='+encodeURIComponent(source);
+  return '';
+}
+function marcaCompaniaPara(nombre){
+  const target=normalizarClaveMarca(nombre);if(!target)return null;
+  const brands=Array.isArray(window.OIA_COMPANY_BRANDS)?window.OIA_COMPANY_BRANDS:[];
+  let parcial=null;
+  for(const item of brands){
+    if(!item||typeof item!=='object')continue;
+    const nombres=[item.nombre,...(Array.isArray(item.aliases)?item.aliases:[])].map(normalizarClaveMarca).filter(Boolean);
+    if(nombres.includes(target))return item;
+    if(!parcial&&nombres.some(x=>x.length>=3&&(target.includes(x)||x.includes(target))))parcial=item;
+  }
+  return parcial;
+}
+function rgbaMarca(hex,alpha){
+  const m=String(hex||'').trim().match(/^#([0-9a-f]{6})$/i);if(!m)return '';
+  const n=parseInt(m[1],16),r=(n>>16)&255,g=(n>>8)&255,b=n&255;
+  return `rgba(${r}, ${g}, ${b}, ${alpha})`;
+}
+function marcarFuenteVisualReciente(id){
+  const key=String(id||'').trim();if(!key)return 0;
+  const n=quoteVisualSeq++;quoteVisualOrder.set(key,n);return n;
+}
+function quitarOrdenVisualFuente(id){quoteVisualOrder.delete(String(id||''));}
+function prepararCabeceraMarcaCotizacion(section,compania){
+  const head=section?.querySelector('.quote-source-head');if(!head)return;
+  let info=head.firstElementChild;if(!info||info.classList.contains('quote-source-remove'))return;
+  if(!info.classList.contains('quote-source-company-info')){
+    const copy=document.createElement('span');copy.className='quote-source-company-copy';
+    while(info.firstChild)copy.appendChild(info.firstChild);
+    const mark=document.createElement('span');mark.className='quote-source-brand-mark';mark.setAttribute('aria-hidden','true');
+    info.classList.add('quote-source-company-info');info.append(mark,copy);
+  }
+  const mark=info.querySelector('.quote-source-brand-mark');if(!mark)return;
+  const brand=marcaCompaniaPara(compania),src=iconoMarcaSrc(brand);
+  mark.innerHTML='';
+  if(src){const img=document.createElement('img');img.src=src;img.alt='';img.loading='lazy';mark.appendChild(img);section.classList.add('quote-source-identified');}
+  else{mark.innerHTML=typeof oiaIconHtml==='function'?oiaIconHtml('company'):'';section.classList.remove('quote-source-identified');}
+  const color=String(brand?.color||'').trim();
+  if(/^#[0-9a-f]{6}$/i.test(color)){
+    section.classList.add('quote-source-branded');
+    section.style.setProperty('--quote-brand',color);
+    section.style.setProperty('--quote-brand-soft',rgbaMarca(color,.075));
+    section.style.setProperty('--quote-brand-line',rgbaMarca(color,.34));
+    section.style.setProperty('--quote-brand-glow',rgbaMarca(color,.10));
+    mark.style.setProperty('--quote-brand-soft',rgbaMarca(color,.12));
+  }else{
+    section.classList.remove('quote-source-branded');
+    ['--quote-brand','--quote-brand-soft','--quote-brand-line','--quote-brand-glow'].forEach(x=>section.style.removeProperty(x));
+    mark.style.removeProperty('--quote-brand-soft');
+  }
+  section.dataset.companyName=String(compania||'');
+}
+function presentarFuenteCotizacion(section,id,compania){
+  if(!section)return;
+  const orden=quoteVisualOrder.get(String(id||''))||0;
+  section.style.order=String(-orden);
+  prepararCabeceraMarcaCotizacion(section,compania);
+}
 
 const ATM_CODIGOS_ORDEN=['A','A1','B','B1','B2','B3','B4','B5','C','CPr','CB','TR'];
 const ATM_CODIGOS_MOTOS=['A','A1','RC1','RC','RP'];
@@ -2396,7 +2469,9 @@ function cargarLecturaATMCapture(lectura){
   atmTipoCotizacionActual=String(lectura?.tipo_cotizacion||lista[0]?.tipo_vehiculo||'auto').toLowerCase()==='moto'?'moto':'auto';
   atmCoberturasDetectadas=lista.map(x=>({...x,tipo_vehiculo:x.tipo_vehiculo||atmTipoCotizacionActual,ofrecer:false}));
   const source=document.getElementById('atmQuoteSource');if(source)source.hidden=!lista.length;
+  if(lista.length)marcarFuenteVisualReciente('atm');
   const meta=document.getElementById('atmQuoteSourceMeta');if(meta)meta.textContent=`${atmTipoCotizacionActual==='moto'?'Moto':'Auto'} · ${lista.length} cobertura${lista.length===1?'':'s'} detectada${lista.length===1?'':'s'}`;
+  if(source&&lista.length)presentarFuenteCotizacion(source,'atm','ATM');
   quoteSources=quoteSources.filter(x=>x.compania!=='ATM');
   if(lista.length)quoteSources.push({id:'atm',compania:'ATM',tipo_fuente:'captura',tipo_vehiculo:atmTipoCotizacionActual,opciones:atmCoberturasDetectadas});
   aplicarReglasDescuentoATMTipo(atmTipoCotizacionActual);
@@ -2562,9 +2637,16 @@ async function generarPropuestaATM(){
   if(area)area.value=text;if(wrap)wrap.hidden=false;
   estadoCapturaATM('Propuesta lista para copiar.','ok');
 }
+let quotesCopyFeedbackTimer=null;
 async function copiarPropuestaATM(){
   const text=document.getElementById('atmProposalText')?.value||'';if(!text)return;
-  const ok=await copiarTextoSeguro(text);window.showToast?.(ok?'Propuesta copiada.':'No pude copiar automáticamente.',ok?'success':'warning');
+  const btn=document.getElementById('atmCopyProposal');
+  const ok=await copiarTextoSeguro(text);
+  if(!ok){window.showToast?.('No pude copiar automáticamente.','warning');return}
+  if(!btn)return;
+  clearTimeout(quotesCopyFeedbackTimer);
+  btn.classList.add('is-copied');btn.setAttribute('aria-label','Copiado');btn.setAttribute('title','Copiado');
+  quotesCopyFeedbackTimer=setTimeout(()=>{btn.classList.remove('is-copied');btn.setAttribute('aria-label','Copiar para WhatsApp');btn.setAttribute('title','Copiar para WhatsApp')},1700);
 }
 
 function mostrarEstadoCotizaciones(texto,tipo=''){
@@ -2583,11 +2665,11 @@ function formatoPesosCotizacion(valor,decimales=true){
   return n.toLocaleString('es-AR',{style:'currency',currency:'ARS',minimumFractionDigits:decimales?2:0,maximumFractionDigits:decimales?2:0});
 }
 function totalSeleccionadasCotizaciones(){
-  return seleccionadasATM().length+(mercantilFuente?.opciones?.filter(x=>x.seleccionada).length||0)+federacionQuoteSources.filter(x=>x.seleccionada).length+manualQuoteSources.filter(x=>x.seleccionada).length;
+  return seleccionadasATM().length+(mercantilFuente?.opciones?.filter(x=>x.seleccionada).length||0)+federacionQuoteSources.filter(x=>x.seleccionada).length+genericQuoteSources.reduce((n,s)=>n+(s.opciones||[]).filter(x=>x.seleccionada).length,0)+manualQuoteSources.filter(x=>x.seleccionada).length;
 }
 function actualizarFooterCotizaciones(){
   const footer=document.getElementById('quotesFooter'),count=document.getElementById('quotesSelectionCount'),gen=document.getElementById('atmGenerateProposal');
-  const hayFuentes=!!atmCoberturasDetectadas.length||!!mercantilFuente||federacionQuoteSources.length>0||manualQuoteSources.length>0;
+  const hayFuentes=!!atmCoberturasDetectadas.length||!!mercantilFuente||federacionQuoteSources.length>0||genericQuoteSources.length>0||manualQuoteSources.length>0;
   const n=totalSeleccionadasCotizaciones();
   if(footer)footer.hidden=!hayFuentes;
   if(count)count.textContent=`${n} alternativa${n===1?'':'s'} seleccionada${n===1?'':'s'}`;
@@ -2620,8 +2702,78 @@ async function leerPDFCompaniaCotizaciones(file){
     if(d.tipo==='federacion'||d.es_federacion){
       cargarLecturaFederacion(d);mostrarEstadoCotizaciones('Federación Patronal detectada. La alternativa quedó agregada a la propuesta.','ok');return;
     }
+    if(d.tipo==='generica'||d.es_cotizacion_generica){
+      cargarLecturaGenerica(d);mostrarEstadoCotizaciones(`${d.compania||'Cotización'} detectada por contenido. Revisá y elegí las coberturas.`, 'ok');return;
+    }
     throw Error('No pude identificar la compañía del PDF.');
   }catch(e){mostrarEstadoCotizaciones(e?.message||'No pude identificar el PDF.','error');}
+}
+function nombrePerfilGenerico(op){
+  return String(op?.nombre_cliente||op?.nombre_original||op?.codigo_original||op?.perfil_normalizado||'Cobertura').trim()||'Cobertura';
+}
+function cargarLecturaGenerica(lectura){
+  const id=`generica-${quoteSourceSeq++}`;
+  const opciones=(Array.isArray(lectura?.coberturas)?lectura.coberturas:[]).map((x,i)=>({
+    ...x,
+    id:`${id}-${i+1}`,
+    seleccionada:(lectura?.coberturas?.length||0)===1,
+  }));
+  const source={
+    id,compania:lectura?.compania||'Compañía no identificada',tipo_fuente:'normalizada',
+    vehiculo:lectura?.vehiculo||'',anio:lectura?.anio||'',
+    suma_asegurada:lectura?.suma_asegurada||'',suma_asegurada_formateada:lectura?.suma_asegurada_formateada||'',
+    opciones
+  };
+  genericQuoteSources.push(source);quoteSources.push(source);marcarFuenteVisualReciente(id);
+  renderGenericQuoteSources();invalidarPropuestaCotizaciones();actualizarFooterCotizaciones();
+}
+function quitarFuenteGenerica(id){
+  genericQuoteSources=genericQuoteSources.filter(x=>x.id!==id);quoteSources=quoteSources.filter(x=>x.id!==id);quitarOrdenVisualFuente(id);renderGenericQuoteSources();invalidarPropuestaCotizaciones();actualizarFooterCotizaciones();
+}
+function togglearGenerica(sourceId,optionId){
+  const source=genericQuoteSources.find(x=>x.id===sourceId);const op=source?.opciones?.find(x=>x.id===optionId);if(!op)return;op.seleccionada=!op.seleccionada;
+  renderGenericQuoteSources();invalidarPropuestaCotizaciones();actualizarFooterCotizaciones();
+}
+function renderGenericQuoteSources(){
+  const wrap=document.getElementById('genericQuoteSources');if(!wrap)return;wrap.innerHTML='';
+  genericQuoteSources.forEach(source=>{
+    const section=document.createElement('section');section.className='quote-source generic-quote-source';
+    const head=document.createElement('div');head.className='quote-source-head';
+    const info=document.createElement('div');const b=document.createElement('b');b.textContent=source.compania||'Compañía no identificada';
+    const small=document.createElement('small');const meta=[];if(source.vehiculo)meta.push([source.vehiculo,source.anio].filter(Boolean).join(' · '));if(source.suma_asegurada_formateada)meta.push(`SA ${source.suma_asegurada_formateada.replace(',00','')}`);meta.push(`${source.opciones.length} cobertura${source.opciones.length===1?'':'s'} normalizada${source.opciones.length===1?'':'s'}`);small.textContent=meta.join(' · ');info.append(b,small);
+    const remove=document.createElement('button');remove.type='button';remove.className='quote-source-remove';remove.innerHTML=oiaIconHtml('close');remove.title='Quitar cotización';remove.setAttribute('aria-label','Quitar cotización');remove.addEventListener('click',()=>quitarFuenteGenerica(source.id));head.append(info,remove);section.appendChild(head);
+
+    const cobTitle=document.createElement('div');cobTitle.className='quote-subsection-title';cobTitle.textContent='Coberturas';section.appendChild(cobTitle);
+    const matrix=document.createElement('div');matrix.className='mercantil-code-matrix generic-code-matrix';
+    source.opciones.forEach((op,i)=>{const btn=document.createElement('button');btn.type='button';btn.className='atm-code-cell generic-code-cell'+(op.seleccionada?' active':'');btn.textContent=op.codigo_visual||op.codigo_original||op.perfil_normalizado||`OP${i+1}`;btn.title=[nombrePerfilGenerico(op),op.nombre_original].filter(Boolean).join(' — ');btn.setAttribute('aria-label',`${btn.textContent}: ${btn.title}`);btn.addEventListener('click',()=>togglearGenerica(source.id,op.id));matrix.appendChild(btn)});section.appendChild(matrix);
+
+    const seleccion=(source.opciones||[]).filter(x=>x.seleccionada);
+    if(seleccion.length){
+      const selectedTitle=document.createElement('div');selectedTitle.className='quote-subsection-title quote-selected-label';selectedTitle.textContent='Seleccionadas';section.appendChild(selectedTitle);
+      const selected=document.createElement('div');selected.className='mercantil-selected-summary generic-selected-summary';
+      seleccion.forEach(op=>{const row=document.createElement('div');row.className='mercantil-selected-item generic-selected-item';const rowInfo=document.createElement('div');rowInfo.className='mercantil-selected-info';const rb=document.createElement('b');rb.textContent=op.codigo_visual||op.codigo_original||op.perfil_normalizado||'Cobertura';const details=[];details.push(nombrePerfilGenerico(op));if(op.perfil_normalizado&&op.perfil_normalizado!=='SIN_CLASIFICAR')details.push(`Perfil ${op.perfil_normalizado.replace('_',' ')}`);if(op.franquicia_pct)details.push(`Franquicia ${op.franquicia_pct}%${op.franquicia_importe_formateado?' · '+op.franquicia_importe_formateado:''}`);if(op.servicio_grua===true)details.push('Incluye grúa');if(op.servicio_grua===false)details.push('Sin grúa');const rs=document.createElement('small');rs.textContent=details.join(' · ');rowInfo.append(rb,rs);const price=document.createElement('span');price.className='mercantil-price';price.innerHTML=op.precio_cuota_formateado?`<strong>${esc(op.precio_cuota_formateado)}</strong><small>Por cuota</small>`:'<strong>—</strong><small>Precio no detectado</small>';row.append(rowInfo,price);selected.appendChild(row)});section.appendChild(selected);
+    }
+    presentarFuenteCotizacion(section,source.id,source.compania||'Compañía no identificada');
+    wrap.appendChild(section);
+  });
+}
+async function leerImagenCotizacionUniversal(file){
+  if(!file)return;mostrarEstadoCotizaciones('Leyendo captura de cotización…');invalidarPropuestaCotizaciones();
+  // Primero conservamos el lector especializado ATM. Si no la reconoce, recién ahí
+  // usamos el lector universal para cualquier compañía.
+  try{
+    const fdAtm=new FormData();fdAtm.append('captura',file,file.name||'captura.png');
+    const rAtm=await fetch('/api/atm/leer-captura',{method:'POST',body:fdAtm,credentials:'same-origin'});const dAtm=await leerJsonSeguro(rAtm);
+    if(rAtm.ok&&dAtm.ok!==false&&dAtm.es_cotizacion_atm){cargarLecturaATMCapture(dAtm);mostrarEstadoCotizaciones('ATM detectada. Elegí las coberturas que quieras ofrecer.','ok');return;}
+  }catch(_){/* El fallback universal se ocupa del resto. */}
+  try{
+    const fd=new FormData();fd.append('captura',file,file.name||'cotizacion.png');
+    const resp=await fetch('/api/cotizaciones/leer-imagen',{method:'POST',body:fd,credentials:'same-origin'});const d=await leerJsonSeguro(resp);if(!resp.ok||d.ok===false)throw Error(d.error||'No pude leer la captura de cotización.');
+    cargarLecturaGenerica(d);mostrarEstadoCotizaciones(`${d.compania||'Cotización'} detectada por contenido. Revisá y elegí las coberturas.`, 'ok');
+  }catch(e){mostrarEstadoCotizaciones(e?.message||'No pude identificar la captura.','error')}
+}
+async function normalizarTextoCotizaciones(texto){
+  const resp=await fetch('/api/cotizaciones/normalizar-texto',{method:'POST',credentials:'same-origin',headers:{'Content-Type':'application/json'},body:JSON.stringify({texto})});const d=await leerJsonSeguro(resp);if(!resp.ok||d.ok===false)throw Error(d.error||'No pude normalizar esa cotización.');cargarLecturaGenerica(d);mostrarEstadoCotizaciones(`${d.compania||'Cotización'} interpretada por contenido.`, 'ok');return true;
 }
 function cargarLecturaFederacion(lectura){
   const numero=String(lectura?.numero_cotizacion||'').trim();
@@ -2641,11 +2793,12 @@ function cargarLecturaFederacion(lectura){
   };
   if(numero)federacionQuoteSources=federacionQuoteSources.filter(x=>x.numero_cotizacion!==numero);
   federacionQuoteSources.push(item);
+  marcarFuenteVisualReciente(id);
   quoteSources=quoteSources.filter(x=>x.id!==id);quoteSources.push({...item,opciones:[item]});
   renderFederacionQuoteSources();invalidarPropuestaCotizaciones();actualizarFooterCotizaciones();
 }
 function quitarFuenteFederacion(id){
-  federacionQuoteSources=federacionQuoteSources.filter(x=>x.id!==id);quoteSources=quoteSources.filter(x=>x.id!==id);renderFederacionQuoteSources();invalidarPropuestaCotizaciones();actualizarFooterCotizaciones();
+  federacionQuoteSources=federacionQuoteSources.filter(x=>x.id!==id);quoteSources=quoteSources.filter(x=>x.id!==id);quitarOrdenVisualFuente(id);renderFederacionQuoteSources();invalidarPropuestaCotizaciones();actualizarFooterCotizaciones();
 }
 function togglearFederacion(id){
   const item=federacionQuoteSources.find(x=>x.id===id);if(!item)return;item.seleccionada=!item.seleccionada;
@@ -2679,6 +2832,7 @@ function renderFederacionQuoteSources(){
       const price=document.createElement('span');price.className='mercantil-price';price.innerHTML=`<strong>${esc(item.precio_cuota_formateado||'—')}</strong><small>${item.cantidad_cuotas?`${esc(item.cantidad_cuotas)} cuota${Number(item.cantidad_cuotas)===1?'':'s'}`:'Por cuota'}</small>`;
       row.append(rowInfo,price);selected.appendChild(row);section.appendChild(selected);
     }
+    presentarFuenteCotizacion(section,item.id,'Federación Patronal');
     wrap.appendChild(section);
   });
 }
@@ -2690,6 +2844,7 @@ function descripcionFederacionPropuesta(item){
 }
 function cargarLecturaMercantil(lectura){
   const opciones=Array.isArray(lectura?.coberturas)?lectura.coberturas.map(x=>({...x,seleccionada:false,descuento:Number(x.descuento_default??x.max_descuento??35),precio_final:null,precio_final_formateado:''})):[];
+  marcarFuenteVisualReciente('mercantil');
   mercantilFuente={id:'mercantil',compania:'Mercantil Andina',tipo_fuente:'pdf',modelo:lectura?.modelo||'',anio:lectura?.anio||'',suma_asegurada:lectura?.suma_asegurada||'',suma_asegurada_formateada:lectura?.suma_asegurada_formateada||'',plan_pago:lectura?.plan_pago||'',opciones};
   quoteSources=quoteSources.filter(x=>x.compania!=='Mercantil Andina');quoteSources.push(mercantilFuente);
   renderMercantilFuente();actualizarFooterCotizaciones();
@@ -2698,7 +2853,7 @@ function renderMercantilFuente(){
   const section=document.getElementById('mercantilQuoteSource'),matrix=document.getElementById('mercantilCoverageMatrix'),meta=document.getElementById('mercantilQuoteMeta');
   if(!section||!matrix)return;
   if(!mercantilFuente){section.hidden=true;matrix.innerHTML='';return;}
-  section.hidden=false;
+  section.hidden=false;presentarFuenteCotizacion(section,'mercantil','Mercantil Andina');
   const datos=[];if(mercantilFuente.modelo)datos.push([mercantilFuente.modelo,mercantilFuente.anio].filter(Boolean).join(' · '));if(mercantilFuente.suma_asegurada_formateada)datos.push(`SA ${mercantilFuente.suma_asegurada_formateada.replace(',00','')}`);datos.push(`${mercantilFuente.opciones.length} coberturas detectadas`);if(meta)meta.textContent=datos.join(' · ');
   matrix.innerHTML='';
   mercantilFuente.opciones.forEach(op=>{
@@ -2739,8 +2894,8 @@ function nombreComercialManual(compania,codigo){
   if(cia.includes('feder')){
     if(c==='CF')return 'Terceros Completo Full';
     if(c==='A'||c==='A4')return 'Responsabilidad Civil';
-    if(c==='B')return 'Cobertura B';
-    if(c==='B1')return 'Cobertura B1';
+    if(c==='B')return 'Robo, Incendio y Accidente Total';
+    if(c==='B1')return 'Robo e Incendio Total';
     if(c==='C')return 'Terceros Completo';
     if(c==='TD3')return 'Todo Riesgo';
   }
@@ -2775,9 +2930,9 @@ function parsearAlternativaManual(texto){
   if(!Number.isFinite(valor))return null;
   return {id:`manual-${quoteSourceSeq++}`,compania,codigo,suma_asegurada:Number.isFinite(suma)?suma:null,precio:valor,seleccionada:true,descripcion:speechManual(compania,codigo)};
 }
-function agregarAlternativaManual(texto){
-  const item=parsearAlternativaManual(texto);if(!item){mostrarEstadoCotizaciones('No pude interpretar esa alternativa. Probá, por ejemplo: Federación CF SA 71500000 precio 152000','error');return false;}
-  manualQuoteSources.push(item);quoteSources.push({...item,tipo_fuente:'manual',opciones:[item]});renderManualQuoteSources();invalidarPropuestaCotizaciones();actualizarFooterCotizaciones();mostrarEstadoCotizaciones(`${item.compania} agregada a la propuesta.`,'ok');return true;
+function agregarAlternativaManual(texto,silencioso=false){
+  const item=parsearAlternativaManual(texto);if(!item){if(!silencioso)mostrarEstadoCotizaciones('No pude interpretar esa alternativa. Probá, por ejemplo: Federación CF SA 71500000 precio 152000','error');return false;}
+  manualQuoteSources.push(item);quoteSources.push({...item,tipo_fuente:'manual',opciones:[item]});marcarFuenteVisualReciente(item.id);renderManualQuoteSources();invalidarPropuestaCotizaciones();actualizarFooterCotizaciones();mostrarEstadoCotizaciones(`${item.compania} agregada a la propuesta.`,'ok');return true;
 }
 function renderManualQuoteSources(){
   const wrap=document.getElementById('manualQuoteSources');if(!wrap)return;wrap.innerHTML='';
@@ -2785,24 +2940,25 @@ function renderManualQuoteSources(){
     const section=document.createElement('section');section.className='quote-source manual-quote-source';
     const head=document.createElement('div');head.className='quote-source-head';
     const info=document.createElement('div');const b=document.createElement('b');b.textContent=item.compania;const small=document.createElement('small');small.textContent=[item.codigo,item.suma_asegurada?`SA ${formatoPesosCotizacion(item.suma_asegurada,false)}`:'',formatoPesosCotizacion(item.precio,true)].filter(Boolean).join(' · ');info.append(b,small);
-    const remove=document.createElement('button');remove.type='button';remove.className='quote-source-remove';remove.innerHTML=oiaIconHtml('close');remove.title='Quitar alternativa';remove.setAttribute('aria-label','Quitar alternativa');remove.addEventListener('click',()=>{manualQuoteSources=manualQuoteSources.filter(x=>x.id!==item.id);quoteSources=quoteSources.filter(x=>x.id!==item.id);renderManualQuoteSources();invalidarPropuestaCotizaciones();actualizarFooterCotizaciones();});head.append(info,remove);
-    const line=document.createElement('label');line.className='manual-quote-select';const check=document.createElement('input');check.type='checkbox';check.checked=item.seleccionada;check.addEventListener('change',()=>{item.seleccionada=check.checked;invalidarPropuestaCotizaciones();actualizarFooterCotizaciones();});const span=document.createElement('span');span.textContent=item.descripcion||'Alternativa manual';line.append(check,span);section.append(head,line);wrap.appendChild(section);
+    const remove=document.createElement('button');remove.type='button';remove.className='quote-source-remove';remove.innerHTML=oiaIconHtml('close');remove.title='Quitar alternativa';remove.setAttribute('aria-label','Quitar alternativa');remove.addEventListener('click',()=>{manualQuoteSources=manualQuoteSources.filter(x=>x.id!==item.id);quoteSources=quoteSources.filter(x=>x.id!==item.id);quitarOrdenVisualFuente(item.id);renderManualQuoteSources();invalidarPropuestaCotizaciones();actualizarFooterCotizaciones();});head.append(info,remove);
+    const line=document.createElement('label');line.className='manual-quote-select';const check=document.createElement('input');check.type='checkbox';check.checked=item.seleccionada;check.addEventListener('change',()=>{item.seleccionada=check.checked;invalidarPropuestaCotizaciones();actualizarFooterCotizaciones();});const span=document.createElement('span');span.textContent=item.descripcion||'Alternativa manual';line.append(check,span);section.append(head,line);presentarFuenteCotizacion(section,item.id,item.compania);wrap.appendChild(section);
   });
 }
 async function procesarArchivoCotizaciones(file){
   if(!file)return;const type=String(file.type||'').toLowerCase(),name=String(file.name||'').toLowerCase();
   if(type==='application/pdf'||name.endsWith('.pdf'))return leerPDFCompaniaCotizaciones(file);
-  if(type.startsWith('image/')||/\.(png|jpe?g|webp)$/.test(name))return leerCapturaATM(file);
+  if(type.startsWith('image/')||/\.(png|jpe?g|webp)$/.test(name))return leerImagenCotizacionUniversal(file);
   mostrarEstadoCotizaciones('Ese archivo no es compatible. Usá PDF, PNG, JPG o WEBP.','error');
 }
 async function procesarComposerCotizaciones(){
   const ta=document.getElementById('quotesComposerText');const texto=ta?.value?.trim()||'';if(!texto)return;
-  if(agregarAlternativaManual(texto)){ta.value='';autoSizeQuotesComposer();}
+  if(agregarAlternativaManual(texto,true)){ta.value='';autoSizeQuotesComposer();return;}
+  try{await normalizarTextoCotizaciones(texto);ta.value='';autoSizeQuotesComposer();}catch(e){mostrarEstadoCotizaciones(e?.message||'No pude interpretar esa cotización.','error');}
 }
 function autoSizeQuotesComposer(){const ta=document.getElementById('quotesComposerText');if(!ta)return;ta.style.height='auto';ta.style.height=Math.min(140,Math.max(42,ta.scrollHeight))+'px';}
-function quitarFuenteATM(){atmCoberturasDetectadas=[];quoteSources=quoteSources.filter(x=>x.compania!=='ATM');const s=document.getElementById('atmQuoteSource');if(s)s.hidden=true;const sa=document.getElementById('atmSumaAsegurada');if(sa)sa.value='';renderMatrizCoberturasATM();renderResumenSeleccionATM();invalidarPropuestaCotizaciones();actualizarFooterCotizaciones();}
-function quitarFuenteMercantil(){mercantilFuente=null;quoteSources=quoteSources.filter(x=>x.compania!=='Mercantil Andina');renderMercantilFuente();invalidarPropuestaCotizaciones();actualizarFooterCotizaciones();}
-function limpiarCotizaciones(){quitarFuenteATM();quitarFuenteMercantil();federacionQuoteSources=[];manualQuoteSources=[];quoteSources=[];renderFederacionQuoteSources();renderManualQuoteSources();mostrarEstadoCotizaciones('');const ta=document.getElementById('quotesComposerText');if(ta){ta.value='';autoSizeQuotesComposer();}}
+function quitarFuenteATM(){atmCoberturasDetectadas=[];quoteSources=quoteSources.filter(x=>x.compania!=='ATM');quitarOrdenVisualFuente('atm');const s=document.getElementById('atmQuoteSource');if(s)s.hidden=true;const sa=document.getElementById('atmSumaAsegurada');if(sa)sa.value='';renderMatrizCoberturasATM();renderResumenSeleccionATM();invalidarPropuestaCotizaciones();actualizarFooterCotizaciones();}
+function quitarFuenteMercantil(){mercantilFuente=null;quoteSources=quoteSources.filter(x=>x.compania!=='Mercantil Andina');quitarOrdenVisualFuente('mercantil');renderMercantilFuente();invalidarPropuestaCotizaciones();actualizarFooterCotizaciones();}
+function limpiarCotizaciones(){quitarFuenteATM();quitarFuenteMercantil();federacionQuoteSources=[];genericQuoteSources=[];manualQuoteSources=[];quoteSources=[];quoteVisualOrder.clear();quoteVisualSeq=1;renderFederacionQuoteSources();renderGenericQuoteSources();renderManualQuoteSources();mostrarEstadoCotizaciones('');const ta=document.getElementById('quotesComposerText');if(ta){ta.value='';autoSizeQuotesComposer();}}
 async function asegurarMercantilCalculada(){
   const seleccion=mercantilFuente?.opciones?.filter(x=>x.seleccionada)||[];for(const op of seleccion){if(!op.precio_final_formateado){const ok=await recalcularMercantilItem(op);if(!ok)return false;}}return true;
 }
@@ -2823,6 +2979,14 @@ async function generarPropuestaCotizaciones(){
     const suma=item.suma_asegurada_formateada||'';
     const franquiciaImporte=item.franquicia_importe_formateado||'';
     bloques.push(bloqueCoberturaWhatsApp({compania:'Federación Patronal',nombre:item.nombre_cliente||nombreComercialManual('Federación Patronal',item.codigo),suma,descripcion:descripcionFederacionPropuesta(item),precio:`${formatearPrecioComercialCotizacion(item.precio_cuota,item.precio_cuota_formateado)} por cuota`,franquiciaPct:item.franquicia_pct||'',franquiciaImporte}));
+  });
+  genericQuoteSources.forEach(source=>{
+    (source.opciones||[]).filter(x=>x.seleccionada).forEach(op=>{
+      const suma=source.suma_asegurada_formateada?source.suma_asegurada_formateada.replace(',00',''):'';
+      const precio=op.precio_cuota_formateado?`${formatearPrecioComercialCotizacion(op.precio_cuota,op.precio_cuota_formateado)} por cuota`:'';
+      const descripcion=[op.descripcion_cliente||'',op.servicio_grua===true?'Incluye grúa.':op.servicio_grua===false?'Sin grúa.':''].filter(Boolean).join('\n');
+      bloques.push(bloqueCoberturaWhatsApp({compania:source.compania||'Compañía',nombre:nombrePerfilGenerico(op),suma,descripcion,precio,franquiciaPct:op.franquicia_pct||'',franquiciaImporte:op.franquicia_importe_formateado||''}));
+    });
   });
   manualQuoteSources.filter(x=>x.seleccionada).forEach(item=>{
     bloques.push(bloqueCoberturaWhatsApp({compania:item.compania,nombre:nombreComercialManual(item.compania,item.codigo),suma:item.suma_asegurada?formatoPesosCotizacion(item.suma_asegurada,false):'',descripcion:item.descripcion,precio:`${formatearPrecioComercialCotizacion(item.precio,formatoPesosCotizacion(item.precio,true))} por cuota`}));

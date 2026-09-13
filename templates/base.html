@@ -45,10 +45,6 @@
       <span class="sidebar-toggle-icon" aria-hidden="true">{{ icon('arrow-left') }}</span>
     </button>
 
-    <a class="brand" href="{{ url_for('documentos') }}" title="{{config_global.nombre_oficina}}">
-      <span class="logo favicon-brand-shell" aria-hidden="true"><img class="favicon-brand-img" src="{{ static_asset('img/favicon.png') }}" alt=""></span>
-      <span class="brand-text"><b id="appNameDisplay" data-app-name>{{config_global.nombre_oficina}}</b></span>
-    </a>
 
     {% set herramientas = config_global.herramientas or [] %}
     {% set visibles = herramientas|selectattr('visible')|list %}
@@ -67,7 +63,7 @@
           <div class="nav-submenu" id="ciasSubmenu" hidden>
             {% for cia in cias_sidebar %}
             <a class="nav-subitem" href="{{cia.url}}" target="_blank" rel="noopener noreferrer" data-company-id="{{cia.id}}">
-              <img class="company-favicon" src="https://www.google.com/s2/favicons?sz=64&domain_url={{ cia.url|urlencode }}" alt="" aria-hidden="true" loading="lazy"><span>{{cia.nombre}}</span>
+              <img class="company-favicon" src="{{ brand_icon_src(cia) }}" alt="" aria-hidden="true" loading="lazy"><span>{{cia.nombre}}</span>
             </a>
             {% endfor %}
           </div>
@@ -101,7 +97,7 @@
       <div class="quickaccess-grid">
         {% for tool in visibles %}
         <a class="quickaccess-item" href="{{tool.url}}" target="_blank" rel="noopener noreferrer" title="{{tool.nombre}}" aria-label="{{tool.nombre}}" data-tool-id="{{tool.id}}">
-          <img src="https://www.google.com/s2/favicons?sz=64&domain_url={{ tool.url|urlencode }}" alt="" aria-hidden="true" loading="lazy"><span class="quickaccess-name">{{tool.nombre}}</span>
+          <img src="{{ brand_icon_src(tool) }}" alt="" aria-hidden="true" loading="lazy"><span class="quickaccess-name">{{tool.nombre}}</span>
         </a>
         {% endfor %}
       </div>
@@ -110,12 +106,16 @@
   </aside>
 
   <main class="main">
-    {% block global_actions_slot %}{{ render_global_actions() }}{% endblock %}
-    <div class="toast-host" id="toastHost" aria-live="polite" aria-relevant="additions"></div>
+    {% block global_actions_slot %}<div class="app-global-bar" aria-label="Barra global">{{ render_global_actions('global-actions-inline') }}</div>{% endblock %}
     {% block content %}{% endblock %}
   </main>
 </div>
-<script>window.OIA_ICON_SPRITE={{ url_for('static', filename='icons/oficinaia/sprite.svg')|tojson }};</script>
+<div class="toast-host" id="toastHost" aria-live="polite" aria-relevant="additions"></div>
+<script>
+window.OIA_ICON_SPRITE={{ url_for('static', filename='icons/oficinaia/sprite.svg')|tojson }};
+window.OIA_COMPANY_BRANDS={{ (config_global.companias or [])|tojson }};
+window.OIA_TOOL_BRANDS={{ (config_global.herramientas or [])|tojson }};
+</script>
 <script src="{{ static_asset('js/app.js') }}"></script>
 {% block scripts %}{% endblock %}
 </body>

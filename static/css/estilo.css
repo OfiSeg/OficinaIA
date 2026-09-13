@@ -3182,16 +3182,13 @@ html,body,body *,button,input,select,textarea,pre,code,kbd,samp{
   text-rendering:optimizeLegibility;
 }
 
-/* La barra de acciones tiene su propio renglón. Aumentar el texto nunca
-   debe empujar, tapar o montarse sobre el encabezado/chat. */
-body .main{
-  padding-top:48px !important;
-}
+/* Acciones globales: viven dentro de la barra real del shell.
+   Nunca siguen el viewport ni se superponen al contenido al hacer scroll. */
+body .main{padding-top:0 !important}
 .global-actions{
-  position:fixed !important;
-  top:9px !important;
-  right:12px !important;
-  z-index:100 !important;
+  position:static !important;
+  inset:auto !important;
+  z-index:auto !important;
   min-height:32px !important;
   display:flex !important;
   align-items:center !important;
@@ -3205,24 +3202,18 @@ body .main{
 }
 .global-action, .theme-toggle{
   flex:0 0 auto !important;
-}
-.global-action, .theme-toggle{
   width:32px !important;
   height:32px !important;
 }
-
-
 .global-action .app-icon,.theme-toggle .app-icon,.global-logout .app-icon{
   width:17px !important;
   height:17px !important;
 }
-
 @media(max-width:760px){
-  body .main{padding-top:44px !important}
-  .global-actions{top:6px !important;right:8px !important;gap:4px !important}
+  body .main{padding-top:0 !important}
+  .global-actions{gap:4px !important}
   .global-date{display:none !important}
   .global-action, .theme-toggle{width:30px !important;height:30px !important}
-  
 }
 
 /* ==========================================================
@@ -3558,13 +3549,12 @@ body.chat-layout .page.chat-page{
 }
 html[data-chat-list="collapsed"] .chat-list-toggle-icon{transform:rotate(180deg)}
 
-/* La barra global existente se conserva, pero en esta pantalla queda
-   colocada sobre la barra de la ventana, no flotando sobre el lienzo. */
+/* En Chat IA las acciones globales son hijas de la misma barra "Conversaciones". */
 body.chat-layout .global-actions{
-  position:absolute!important;
-  top:15px!important;
-  right:max(34px,calc((100% - 1440px)/2 + 34px))!important;
-  z-index:30!important;
+  position:static!important;
+  inset:auto!important;
+  margin-left:auto!important;
+  z-index:auto!important;
   min-height:30px!important;
   gap:5px!important;
 }
@@ -3639,8 +3629,8 @@ body.chat-layout .composer-wrap{flex:0 0 auto}
   body.chat-layout .main{height:auto;min-height:100dvh!important;overflow:visible}
   body.chat-layout .page.chat-page{height:100dvh!important;padding:0!important}
   .chat-window{border:0;border-radius:0;box-shadow:none}
-  .chat-window-bar{display:none}
-  body.chat-layout .global-actions{position:fixed!important;top:6px!important;right:8px!important}
+  .chat-window-bar{display:flex!important;min-height:48px!important;flex-basis:48px!important;padding:0 8px!important}
+  body.chat-layout .global-actions{position:static!important;inset:auto!important;margin-left:auto!important}
   body.chat-layout .chat-page .chat-shell,
   html[data-chat-list="collapsed"] body.chat-layout .chat-page .chat-shell{
     grid-template-columns:1fr!important;
