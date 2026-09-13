@@ -13,7 +13,7 @@ import cedula_ops
 import personal_document_ops
 import document_grouping
 from document_classifier import clasificar_adjunto, clasificar_adjuntos
-from atm_cotizador import respuesta_chat_atm
+from atm_cotizador import parsear_consulta_atm
 import atm_quote_service
 
 
@@ -274,11 +274,18 @@ def procesar(*, chat_id, mensaje, contexto_pdf, flota_store, adjunto=None, adjun
             "atm_cotizador",
         )
 
-    # Consulta textual ATM rápida y determinística, sin Gemini. Se conserva como
-    # compatibilidad, pero la interfaz principal es el módulo visual.
-    respuesta_atm = respuesta_chat_atm(mensaje)
-    if respuesta_atm is not None:
-        return SpecialResult(True, str(respuesta_atm), {}, "atm_cotizador")
+    # La calculadora textual ATM fue retirada del chat. Sólo reconocemos la antigua
+    # sintaxis si contiene realmente un importe + tipo/descuento, y en ese caso
+    # ABRIMOS Cotizaciones sin calcular nada en el chat. Una consulta documental
+    # como "cuántas grúas tiene ATM" debe seguir de largo al router documental.
+    legacy_atm = parsear_consulta_atm(mensaje)
+    if isinstance(legacy_atm, dict) and not legacy_atm.get("error"):
+        return SpecialResult(
+            True,
+            "Abrí Cotizaciones para calcular ATM.",
+            {"abrir_cotizador_atm": True},
+            "atm_cotizador",
+        )
 
     if on_stage:
         on_stage("flota_router")

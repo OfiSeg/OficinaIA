@@ -1804,3 +1804,38 @@ body:not(.chat-layout) .theme-toggle{flex:0 0 auto!important}
 .pendientes-title-row .count{margin:0!important;align-self:center!important}
 .pendientes-head{justify-content:flex-start!important}
 
+
+/* ======================================================================
+   CONTROLES GLOBALES COMPACTOS — tema / ajustes / salir
+   El hit-area no reserva una cápsula invisible. Todo forma parte de la barra.
+   ====================================================================== */
+.global-actions{gap:5px!important}
+.appearance-controls{
+  width:26px!important;min-width:26px!important;height:30px!important;
+  flex:0 0 26px!important;display:grid!important;place-items:center!important;
+}
+.theme-toggle.theme-switch,
+body.chat-layout .theme-toggle.theme-switch{
+  width:26px!important;min-width:26px!important;height:30px!important;min-height:30px!important;
+  flex:0 0 26px!important;padding:0!important;margin:0!important;
+  border:0!important;border-radius:7px!important;background:transparent!important;box-shadow:none!important;
+}
+.theme-switch-icon{width:17px!important;height:17px!important;margin:0!important}
+.theme-switch-icon .app-icon{width:17px!important;height:17px!important}
+html[data-theme="light"] .theme-switch-sun,
+html[data-theme="dark"] .theme-switch-moon{color:var(--oi-muted)!important}
+.theme-toggle.theme-switch:hover .theme-switch-icon{color:var(--oi-accent)!important}
+
+/* Salir comparte exactamente el mismo lenguaje cromático que Ajustes. */
+.global-logout,
+.global-logout:hover,
+html[data-theme="dark"] .global-logout,
+html[data-theme="light"] .global-logout{
+  color:var(--oi-muted)!important;
+  --oia-icon-accent:currentColor!important;
+  background:transparent!important;border:0!important;box-shadow:none!important;
+}
+.global-settings:hover,.global-logout:hover{
+  color:var(--oi-accent)!important;
+  --oia-icon-accent:currentColor!important;
+}

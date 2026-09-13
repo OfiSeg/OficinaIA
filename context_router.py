@@ -97,7 +97,7 @@ def _parece_conteo_excel(texto_norm: str) -> bool:
     if not es_conteo:
         return False
     # Si el usuario habla de servicio/cobertura, no es inventario aunque diga remolque/grúa.
-    if any(x in texto_norm for x in ("cubre", "cobertura", "asistencia", "servicio", "prestacion", "kilomet")):
+    if any(x in texto_norm for x in ("cubre", "cobertura", "asistencia", "servicio", "prestacion", "kilomet", "contempla", "contemplan", "incluye", "incluyen")):
         return False
     return any(t in texto_norm for t in _ENTIDADES_EXCEL)
 

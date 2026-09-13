@@ -21,6 +21,8 @@ from typing import Iterable
 
 import fitz
 
+from companias import nombre_compania, normalizar_compania, aliases_companias
+
 
 # Riesgos canónicos. Estos IDs son internos: los textos comerciales se generan
 # de forma separada para no contaminar la fuente original.
@@ -196,6 +198,27 @@ def detectar_riesgos(texto: str) -> dict:
     hit(r"\bGRANIZO\b", GRANIZO, evidencia="Granizo")
     hit(r"\bCERRADURAS?\b|\bCERRAJERIA\b", CERRADURAS, evidencia="Cerraduras")
     hit(r"\b(?:SERVICIO\s+DE\s+)?GRUA\b|\bREMOLQUE\b|\bASISTENCIA\s+(?:MECANICA|VEHICULAR)\b", GRUA, evidencia="Grúa/Asistencia")
+
+    # Resúmenes tabulares frecuentes en cotizadores de compañías distintas.
+    # No dependen del código B/C: la descripción visible aporta el significado.
+    if re.search(r"\bTOTALES?\s+Y\s+PARCIALES?\s+CON\s+DESTRUCCION\s+TOTAL\b|\bTOT\.?\s*Y\s*PARC\.?\s*C/?\s*DESTRUC\.?\s*TOTAL\b", t):
+        _agregar(riesgos, RC, INC_T, INC_P, ROB_T, ROB_P, DT_ACC)
+        evidencias.append("Totales y parciales con destrucción total")
+    elif re.search(r"\bTOTALES?\s+Y\s+PARCIALES?\s+SIN\s+DESTRUCCION\s+TOTAL\b", t):
+        _agregar(riesgos, RC, INC_T, INC_P, ROB_T, ROB_P)
+        evidencias.append("Totales y parciales sin destrucción total")
+    elif re.search(r"\bTOTALES?\s+CON\s+DESTRUCCION\s+TOTAL\b", t):
+        _agregar(riesgos, RC, INC_T, ROB_T, DT_ACC)
+        evidencias.append("Totales con destrucción total")
+    elif re.search(r"\bTOTALES?\s+SIN\s+DESTRUCCION\s+TOTAL\b", t):
+        _agregar(riesgos, RC, INC_T, ROB_T)
+        evidencias.append("Totales sin destrucción total")
+
+    # Otra redacción frecuente: "destrucción total por accidente, total y parcial
+    # por incendio y robo/hurto". Se expande sólo cuando la frase está visible.
+    if re.search(r"DESTRUCCION\s+TOTAL.*TOTAL\s+Y\s+PARCIAL.*INCENDIO.*ROBO", t):
+        _agregar(riesgos, RC, DT_ACC, INC_T, INC_P, ROB_T, ROB_P)
+        evidencias.append("Destrucción total + incendio/robo total y parcial")
 
     return {
         "riesgos": sorted(riesgos),
@@ -390,6 +413,59 @@ def _fmt_money(valor: Decimal | None) -> str:
     return "$" + f"{int(entero):,}".replace(",", ".") + f",{dec}"
 
 
+def _canonicalizar_compania(nombre: str) -> str:
+    crudo = str(nombre or "").strip()
+    if not crudo or crudo == "Compañía no identificada":
+        return crudo or "Compañía no identificada"
+    codigo = normalizar_compania(crudo)
+    codigos_conocidos = {cod for cod, _display in aliases_companias().values()}
+    if codigo in codigos_conocidos:
+        return nombre_compania(crudo)
+    return crudo
+
+
+def _pct_visual(valor: str) -> str:
+    raw = str(valor or "").strip().replace(",", ".")
+    try:
+        d = Decimal(raw)
+    except Exception:
+        return raw
+    if d == d.to_integral():
+        return str(int(d))
+    return format(d.normalize(), "f")
+
+
+def _codigo_visual_cobertura(codigo: str, perfil: str, franquicia_pct: str) -> str:
+    # Regla universal acordada: Todo Riesgo se identifica visualmente por el
+    # porcentaje real de franquicia, independientemente de cómo lo llame la cia.
+    # Ej.: 1,5% -> D1.5 ; 2% -> D2 ; 3% -> D3.
+    if str(perfil or "").upper() == PERFIL_TR and str(franquicia_pct or "").strip():
+        return "D" + _pct_visual(franquicia_pct)
+    return str(codigo or perfil or "COB").strip() or "COB"
+
+
+def _ordenar_coberturas(opciones: list[dict]) -> list[dict]:
+    """Mantiene orden fuente y ordena sólo grupos contiguos de Todo Riesgo por franquicia."""
+    salida = list(opciones or [])
+    i = 0
+    while i < len(salida):
+        if salida[i].get("perfil_normalizado") != PERFIL_TR:
+            i += 1
+            continue
+        j = i
+        while j < len(salida) and salida[j].get("perfil_normalizado") == PERFIL_TR:
+            j += 1
+        bloque = salida[i:j]
+        def clave(item):
+            try:
+                return (0, Decimal(str(item.get("franquicia_pct") or "").replace(",", ".")))
+            except Exception:
+                return (1, Decimal("9999"))
+        salida[i:j] = sorted(bloque, key=clave)
+        i = j
+    return salida
+
+
 def _detectar_compania(texto: str) -> str:
     t = normalizar_texto(texto)
     conocidas = [
@@ -408,21 +484,23 @@ def _detectar_compania(texto: str) -> str:
     ]
     for patron, nombre in conocidas:
         if re.search(patron, t):
-            return nombre
+            return _canonicalizar_compania(nombre)
 
     # Heurística conservadora para una compañía no registrada: usar una línea
     # corporativa sólo si contiene una palabra inequívoca de aseguradora.
     for linea in str(texto or "").splitlines()[:35]:
         limpia = re.sub(r"\s+", " ", linea).strip(" -|:")
         if 3 <= len(limpia) <= 90 and re.search(r"\b(SEGUROS?|ASEGURADORA|ASEGURADORA\s+DE\s+RIESGOS)\b", _sin_acentos(limpia), re.I):
-            return limpia
+            return _canonicalizar_compania(limpia)
     return "Compañía no identificada"
 
 
 def _extraer_suma_asegurada(texto: str) -> Decimal | None:
     patrones = [
         r"SUMA\s+ASEGURADA\s*[:\-]?\s*\$?\s*([\d.,]+)",
+        r"MONTO\s+ASEGURADO\s*[:\-]?\s*\$?\s*([\d.,]+)",
         r"\bS\.?\s*A\.?\s*[:\-]\s*\$?\s*([\d.,]+)",
+        r"\bVALOR\s*[:\-]\s*\$\s*([\d.,]+)",
     ]
     t = normalizar_texto(texto)
     for patron in patrones:
@@ -444,31 +522,35 @@ def _extraer_anio(texto: str) -> str:
 
 
 def _extraer_vehiculo(texto: str) -> str:
-    lineas = [re.sub(r"\s+", " ", x).strip() for x in str(texto or "").splitlines() if x.strip()]
-    for i, linea in enumerate(lineas):
-        n = normalizar_texto(linea)
-        if re.search(r"\b(?:VEHICULO|UNIDAD|MARCA\s*/?\s*MODELO|DATOS\s+DE\s+RIESGO)\b", n):
-            # valor en la misma línea después de ':' o la siguiente línea útil.
-            if ":" in linea:
-                val = linea.split(":", 1)[1].strip()
-                if len(val) > 3:
-                    return val[:140]
-            if i + 1 < len(lineas) and len(lineas[i + 1]) > 3:
-                return lineas[i + 1][:140]
+    raw = str(texto or "")
+    # Preferir el submodelo/modelo explícito antes que el rótulo "Vehículo cotizado".
+    for patron in (
+        r"(?im)^\s*SUBMODELO\s*[:\-]\s*(.+)$",
+        r"(?im)^\s*MODELO\s*[:\-]\s*(.+)$",
+        r"(?im)^\s*VEHICULO\s*[:\-]\s*(.+)$",
+        r"(?im)^\s*UNIDAD\s*[:\-]\s*(.+)$",
+    ):
+        m = re.search(patron, raw)
+        if m:
+            val = re.sub(r"\s+", " ", m.group(1)).strip()
+            if len(val) > 2:
+                return val[:160]
     return ""
 
 
 def _extraer_codigo(linea: str) -> str:
     raw = str(linea or "").strip()
-    # Cobertura B / Plan TD3 / CF - ... / D2 0030 ...
+    # A/B1/C+/CM/TD3/D2 0030/códigos numéricos (90/91/92), etc.
+    code = r"(?:D2\s+\d{4}|[A-Z]{1,5}\+?\d?(?:[.,]\d+)?|\d{2,3})"
     patrones = [
-        r"^(?:COBERTURA|PLAN)\s+([A-Z]{1,5}\d?|D2\s+\d{4})\b",
-        r"^([A-Z]{1,5}\d?|D2\s+\d{4})\s*(?:-|:|\|)",
+        rf"^(?:COBERTURA|PLAN)\s+({code})\b",
+        rf"^({code})\s*(?:-|:|\|)",
     ]
+    t = normalizar_texto(raw)
     for patron in patrones:
-        m = re.search(patron, normalizar_texto(raw), flags=re.I)
+        m = re.search(patron, t, flags=re.I)
         if m:
-            return re.sub(r"\s+", " ", m.group(1)).strip().upper()
+            return re.sub(r"\s+", " ", m.group(1)).strip().upper().replace(",", ".")
     return ""
 
 
@@ -485,6 +567,17 @@ def _precio_en_bloque(bloque: str) -> Decimal | None:
             if n is not None:
                 return n
     return None
+
+
+def _precio_fila_tabular(linea: str, texto_documento: str) -> Decimal | None:
+    """En tablas con columna Cuota/s, el último importe de la fila es la cuota."""
+    doc = normalizar_texto(texto_documento)
+    if not re.search(r"\b(?:CUOTA|CUOTAS|PRIMERA\s+CUOTA)\b", doc):
+        return None
+    valores = re.findall(r"\$\s*([\d.]+(?:,[0-9]{1,2})?)", str(linea or ""))
+    if not valores:
+        return None
+    return _money_decimal(valores[-1])
 
 
 def _franquicia_en_bloque(bloque: str) -> tuple[str, Decimal | None, str]:
@@ -515,7 +608,7 @@ def _grua_en_bloque(bloque: str) -> bool | None:
 
 def _es_linea_cobertura(linea: str) -> bool:
     t = _texto_compacto(linea)
-    if not t or len(t) < 4:
+    if not t or len(t) < 3:
         return False
     if t.startswith(("-", "•", "*")) or re.search(r"\bPLANES?\s+(?:CF|TD|TODO RIESGO)\b", t) or t.startswith("ASEGURADO POR"):
         return False
@@ -524,7 +617,9 @@ def _es_linea_cobertura(linea: str) -> bool:
         return True
     if re.search(r"\b(?:COBERTURA|PLAN)\s+[A-Z0-9]+\b", t) and d:
         return True
-    if re.match(r"^(?:A4?|B1?|C1?|CF|CM|LB1?|TD\d?|D2\s+\d{4})\s*(?:-|:|\|)", t) and d:
+    # Fila tabular de cotizador: código + descripción aseguradora + importes.
+    codigo = _extraer_codigo(linea)
+    if codigo and re.search(r"\b(?:RESPONSABILIDAD|TOTAL(?:ES)?|PARCIAL(?:ES)?|TODO\s+RIESGO|ROBO|HURTO|INCENDIO|DESTRUCCION|GRANIZO|CRIST|PARABRIS|FRANQUICIA)\b", t):
         return True
     return False
 
@@ -556,7 +651,7 @@ def normalizar_texto_cotizacion(texto: str, *, compania: str = "") -> dict:
     raw = str(texto or "").strip()
     if not raw:
         raise ValueError("No recibí texto para normalizar.")
-    cia = str(compania or "").strip() or _detectar_compania(raw)
+    cia = _canonicalizar_compania(str(compania or "").strip() or _detectar_compania(raw))
     suma = _extraer_suma_asegurada(raw)
     anio = _extraer_anio(raw)
     vehiculo = _extraer_vehiculo(raw)
@@ -567,13 +662,13 @@ def normalizar_texto_cotizacion(texto: str, *, compania: str = "") -> dict:
         normal = normalizar_cobertura(cand["linea"], compania=cia if cia != "Compañía no identificada" else "", codigo=codigo, nombre=cand["linea"])
         if normal["perfil_normalizado"] == PERFIL_SIN_CLASIFICAR and not normal["riesgos_detectados"]:
             continue
-        precio = _precio_en_bloque(cand["bloque"])
+        precio = _precio_en_bloque(cand["bloque"]) or _precio_fila_tabular(cand["bloque"], raw)
         franquicia_pct, franquicia_importe, franquicia_desc = _franquicia_en_bloque(cand["bloque"])
         grua = _grua_en_bloque(cand["bloque"])
         opciones.append({
             "uid": f"generica-{idx}",
             "codigo_original": codigo,
-            "codigo_visual": codigo or normal["perfil_normalizado"],
+            "codigo_visual": _codigo_visual_cobertura(codigo, normal["perfil_normalizado"], franquicia_pct),
             "nombre_original": cand["linea"],
             "texto_fuente": cand["bloque"],
             "perfil_normalizado": normal["perfil_normalizado"],
@@ -601,7 +696,7 @@ def normalizar_texto_cotizacion(texto: str, *, compania: str = "") -> dict:
             opciones.append({
                 "uid": "generica-1",
                 "codigo_original": "",
-                "codigo_visual": normal["perfil_normalizado"] if normal["perfil_normalizado"] != PERFIL_SIN_CLASIFICAR else "COB",
+                "codigo_visual": _codigo_visual_cobertura("", normal["perfil_normalizado"] if normal["perfil_normalizado"] != PERFIL_SIN_CLASIFICAR else "COB", franquicia_pct),
                 "nombre_original": "",
                 "texto_fuente": raw[:2200],
                 "perfil_normalizado": normal["perfil_normalizado"],
@@ -618,6 +713,7 @@ def normalizar_texto_cotizacion(texto: str, *, compania: str = "") -> dict:
                 "servicio_grua": _grua_en_bloque(raw),
             })
 
+    opciones = _ordenar_coberturas(opciones)
     return {
         "es_cotizacion_generica": bool(opciones),
         "compania": cia,
@@ -682,8 +778,11 @@ Devolvé SOLO JSON válido:
 }
 
 Reglas:
+- Transcribí TODAS las alternativas/tarjetas visibles; no te quedes sólo con la primera.
+- Si hay varias alternativas con el mismo código pero distinta franquicia/precio, devolvelas TODAS por separado.
 - No supongas qué significa B/C/CF/etc. si no hay descripción visible.
 - Conservá abreviaturas visibles como RC, PT Acc., PTyP Inc., RP Amp Tot., etc.
+- En Todo Riesgo, copiá siempre el porcentaje y el importe de franquicia si aparecen.
 - No inventes precio, franquicia, grúa ni suma asegurada.
 - Si no parece una cotización, es_cotizacion=false.
 """
@@ -710,7 +809,7 @@ def _normalizar_dato_vision(dato: dict) -> dict:
     if not bool(dato.get("es_cotizacion")):
         return {"es_cotizacion_generica": False}
 
-    cia = str(dato.get("compania") or "").strip() or "Compañía no identificada"
+    cia = _canonicalizar_compania(str(dato.get("compania") or "").strip() or "Compañía no identificada")
     suma = _money_decimal(dato.get("suma_asegurada"))
     opciones = []
     for idx, item in enumerate(dato.get("coberturas") or [], start=1):
@@ -728,7 +827,11 @@ def _normalizar_dato_vision(dato: dict) -> dict:
         opciones.append({
             "uid": f"generica-vision-{idx}",
             "codigo_original": codigo,
-            "codigo_visual": codigo or (normal["perfil_normalizado"] if normal["perfil_normalizado"] != PERFIL_SIN_CLASIFICAR else f"OP{idx}"),
+            "codigo_visual": _codigo_visual_cobertura(
+                codigo or (normal["perfil_normalizado"] if normal["perfil_normalizado"] != PERFIL_SIN_CLASIFICAR else f"OP{idx}"),
+                normal["perfil_normalizado"],
+                str(item.get("franquicia_pct") or "").strip(),
+            ),
             "nombre_original": nombre,
             "texto_fuente": fuente,
             "perfil_normalizado": normal["perfil_normalizado"],
@@ -744,6 +847,7 @@ def _normalizar_dato_vision(dato: dict) -> dict:
             "servicio_grua": grua,
         })
 
+    opciones = _ordenar_coberturas(opciones)
     return {
         "es_cotizacion_generica": bool(opciones),
         "compania": cia,

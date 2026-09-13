@@ -189,3 +189,45 @@ Revisar el diff y comprobar que no haya archivos no relacionados modificados.
 Si una tarea puntual hace que otra pantalla cambie sin que el usuario lo haya pedido, eso es una regresión.
 
 **OficinaIA se modifica de manera incremental: preservar lo bueno, cambiar sólo lo solicitado y validar antes de entregar.**
+
+## Router conversacional — invariantes obligatorias
+
+- La calculadora textual ATM está desactivada en el chat. La única calculadora ATM autorizada es la UI de Cotizaciones (`/api/atm/cotizar`). Mencionar `ATM` en lenguaje natural nunca debe disparar cálculo de precios.
+- `su` / `sus` no activan por sí solos un registro de cartera. Frases como `sus coberturas`, `sus grúas` o `sus remolques` pertenecen al dominio documental/compañías.
+- ARCA/CUIT sólo se activa por intención explícita o por un nombre desnudo inequívoco. Una consulta documental que contenga una compañía jamás debe interpretarse como persona.
+- Preguntar `¿cartera o ARCA?` no puede establecer ARCA como contexto activo antes de la elección del usuario.
+- Si una consulta nombra una compañía y no hay metadata interna de esa compañía, devolver evidencia insuficiente. Nunca usar metadata de otra compañía como fallback.
+- Internet no se ofrece a Gemini salvo pedido explícito del usuario (`internet`, `web`, `Google`, etc.). Consultas internas de compañía deben priorizar metadata/manuales y reconocer ausencia de evidencia.
+- El historial conversacional se conserva para entender el hilo, pero nunca debe reactivar calculadoras, ARCA, alta u otra acción por una palabra ambigua.
+- Corregir routing no autoriza a rediseñar la UI ni tocar Cotizaciones, parsers de documentos, Excel, alta, mail o branding salvo pedido explícito.
+
+## 16. Cerebro del chat — estado y tools
+
+Estas reglas son arquitectura estable, no detalles de implementación:
+
+- El historial es memoria lingüística. **Nunca** reactiva por sí solo ARCA, cartera, alta, calculadoras, envíos ni otra acción.
+- Los contextos operativos viven en `chat_state.py`, están ligados a `chat_id` y tienen TTL. No volver a crear claves de `session` sin expiración para esas funciones.
+- ARCA permanece determinístico antes de Gemini; no exponer sus tools al modelo general.
+- Gemini recibe una **allowlist mínima de tools según la intención del turno**. No volver a ofrecer todas las tools juntas.
+- Internet sólo se habilita por pedido explícito del usuario.
+- Una vez que una llamada del turno eligió modelo, el resto del tool-loop usa ese mismo modelo. No mezclar modelos dentro de una respuesta lógica.
+- Las function responses deben volver como `Content(role="user", parts=[function_response...])` y conservar `call.id` cuando el SDK lo admita.
+- El último adjunto puede actuar como documento activo efímero sólo en follow-ups documentales claros; nunca heredarlo indiscriminadamente a mensajes no relacionados.
+- Metadata de compañías está aislada por compañía. Ausencia de fichas = evidencia insuficiente, no fallback a otra aseguradora.
+
+## 17. Normalizador universal de cotizaciones
+
+- Primero preservar **dato original**; después normalizar. Nunca descartar código/nombre/franquicia/precio fuente por simplificar la UI.
+- Compañías equivalentes por alias/acentos/sufijos deben canonicalizar a una sola identidad (`San Cristobal`, `San Cristóbal Seguros`, etc.).
+- Una cotización desconocida puede normalizarse por descripción explícita aunque no exista parser específico de esa compañía.
+- Tablas PDF deben recorrer todas las filas de cobertura; no detenerse en la primera alternativa.
+- Variantes Todo Riesgo con el mismo código original pero distinta franquicia son alternativas distintas y no se deduplican.
+- Todo Riesgo se presenta visualmente como `D<porcentaje>` cuando el porcentaje está explícito: 1.5% → `D1.5`, 2% → `D2`, 2.5% → `D2.5`, 3% → `D3`.
+- Ordenar ese grupo por porcentaje ascendente, preservando importes concretos de franquicia y precio.
+- Si el documento no aporta información suficiente, dejar `SIN_CLASIFICAR`; no inferir por un código de compañía desconocida.
+
+## 18. Controles globales
+
+- Tema debe ser compacto e icon-only: mostrar sólo sol o luna, sin cápsula/switch ancho ni área visual invisible.
+- Tema, Ajustes y Salir forman parte de la barra; no flotan ni siguen el scroll.
+- Salir usa el mismo lenguaje cromático que Ajustes. **No rojo** en estado normal ni hover.

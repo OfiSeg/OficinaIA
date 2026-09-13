@@ -10,7 +10,7 @@ import re
 import dispatch_service
 import arca_service
 import insured_profile
-from companias import normalizar_compania
+from companias import normalizar_compania, aliases_companias
 from envios_ya_utils import normalizar_patente, normalizar_telefono_argentina, preparar_envios_ya
 
 
@@ -161,13 +161,15 @@ def _fuente_contextual_historial(historial):
 
 
 def _contexto_es_arca(historial, arca_context=None):
-    if isinstance(arca_context, dict) and arca_context.get("fuente") == "ARCA":
-        return True
-    return _fuente_contextual_historial(historial) == "ARCA"
+    # El historial sirve para lenguaje, NO para reactivar una herramienta.
+    # Sólo un contexto ARCA vigente/expreso puede consumir un follow-up desnudo.
+    return bool(isinstance(arca_context, dict) and arca_context.get("fuente") == "ARCA")
 
 
 def _contexto_es_cartera(historial):
-    return _fuente_contextual_historial(historial) == "CARTERA"
+    # No se reactiva CARTERA por texto histórico. El contexto estructurado vivo
+    # se resuelve en excel_conversation_context antes de llegar a este parser.
+    return False
 
 
 def _indice_seleccion(texto):
@@ -193,16 +195,45 @@ def _parece_cuit_aislado(texto):
 
 
 def _parece_nombre_persona(texto):
+    """Sólo considera nombres *desnudos*, no consultas documentales ni compañías.
+
+    Antes frases como "cuántos remolques contempla Federación Patronal" podían
+    parecer un nombre de 5 tokens y disparar ARCA.
+    """
     raw = str(texto or "").strip()
     if not raw or len(raw) > 80:
         return False
     if re.search(r"[0-9/@]", raw):
         return False
+
+    n = _norm_chat(raw)
+    # Cualquier alias de compañía conocido invalida la hipótesis de persona.
+    for alias, (_codigo, display) in aliases_companias().items():
+        for candidato in (alias, display):
+            c = _norm_chat(candidato)
+            if c and re.search(rf"(?<![a-z0-9]){re.escape(c)}(?![a-z0-9])", n):
+                return False
+
+    # Las consultas de seguros/documentación tampoco son nombres de personas.
+    bloqueadores = {
+        "cuantos", "cuantas", "cantidad", "contempla", "contemplan", "cubre", "cubren",
+        "cobertura", "coberturas", "grua", "gruas", "remolque", "remolques",
+        "asistencia", "asistencias", "servicio", "servicios", "franquicia", "franquicias",
+        "compania", "companias", "aseguradora", "aseguradoras", "seguro", "seguros",
+        "incendio", "robo", "destruccion", "responsabilidad", "civil", "precio", "precios",
+        "plan", "planes", "evento", "eventos", "kilometro", "kilometros",
+        "cartera", "asegurados", "buscar", "busca", "buscame",
+    }
+
     tokens = re.findall(r"[A-Za-zÁÉÍÓÚáéíóúÑñ]{2,}", raw)
     if len(tokens) < 2 or len(tokens) > 5:
         return False
-    stop = {"hola", "buen", "buenas", "gracias", "che", "consulta", "poliza", "patente", "asegurado", "seguro"}
-    return not any(t.lower() in stop for t in tokens)
+    tokens_n = {_norm_chat(t) for t in tokens}
+    if tokens_n & bloqueadores:
+        return False
+
+    stop = {"hola", "buen", "buenas", "gracias", "che", "consulta", "poliza", "patente", "asegurado"}
+    return not any(_norm_chat(t) in stop for t in tokens)
 
 
 def _extraer_objetivo_cuit(texto):
@@ -292,11 +323,40 @@ def _resolver_archivo_para_arca(adjuntos):
     return None, "No pude detectar un DNI legible en el archivo. No hago búsqueda ARCA sólo por nombre si no hay intención y datos suficientes."
 
 
-def parsear_cuit_arca(mensaje, *, historial=None, arca_context=None, adjuntos=None):
+def parsear_cuit_arca(mensaje, *, historial=None, arca_context=None, source_choice_pending=None, adjuntos=None):
     texto = str(mensaje or "").strip()
     n = _norm_chat(texto)
     if not texto:
         return None
+
+    # Una elección de fuente pendiente es estado explícito y efímero. Permite
+    # responder simplemente "ARCA" o "Mi cartera" a la pregunta previa sin
+    # reinterpretar esa palabra como archivo/nombre ni dejar el router pegado.
+    pending_query = ""
+    if isinstance(source_choice_pending, dict):
+        pending_query = str(source_choice_pending.get("query") or "").strip()
+
+    if pending_query and n in {"arca", "padron arca", "padron", "cuit", "cuil", "padron arca cuit"}:
+        if _parece_dni_aislado(pending_query):
+            resultado = arca_service.resolver_cuit_por_dni(pending_query)
+        elif _parece_cuit_aislado(pending_query):
+            c = arca_service.normalizar_cuit(pending_query)
+            resultado = arca_service.resolver_cuit_por_dni(c[2:10]) if c else {"status": "invalid"}
+        else:
+            resultado = arca_service.buscar_personas_arca(pending_query, limite=10)
+        return {"resultado": resultado, "contexto": _contexto_desde_resultado(resultado), "clear_source_choice": True}
+
+    if pending_query and n in {"mi cartera", "cartera", "en mi cartera"}:
+        return {"seleccion_fuente": "CARTERA", "query": pending_query, "clear_source_choice": True}
+
+    # "ARCA" solo, fuera de una selección pendiente, activa el modo de fuente
+    # y pide un dato. Nunca significa "leer DNI de un archivo".
+    if n in {"arca", "padron arca", "padron", "cuit", "cuil", "padron arca cuit"}:
+        return {
+            "modo_arca": True,
+            "respuesta": "ARCA listo. Pasame un DNI, CUIT/CUIL o nombre para buscar en el padrón.",
+            "contexto": {"fuente": "ARCA"},
+        }
 
     seleccion = _indice_seleccion(texto)
     if seleccion is not None and isinstance(arca_context, dict):
@@ -400,7 +460,7 @@ def _formatear_ficha_operativa(ficha):
     veh = len(ficha.get("vehiculos") or [])
     return f"Ficha de {nombre}: {total} registro{'s' if total != 1 else ''} y {veh} vehículo{'s' if veh != 1 else ''} relacionado{'s' if veh != 1 else ''}."
 
-def procesar(mensaje, *, leer_excel, normalizar_encabezado, libros_excel, historial=None, arca_context=None, adjuntos=None):
+def procesar(mensaje, *, leer_excel, normalizar_encabezado, libros_excel, historial=None, arca_context=None, source_choice_pending=None, adjuntos=None):
     texto_inicial = str(mensaje or "").strip()
     m_patente = re.match(r"^/patente\b\s*(.*)$", texto_inicial, re.I)
     if m_patente:
@@ -425,8 +485,17 @@ def procesar(mensaje, *, leer_excel, normalizar_encabezado, libros_excel, histor
             payload_extra={"ficha_operativa_asegurado": ficha},
         )
 
-    arca = parsear_cuit_arca(mensaje, historial=historial, arca_context=arca_context, adjuntos=adjuntos)
+    arca = parsear_cuit_arca(mensaje, historial=historial, arca_context=arca_context, source_choice_pending=source_choice_pending, adjuntos=adjuntos)
     if arca is not None:
+        if arca.get("seleccion_fuente") == "CARTERA":
+            ficha = insured_profile.construir_ficha(arca.get("query"), leer_excel)
+            return CommandResult(
+                True,
+                _formatear_ficha_operativa(ficha),
+                payload_extra={"ficha_operativa_asegurado": ficha, "clear_source_choice": True, "source_selected": "CARTERA"},
+            )
+        if arca.get("modo_arca"):
+            return CommandResult(True, arca.get("respuesta"), payload_extra={"arca_context": arca.get("contexto") or {"fuente": "ARCA"}, "clear_source_choice": True})
         if arca.get("estado") is not None:
             e = arca["estado"]
             respuesta = (
@@ -438,11 +507,17 @@ def procesar(mensaje, *, leer_excel, normalizar_encabezado, libros_excel, histor
             )
             return CommandResult(True, respuesta, payload_extra={"arca_context": arca.get("contexto") or {"fuente":"ARCA"}})
         if arca.get("pregunta_fuente"):
-            return CommandResult(True, arca["respuesta"], payload_extra={"arca_context": arca.get("contexto") or {"fuente":"ARCA"}})
+            # Preguntar la fuente NO equivale a activar ARCA. Antes quedaba
+            # session["arca_context"] pegado incluso sin elección del usuario.
+            return CommandResult(True, arca["respuesta"], payload_extra={"source_choice_pending": {"query": texto_inicial}})
         if arca.get("error"):
-            return CommandResult(True, arca["error"], payload_extra={"arca_context": arca.get("contexto") or {"fuente":"ARCA"}})
+            # Un error/uso incompleto tampoco deja una fuente activa.
+            return CommandResult(True, arca["error"])
         respuesta = _formatear_resultado_arca(arca.get("resultado"))
-        return CommandResult(True, respuesta, payload_extra={"arca_context": arca.get("contexto") or _contexto_desde_resultado(arca.get("resultado"))})
+        payload = {"arca_context": arca.get("contexto") or _contexto_desde_resultado(arca.get("resultado"))}
+        if arca.get("clear_source_choice"):
+            payload["clear_source_choice"] = True
+        return CommandResult(True, respuesta, payload_extra=payload)
 
     despacho = dispatch_service.procesar_comando_explicito(mensaje)
     if despacho is not None:

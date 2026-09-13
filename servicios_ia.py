@@ -2,6 +2,7 @@ import re
 import os
 import time
 import json
+import inspect
 from datetime import datetime, date
 from office_time import office_date_string, office_year
 from pathlib import Path
@@ -12,7 +13,7 @@ from ai_gateway import obtener_cliente_gemini, generate_with_fallback, DEFAULT_M
 # forma transitoria, el gateway puede probar 3.8 Flash una vez antes del fallback local.
 SMALLTALK_MODELS = ("gemini-3.5-flash-lite", "gemini-3.8-flash")
 from companias import normalizar_compania, aliases_companias
-from context_router import construir_plan_base, es_consulta_comparativa
+from context_router import construir_plan_base, es_consulta_comparativa, requiere_metadatos
 from sofia_prompt import build_sofia_prompt
 from sofia_tools import TOOL_DEFINITIONS
 from document_search import buscar_en_documentos
@@ -48,10 +49,10 @@ TTL_CACHE_EXCEL_SEGUNDOS = 10
 
 
 def _chat_thinking_config():
-    """Thinking bajo para chat interactivo; documentos conservan su configuración."""
-    nivel = str(runtime_config.get_text("GEMINI_CHAT_THINKING_LEVEL", "low") or "low").strip().lower()
+    """Thinking medio para el chat: routing y fuentes requieren contexto estable."""
+    nivel = str(runtime_config.get_text("GEMINI_CHAT_THINKING_LEVEL", "medium") or "medium").strip().lower()
     if nivel not in {"low", "medium", "high"}:
-        nivel = "low"
+        nivel = "medium"
     try:
         return types.ThinkingConfig(thinking_level=nivel)
     except Exception:
@@ -1048,8 +1049,25 @@ def buscar_en_metadatos(consulta, alcance="puntual"):
     # cuando existen; si no, se consideran todas las fichas cargadas.
     universo = [f for f in fichas if _ficha_pertenece_a_companias(f, companias)]
     if not universo and companias:
-        # No fingimos exhaustividad sobre un universo vacío por una detección de alias.
-        universo = fichas
+        # Aislamiento estricto por compañía: si la consulta nombra una compañía
+        # y no existen fichas internas de esa compañía, JAMÁS usamos fichas de
+        # otras aseguradoras como fallback. Eso puede atribuir evidencia ajena.
+        return {
+            "cantidad": 0,
+            "fichas": [],
+            "fuente": "Metadatos internos",
+            "alcance": alcance,
+            "companias_detectadas": companias,
+            "evidencia_estado": "SIN_INFORMACION_SUFICIENTE",
+            "completitud": {
+                "solicitada": alcance == "exhaustivo",
+                "universo_fichas_cargadas": 0,
+                "fichas_revisadas": 0,
+                "fichas_con_evidencia": 0,
+                "estado": "SIN_FICHAS_DE_LA_COMPANIA",
+                "advertencia": "No hay fichas internas cargadas para la compañía consultada; no se usan datos de otras compañías como reemplazo.",
+            },
+        }
 
     resultados = []
     fichas_con_evidencia = set()
@@ -1743,7 +1761,7 @@ def _partes_function_calls(respuesta):
     return calls
 
 
-def _compactar_historial_para_modelo(historial, max_chars=8000, max_por_turno=1800):
+def _compactar_historial_para_modelo(historial, max_chars=12000, max_por_turno=2200):
     """Convierte el historial visible en memoria conversacional liviana.
 
     La UI y la base conservan los mensajes completos. Sólo el contexto enviado
@@ -1754,7 +1772,7 @@ def _compactar_historial_para_modelo(historial, max_chars=8000, max_por_turno=18
     """
     seleccionados = []
     usados = 0
-    for turno in reversed((historial or [])[-16:]):
+    for turno in reversed((historial or [])[-20:]):
         if not isinstance(turno, dict):
             continue
         rol = turno.get("rol")
@@ -1947,6 +1965,10 @@ def _construir_plan_ejecucion(pregunta, historial=None):
         pregunta_resuelta = f"{pregunta_resuelta}\n[REFERENTE RESUELTO: {referente_compania}]"
 
     base = construir_plan_base(pregunta_resuelta).to_dict()
+    base["permitir_internet"] = _internet_solicitado_explicito(pregunta)
+    base["permitir_envio"] = _solicita_envio_explicito(pregunta)
+    base["permitir_cartera"] = _solicita_cartera_explicita(pregunta)
+    base["permitir_guardado_excel"] = _solicita_guardado_excel(pregunta)
     base["consulta_fuente"] = pregunta_resuelta
     base["contexto_heredado"] = bool(referente_compania)
     if referente_compania:
@@ -2051,24 +2073,110 @@ def _plan_para_prompt(plan):
         f"MOTIVO: {plan.get('motivo', '')}"
     )
 
-def _tools_para_plan(plan):
-    """Evita ofrecer de nuevo a Gemini una fuente que el plan ya ejecutó.
+def _internet_solicitado_explicito(texto):
+    """Internet sólo se habilita cuando el usuario lo pide de forma explícita."""
+    n = _normalizar_texto(texto)
+    if not n:
+        return False
+    patrones = (
+        r"\b(?:busca|buscame|buscar|fijate|revisa|consulta)\b.*\b(?:internet|web|google|online)\b",
+        r"\b(?:en internet|en la web|en google|online)\b",
+        r"\binformacion publica actualizada\b",
+    )
+    return any(re.search(p, n) for p in patrones)
 
-    Sofia conserva las demás herramientas para operaciones determinísticas o
-    ampliaciones excepcionales. Esto elimina el doble owner precontexto/tool.
+
+def _solicita_envio_explicito(texto):
+    n = _normalizar_texto(texto)
+    return bool(re.search(r"\b(?:manda|mandale|mandar|envia|enviale|enviar|correo|mail|whatsapp)\b", n))
+
+
+def _solicita_cartera_explicita(texto):
+    n = _normalizar_texto(texto)
+    if not n:
+        return False
+    return bool(
+        re.search(r"\b(?:cartera|asegurado|asegurados|patente|poliza|polizas|planilla|excel)\b", n)
+        and not requiere_metadatos(n)
+    )
+
+
+def _solicita_guardado_excel(texto):
+    n = _normalizar_texto(texto)
+    return bool(re.search(r"\b(?:guarda|guardar|agrega|agregar|carga|cargar)\b.*\b(?:excel|planilla|asegurado|registro)\b", n))
+
+
+def _part_function_response(call, resultado):
+    """Construye la respuesta de tool con Content(role=user) compatible con SDK viejo/nuevo.
+
+    En SDK recientes se conserva también el id del function call. En versiones
+    anteriores se degrada de forma segura a ``Part.from_function_response``.
     """
+    nombre = str(getattr(call, "name", "") or "")
+    call_id = str(getattr(call, "id", "") or "").strip()
+    payload = {"resultado": resultado}
+
+    if call_id:
+        try:
+            fr = types.FunctionResponse(name=nombre, response=payload, id=call_id)
+            return types.Part(function_response=fr)
+        except Exception:
+            pass
+    try:
+        kwargs = {"name": nombre, "response": payload}
+        try:
+            firma = inspect.signature(types.Part.from_function_response)
+            if call_id and "id" in firma.parameters:
+                kwargs["id"] = call_id
+        except Exception:
+            pass
+        return types.Part.from_function_response(**kwargs)
+    except Exception:
+        # Último fallback para SDKs con constructores más rígidos.
+        return types.Part.from_function_response(name=nombre, response=payload)
+
+
+def _tools_para_plan(plan):
+    """Allowlist estricta de tools por intención.
+
+    El modelo ya no ve ARCA, Excel, Internet y documentación todos juntos.
+    Los routers determinísticos resuelven ARCA antes de Gemini y cada intención
+    expone solamente las herramientas que puede necesitar.
+    """
+    intencion = str(plan.get("intencion") or "general")
     ejecutadas = set(plan.get("fuentes") or [])
-    excluir = ejecutadas & {"buscar_en_metadatos", "comparar_companias", "analizar_excel"}
-    if not excluir:
-        return TOOL_DEFINITIONS
+    permitidas: set[str] = set()
+
+    if intencion == "consulta_documental":
+        # Metadata se precarga; manuales queda como segunda fuente documental.
+        permitidas.update({"buscar_en_manuales", "guardar_metadato_relevante"})
+    elif intencion == "comparacion_companias":
+        # La comparación ya se precarga de forma determinística.
+        permitidas.add("guardar_metadato_relevante")
+    elif intencion == "conteo_excel":
+        permitidas.update({"contar_registros", "buscar_registros_estructurados"})
+    elif intencion == "analisis_excel":
+        permitidas.update({"analizar_excel", "buscar_registros_estructurados", "consultar_excel", "buscar_vehiculos"})
+    elif plan.get("permitir_cartera"):
+        permitidas.update({"consultar_excel", "buscar_registros_estructurados", "buscar_vehiculos", "contar_registros", "analizar_excel"})
+
+    if plan.get("permitir_envio"):
+        permitidas.add("enviar_por_canal")
+    if plan.get("permitir_guardado_excel"):
+        permitidas.add("proponer_registro_excel")
+    if plan.get("permitir_internet"):
+        permitidas.add("buscar_en_internet")
+
+    # Una fuente ya precargada no vuelve a exponerse en el mismo turno.
+    permitidas.difference_update(ejecutadas)
 
     salida = []
     for tool in TOOL_DEFINITIONS:
         declaraciones = list(getattr(tool, "function_declarations", None) or [])
-        filtradas = [d for d in declaraciones if getattr(d, "name", "") not in excluir]
+        filtradas = [d for d in declaraciones if getattr(d, "name", "") in permitidas]
         if filtradas:
             salida.append(types.Tool(function_declarations=filtradas))
-    return salida or TOOL_DEFINITIONS
+    return salida
 
 
 def _mensaje_fuente_interna_no_disponible(error: Exception) -> str | None:
@@ -2274,29 +2382,38 @@ def consultar_gemini(pregunta, contexto="", historial=None, adjunto=None, adjunt
     # ya aplicados en la búsqueda, la primera consulta casi siempre encuentra
     # el dato; 3 vueltas alcanzan de sobra para el flujo normal + 1 reintento.
     LIMITE_VUELTAS = 3
+    # El primer generate puede usar fallback para arrancar el turno; una vez que
+    # un modelo responde, todas las vueltas posteriores quedan fijadas a ese
+    # mismo modelo. Evita mezclar 3.8 Flash y Flash-Lite dentro de una respuesta.
+    modelo_fijado = None
     for _ in range(LIMITE_VUELTAS):
         ultimo_error = None
         respuesta = None
 
         try:
+            tools_turno = _tools_para_plan(plan)
             config_kwargs = {
                 "max_output_tokens": 4096,
-                "tools": _tools_para_plan(plan),
                 # OficinaIA administra manualmente el ciclo Gemini -> tool -> Gemini.
                 # Desactivar AFC evita tener dos orquestadores superpuestos.
                 "automatic_function_calling": types.AutomaticFunctionCallingConfig(disable=True),
             }
+            if tools_turno:
+                config_kwargs["tools"] = tools_turno
             thinking = _chat_thinking_config()
             if thinking is not None:
                 config_kwargs["thinking_config"] = thinking
             config = types.GenerateContentConfig(**config_kwargs)
+            modelos_llamada = (modelo_fijado,) if modelo_fijado else DEFAULT_MODELS
             respuesta, _modelo_usado = generate_with_fallback(
                 client=cliente,
-                models=DEFAULT_MODELS,
+                models=modelos_llamada,
                 contents=contents,
                 config=config,
                 log_prefix="GEMINI",
             )
+            if modelo_fijado is None:
+                modelo_fijado = _modelo_usado
         except Exception as error:
             ultimo_error = error
             respuesta = None
@@ -2326,6 +2443,7 @@ def consultar_gemini(pregunta, contexto="", historial=None, adjunto=None, adjunt
             else respuesta
         )
 
+        respuestas_tools = []
         for call in calls:
             nombre = getattr(call, "name", "")
             argumentos = dict(getattr(call, "args", {}) or {})
@@ -2357,10 +2475,10 @@ def consultar_gemini(pregunta, contexto="", historial=None, adjunto=None, adjunt
                     else None
                 )
 
-            contents.append(types.Part.from_function_response(
-                name=nombre,
-                response={"resultado": resultado},
-            ))
+            respuestas_tools.append(_part_function_response(call, resultado))
+
+        if respuestas_tools:
+            contents.append(types.Content(role="user", parts=respuestas_tools))
 
     if propuesta_excel or propuesta_metadato:
         return (

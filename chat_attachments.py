@@ -1,9 +1,9 @@
 """Caché efímero del último adjunto por chat.
 
-Conserva el adjunto del turno inmediatamente anterior únicamente para una
-reutilización explícita pedida por el usuario. Nunca debe heredarse de forma
-automática en un envío nuevo. No es persistencia documental y se pierde al
-reiniciar el proceso, por diseño.
+Conserva el último adjunto como documento activo efímero del chat (15 minutos).
+Puede reutilizarse en follow-ups documentales claros o en un envío cuando el
+usuario lo pide explícitamente. Nunca se adjunta automáticamente a mensajes no
+relacionados. No es persistencia documental y se pierde al reiniciar el proceso.
 """
 from __future__ import annotations
 import time

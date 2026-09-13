@@ -43,3 +43,64 @@ assert "amparo" in cobertura_federacion("LB1", "")[1].lower()
 assert "destrucción total" not in cobertura_federacion("LB1", "")[1].lower()
 
 print("OK - normalizador universal de cotizaciones")
+
+# Tabla genérica de compañía no registrada: debe leer TODAS las filas y
+# normalizar por la descripción visible, no quedarse sólo con RC.
+tabla = """
+Cotización de Automotores
+Vehículo Cotizado
+Marca: VOLKSWAGEN
+Modelo: AMAROK 2,0L
+Submodelo: VOLKSWAGEN AMAROK 2,0L 122 CV ST9
+Año: 2024 Valor: $ 8.999.999
+Cobertura Suma Prima Premio c/IVA 4 Cuotas
+A - RESPONSABILIDAD CIVIL
+$ 92.016,96
+$ 167.999,28
+$ 41.999,82
+B - TOTALES CON DESTRUCCION TOTAL
+$ 8.999.999
+$ 156.528,96
+$ 257.738,03
+$ 64.434,51
+B1 - TOTALES SIN DESTRUCCION TOTAL
+$ 8.999.999
+$ 152.496,96
+$ 252.129,39
+$ 63.032,35
+C - TOTALES Y PARCIALES CON DESTRUCCION TOTAL
+$ 8.999.999
+$ 180.720,96
+$ 291.390,08
+$ 72.847,52
+C1 - TOTALES Y PARCIALES SIN DESTRUCCION TOTAL
+$ 8.999.999
+$ 178.704,96
+$ 288.585,77
+$ 72.146,44
+CF - TOT.Y PARC.C/DESTRUC.TOTAL.CRIST. Y PARABRIS
+$ 8.999.999
+$ 182.736,96
+$ 294.194,42
+$ 73.548,61
+"""
+d = normalizar_texto_cotizacion(tabla)
+assert d["cantidad"] == 6, d
+assert [x["codigo_original"] for x in d["coberturas"]] == ["A", "B", "B1", "C", "C1", "CF"], d
+assert [x["perfil_normalizado"] for x in d["coberturas"][:5]] == ["RC", "B", "B1", "C", "C1"], d
+assert d["coberturas"][1]["precio_cuota_formateado"] == "$64.434,51", d
+
+# Todo Riesgo universal: mismo código fuente D, pero etiqueta visual por % de
+# franquicia y orden ascendente, como ya se hace conceptualmente en Mercantil.
+import quote_normalizer as _qn
+vision = _qn._normalizar_dato_vision({
+    "es_cotizacion": True,
+    "compania": "San Cristóbal Seguros",
+    "coberturas": [
+        {"codigo":"D", "nombre":"Todo riesgo con franquicia 2.5% SA", "descripcion":"Responsabilidad Civil. Robo total y parcial. Incendio total y parcial. Daños parciales por accidente.", "precio":"255643", "franquicia_pct":"2.5"},
+        {"codigo":"D", "nombre":"Todo riesgo con franquicia 1.5% SA", "descripcion":"Responsabilidad Civil. Robo total y parcial. Incendio total y parcial. Daños parciales por accidente.", "precio":"271646", "franquicia_pct":"1.5"},
+        {"codigo":"D", "nombre":"Todo riesgo con franquicia 2% SA", "descripcion":"Responsabilidad Civil. Robo total y parcial. Incendio total y parcial. Daños parciales por accidente.", "precio":"262045", "franquicia_pct":"2"},
+    ],
+})
+assert vision["compania"] == "San Cristóbal", vision
+assert [x["codigo_visual"] for x in vision["coberturas"]] == ["D1.5", "D2", "D2.5"], vision

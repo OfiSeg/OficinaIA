@@ -40,7 +40,7 @@ DEFAULT_COMPANY_BRANDS = {
         "color": "#FF931E",
         "aliases": ["Ags", "AGS", "AgroSalta", "Agrosalta", "Agro Salta"],
     },
-    "san-cristobal": {"aliases": ["San Cristobal", "San Cristóbal"]},
+    "san-cristobal": {"aliases": ["San Cristobal", "San Cristóbal", "San Cristobal Seguros", "San Cristóbal Seguros"]},
     "euroamerica": {"aliases": ["EuroAmerica", "Euro America"]},
     "allianz": {"aliases": ["Allianz"]},
 }

@@ -131,6 +131,7 @@ import system_health
 import service_diagnostics
 import dispatch_service
 import chat_attachments
+import chat_state
 import chat_media_store
 import excel_conversation_context
 from excel_records import ExcelRecordService, normalizar_encabezado
@@ -1425,7 +1426,7 @@ def _guardar_mensaje(chat_id, rol, contenido, metadata=None):
     return _chat_store.guardar_mensaje(chat_id, rol, contenido, metadata=metadata)
 
 
-def _historial_desde_db(chat_id, usuario, limite=10):
+def _historial_desde_db(chat_id, usuario, limite=20):
     return _chat_store.historial(chat_id, usuario, limite=limite)
 
 
@@ -1751,7 +1752,7 @@ def api_excel_agregar_fila():
             tipo_propuesta=tipo_propuesta,
         )
         session.pop("guardar_asegurado_libro_id", None)
-        session.pop("alta_activa", None)
+        chat_state.limpiar(session, "alta_activa")
         texto_envios_ya = None
         envios_advertencias = []
         envios_telefono_valido = True
@@ -1798,7 +1799,7 @@ def api_alta_preparar_salidas():
     except (TypeError, ValueError):
         chat_id = None
     if chat_id and _validar_chat(chat_id, session["usuario"]):
-        session["alta_activa"] = {"chat_id": chat_id, "campos": dict(campos)}
+        chat_state.guardar(session, "alta_activa", {"campos": dict(campos)}, chat_id=chat_id)
 
     return jsonify({
         "ok": True,
@@ -1856,6 +1857,35 @@ def _mensaje_error_chat(error):
         "Ocurrió un problema al procesar la consulta. Intentá nuevamente. "
         "Si el problema continúa, avisá al administrador."
     )
+
+
+def _es_followup_documento_activo(mensaje, historial):
+    """Reutiliza el último adjunto sólo ante una referencia conversacional clara.
+
+    El documento NO se hereda en todos los turnos. Sirve para continuaciones
+    naturales como "¿y qué dice de la franquicia?" inmediatamente después de
+    adjuntar una póliza/PDF, sin contaminar consultas posteriores no relacionadas.
+    """
+    texto = str(mensaje or "").strip()
+    if not texto:
+        return False
+    n = re.sub(r"\s+", " ", texto.lower()).strip()
+    if re.search(r"\b(?:este|ese|esa|el|la)\s+(?:pdf|archivo|documento|poliza|póliza|cotizacion|cotización|cedula|cédula)\b", n):
+        return True
+    if re.search(r"\b(?:pdf|archivo|documento|poliza|póliza|cotizacion|cotización|cedula|cédula)\b", n) and len(n.split()) <= 18:
+        return True
+
+    ultimo_usuario = ""
+    for turno in reversed(list(historial or [])[-6:]):
+        if isinstance(turno, dict) and turno.get("rol") == "user":
+            ultimo_usuario = str(turno.get("contenido") or "")
+            if ultimo_usuario:
+                break
+    if "[Adjunto:" not in ultimo_usuario and "[Adjuntos:" not in ultimo_usuario:
+        return False
+    if len(n.split()) > 14:
+        return False
+    return bool(re.match(r"^(?:y\b|que\b|qué\b|como\b|cómo\b|cual\b|cuál\b|cuanto\b|cuánto\b|eso\b|esa\b|ese\b)", n))
 
 
 def _envolver_chat_con_manejo_de_errores(func):
@@ -1958,8 +1988,11 @@ def chat():
     else:
         _auto_titulo_si_corresponde(chat_id, session["usuario"], mensaje)
 
+    # Todos los contextos operativos comparten política de expiración/chat.
+    chat_state.podar(session, chat_id=chat_id)
+
     logger.info("CHAT[%s] etapa=historial_inicio chat_id=%s", getattr(g, "chat_request_id", "-"), chat_id)
-    historial_db = _historial_desde_db(chat_id, session["usuario"], limite=10)
+    historial_db = _historial_desde_db(chat_id, session["usuario"], limite=20)
     if historial_db:
         historial = historial_db
     else:
@@ -2012,9 +2045,9 @@ def chat():
     # preservando la política de seguridad existente.
     adjunto_anterior = None
     if not adjuntos_actuales:
+        # El cache ya tiene TTL propio. No se consume por el mero hecho de abrir
+        # otro turno: sólo se reutiliza si el usuario lo pide explícitamente.
         adjunto_anterior = chat_attachments.obtener(chat_id)
-        if adjunto_anterior is not None:
-            chat_attachments.limpiar(chat_id)
     dispatch_service.set_turn_attachments(adjuntos_actuales)
     dispatch_service.set_previous_attachments([adjunto_anterior] if adjunto_anterior else [])
 
@@ -2177,7 +2210,7 @@ def chat():
     # Un adjunto nuevo invalida el alta conversacional previa. Si el nuevo
     # archivo es póliza, el handler establece inmediatamente la nueva.
     if adjunto_actual is not None:
-        session.pop("alta_activa", None)
+        chat_state.limpiar(session, "alta_activa")
 
     especial = chat_special.procesar(
         chat_id=chat_id,
@@ -2194,7 +2227,7 @@ def chat():
             logger.info("CHAT[%s] etapa=alta_resuelta", getattr(g, "chat_request_id", "-"))
             campos_alta = especial.payload_extra.get("campos_guardar_alta_asegurado")
             if isinstance(campos_alta, dict):
-                session["alta_activa"] = {"chat_id": chat_id, "campos": dict(campos_alta)}
+                chat_state.guardar(session, "alta_activa", {"campos": dict(campos_alta)}, chat_id=chat_id)
         ui_payload = {
             "propuesta_excel": None,
             "propuesta_metadato": None,
@@ -2214,12 +2247,8 @@ def chat():
     # ======================================================
     # COMANDOS DETERMINÍSTICOS — /envios ya, /guardar asegurado
     # ======================================================
-    arca_context_activo = session.get("arca_context")
-    if isinstance(arca_context_activo, dict):
-        # ARCA también es contexto conversacional: no debe filtrarse entre chats.
-        if str(arca_context_activo.get("chat_id") or "") != str(chat_id or ""):
-            arca_context_activo = None
-            session.pop("arca_context", None)
+    arca_context_activo = chat_state.obtener(session, "arca_context", chat_id=chat_id)
+    source_choice_pending = chat_state.obtener(session, "source_choice_pending", chat_id=chat_id)
 
     comando = chat_commands.procesar(
         mensaje,
@@ -2228,6 +2257,7 @@ def chat():
         libros_excel=LIBROS_EXCEL,
         historial=historial,
         arca_context=arca_context_activo,
+        source_choice_pending=source_choice_pending,
         adjuntos=adjuntos_actuales,
     )
     if comando.atendido:
@@ -2235,13 +2265,22 @@ def chat():
             # Compatibilidad con el endpoint de confirmación existente.
             # El destino vive sólo hasta el próximo turno.
             session["guardar_asegurado_libro_id"] = comando.libro_id
+        if isinstance(comando.payload_extra, dict) and comando.payload_extra.get("source_choice_pending"):
+            chat_state.guardar(
+                session, "source_choice_pending",
+                dict(comando.payload_extra.get("source_choice_pending") or {}),
+                chat_id=chat_id,
+            )
+        if isinstance(comando.payload_extra, dict) and comando.payload_extra.get("clear_source_choice"):
+            chat_state.limpiar(session, "source_choice_pending")
+        if isinstance(comando.payload_extra, dict) and comando.payload_extra.get("source_selected") == "CARTERA":
+            chat_state.cambiar_fuente(session, "CARTERA")
         if isinstance(comando.payload_extra, dict) and comando.payload_extra.get("arca_context"):
             # Si ARCA fue la fuente realmente usada, pasa a ser el contexto activo
             # de ESTE chat y se invalida el conjunto conversacional de cartera.
             nuevo_arca_context = dict(comando.payload_extra.get("arca_context") or {})
-            nuevo_arca_context["chat_id"] = str(chat_id or "")
-            session["arca_context"] = nuevo_arca_context
-            excel_conversation_context.limpiar_contexto(session)
+            chat_state.cambiar_fuente(session, "ARCA")
+            chat_state.guardar(session, "arca_context", nuevo_arca_context, chat_id=chat_id)
         ui_payload = {
             "propuesta_excel": comando.propuesta_excel,
             "propuesta_metadato": None,
@@ -2263,7 +2302,7 @@ def chat():
     # ======================================================
     # ALTA ACTIVA — correcciones contextuales del mismo registro
     # ======================================================
-    alta_activa = session.get("alta_activa") or {}
+    alta_activa = chat_state.obtener(session, "alta_activa", chat_id=chat_id) or {}
     if (
         adjunto_actual is None
         and int(alta_activa.get("chat_id") or 0) == int(chat_id or 0)
@@ -2271,7 +2310,7 @@ def chat():
     ):
         actualizacion_alta = alta_context.aplicar_actualizacion(alta_activa["campos"], mensaje)
         if actualizacion_alta.actualizado:
-            session["alta_activa"] = {"chat_id": chat_id, "campos": actualizacion_alta.campos}
+            chat_state.guardar(session, "alta_activa", {"campos": actualizacion_alta.campos}, chat_id=chat_id)
             tabulado_actual = alta_ops.armar_tabulado_desde_campos(actualizacion_alta.campos)
             preparado_envios = preparar_envios_ya(actualizacion_alta.campos)
             respuesta_actualizacion = "Actualicé " + ", ".join(actualizacion_alta.cambios) + " en el alta actual."
@@ -2321,6 +2360,14 @@ def chat():
     # dentro del mismo request/cache que usa Sofia. Acá sólo viaja el contexto
     # explícito del adjunto cuando corresponde.
     contexto = contexto_adjunto
+    adjuntos_para_ia = list(adjuntos_actuales)
+    if not adjuntos_para_ia and _es_followup_documento_activo(mensaje, historial):
+        documento_activo = chat_attachments.obtener(chat_id)
+        if documento_activo is not None:
+            adjuntos_para_ia = [documento_activo]
+            if getattr(documento_activo, "contexto", ""):
+                contexto = str(documento_activo.contexto)
+            logger.info("CHAT[%s] reutilizando documento activo para follow-up", getattr(g, "chat_request_id", "-"))
 
     # ======================================================
     # GEMINI
@@ -2331,7 +2378,7 @@ def chat():
     try:
         logger.info("CHAT[%s] Gemini inicio", getattr(g, "chat_request_id", "-"))
         resultado_ia = chat_ai.responder(
-            mensaje, contexto, historial, adjunto=adjunto_actual, adjuntos=adjuntos_actuales
+            mensaje, contexto, historial, adjunto=(adjuntos_para_ia[0] if adjuntos_para_ia else None), adjuntos=adjuntos_para_ia
         )
         respuesta = resultado_ia.respuesta
         propuesta_excel = resultado_ia.propuesta_excel

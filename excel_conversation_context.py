@@ -13,6 +13,7 @@ from typing import Any
 
 from office_time import office_today, date_string
 import servicios_ia
+import chat_state
 
 
 MESES = {
@@ -134,35 +135,34 @@ def _plural(n: int, uno: str, varios: str) -> str:
 
 
 def guardar_contexto(session_obj, *, chat_id, filtros: dict, cantidad: int, registros: list[dict] | None, etiqueta: str, origen: str):
-    # La última fuente realmente usada manda. Al activar un conjunto de cartera
-    # invalidamos cualquier selección ARCA vieja para que un nombre u ordinal
-    # posterior no sea secuestrado por el padrón público.
-    session_obj.pop("arca_context", None)
-    session_obj["registro_contexto_activo"] = {
-        "tipo": "registro_excel_set",
-        "chat_id": str(chat_id or ""),
-        "filtros": dict(filtros or {}),
-        "cantidad": int(cantidad or 0),
-        # Sólo se guarda una muestra chica para no inflar la cookie de sesión.
-        "registros": list(registros or [])[:10],
-        "etiqueta": str(etiqueta or "").strip(),
-        "origen": str(origen or "").strip(),
-    }
+    # Una única política de estado efímero gobierna cartera/ARCA/alta.
+    # Al confirmar CARTERA se invalida ARCA y el contexto expira solo.
+    chat_state.cambiar_fuente(session_obj, "CARTERA")
+    return chat_state.guardar(
+        session_obj,
+        "registro_contexto_activo",
+        {
+            "tipo": "registro_excel_set",
+            "filtros": dict(filtros or {}),
+            "cantidad": int(cantidad or 0),
+            # Sólo se guarda una muestra chica para no inflar la cookie de sesión.
+            "registros": list(registros or [])[:10],
+            "etiqueta": str(etiqueta or "").strip(),
+            "origen": str(origen or "").strip(),
+        },
+        chat_id=chat_id,
+    )
 
 
 def obtener_contexto(session_obj, chat_id) -> dict | None:
-    ctx = session_obj.get("registro_contexto_activo") or {}
-    if not isinstance(ctx, dict):
-        return None
-    if str(ctx.get("chat_id") or "") != str(chat_id or ""):
-        return None
-    if ctx.get("tipo") != "registro_excel_set":
+    ctx = chat_state.obtener(session_obj, "registro_contexto_activo", chat_id=chat_id)
+    if not isinstance(ctx, dict) or ctx.get("tipo") != "registro_excel_set":
         return None
     return ctx
 
 
 def limpiar_contexto(session_obj):
-    session_obj.pop("registro_contexto_activo", None)
+    chat_state.limpiar(session_obj, "registro_contexto_activo")
 
 
 def responder_conteo_temporal(mensaje: str, *, session_obj, chat_id) -> str | None:
@@ -198,15 +198,31 @@ def responder_conteo_temporal(mensaje: str, *, session_obj, chat_id) -> str | No
 
 
 def _es_pronombre_o_followup_registro(mensaje: str) -> bool:
+    """Detecta follow-ups inequívocos sobre UN registro de cartera.
+
+    Pronombres como ``su``/``sus`` por sí solos son demasiado ambiguos: también se
+    usan para compañías ("sus coberturas", "sus grúas"). Por eso sólo activamos
+    este contexto cuando el mensaje pide campos/detalles propios de un registro.
+    """
     t = normalizar(mensaje)
-    if not t or len(t.split()) > 8:
+    if not t or len(t.split()) > 10:
         return False
+
+    # Señales documentales/de compañía: nunca deben caer al contexto de cartera.
+    if any(x in t for x in (
+        "cobertura", "coberturas", "grua", "gruas", "remolque", "remolques",
+        "asistencia", "servicio", "servicios", "franquicia", "franquicias",
+        "incendio", "robo", "destruccion", "responsabilidad civil", "rc",
+    )):
+        return False
+
     patrones = (
-        r"\b(sus|su|ese|esa|eso|el mismo|la misma|el anterior|el de hoy|el que cargue|el que te dije)\b",
         r"^y\s+(la\s+)?(patente|cia|compania|vehiculo|medio|cp|importe|precio|mail|telefono|numero)\b",
         r"^(patente|cia|compania|vehiculo|medio de pago|cp|importe|precio|mail|telefono|numero)\??$",
-        r"^(decime|dame|pasame|mostrame|mostrame|tirame)\s+(sus|su|los|las)?\s*(detalles|datos)\b",
+        r"^(decime|dame|pasame|mostrame|tirame)\s+(sus|su|los|las)?\s*(detalles|datos)\b",
+        r"^(sus|su)\s+(patente|cia|compania|vehiculo|medio de pago|cp|importe|precio|mail|telefono|numero)\b",
         r"^(cuanto paga|cuanto sale|que paga|que importe)\??$",
+        r"^(ese|esa|el mismo|la misma|el anterior|el de hoy|el que cargue|el que te dije)\s*(registro|asegurado|cliente)?\s*(detalles|datos)?\??$",
     )
     return any(re.search(p, t) for p in patrones)
 
