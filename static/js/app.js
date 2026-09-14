@@ -11,6 +11,24 @@ async function leerJsonSeguro(response){
 }
 const esc=s=>String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#039;'}[c]));
 
+let chatPageAbortController=null;
+function iniciarCicloPaginaChat(){
+  try{chatPageAbortController?.abort()}catch(_){}
+  chatPageAbortController=new AbortController();
+  const signal=chatPageAbortController.signal;
+  document.addEventListener('oia:before-partial-navigation',()=>{
+    try{chatPageAbortController?.abort()}catch(_){}
+    if(dictationActive){try{finalizarDictado({cancelar:true})}catch(_){}}
+  },{once:true,signal});
+  return signal;
+}
+
+function señalPaginaChat(){
+  // Un signal ya abortado también es útil: fetch falla inmediatamente en vez
+  // de arrancar una request tardía de una vista de Chat que ya fue reemplazada.
+  return chatPageAbortController?.signal;
+}
+
 function oiaIconHtml(name, className=''){
   const sprite=String(window.OIA_ICON_SPRITE||'/static/icons/oficinaia/sprite.svg');
   const safe=String(name||'info').replace(/[^a-z0-9-]/gi,'');
@@ -183,7 +201,7 @@ function cerrarLightboxImagen(){
   if(img)img.removeAttribute('src');
   document.body.classList.remove('chat-lightbox-open');
 }
-function inicializarLightboxChat(){
+function inicializarLightboxChat(pageSignal=null){
   const modal=document.getElementById('chatImageLightbox');
   if(!modal)return;
   // Sacarlo de chat-window evita cualquier clipping por overflow y hace que el
@@ -194,7 +212,7 @@ function inicializarLightboxChat(){
   modal.dataset.wired='1';
   close?.addEventListener('click',cerrarLightboxImagen);
   modal.addEventListener('click',e=>{if(e.target===modal)cerrarLightboxImagen()});
-  document.addEventListener('keydown',e=>{if(e.key==='Escape'&&!modal.hidden)cerrarLightboxImagen()});
+  document.addEventListener('keydown',e=>{if(e.key==='Escape'&&!modal.hidden)cerrarLightboxImagen()},pageSignal?{signal:pageSignal}:undefined);
 }
 
 function iconoAdjuntoWhatsApp(tipo){
@@ -486,7 +504,7 @@ async function cargarListaChats(){
   const box=document.getElementById('chatList');
   if(!box)return;
   asegurarBuscadorChats();
-  const r=await fetch('/api/chats',{credentials:'same-origin'});
+  const r=await fetch('/api/chats',{credentials:'same-origin',signal:señalPaginaChat()});
   const d=await leerJsonSeguro(r);
   if(!r.ok||d.ok===false)throw new Error(d.error||'No se pudo cargar el historial.');
   _chatsCache=Array.isArray(d.chats)?d.chats:[];
@@ -526,6 +544,7 @@ function iniciarRenombreChat(id,tituloActual,row){
         method:'PATCH',
         headers:{'Content-Type':'application/json'},
         credentials:'same-origin',
+        signal:señalPaginaChat(),
         body:JSON.stringify({titulo:nuevo})
       });
       const d=await leerJsonSeguro(r);
@@ -535,6 +554,7 @@ function iniciarRenombreChat(id,tituloActual,row){
       renderListaChats(_chatsCache);
       if(window.showToast)showToast('Conversación renombrada','success');
     }catch(e){
+      if(e?.name==='AbortError')return;
       if(window.showToast)showToast(e?.message||'No se pudo renombrar','error');
       renderListaChats(_chatsCache);
     }
@@ -547,11 +567,12 @@ function iniciarRenombreChat(id,tituloActual,row){
 }
 
 async function abrirChat(id){
-  const r=await fetch('/api/chats/'+id,{credentials:'same-origin'});
+  const r=await fetch('/api/chats/'+id,{credentials:'same-origin',signal:señalPaginaChat()});
   const d=await leerJsonSeguro(r);
   if(!r.ok||!d.ok)throw new Error(d.error||'No se pudo abrir la conversación.');
   currentChatId=id;
   const c=document.getElementById('chat');
+  if(!c)return;
   c.innerHTML='';
   if(!d.mensajes.length){
     c.innerHTML=htmlWelcomeChat('default');c.classList.add('history-empty');wireWelcomeWorkflows(c);try{c.scrollTop=0}catch(_){}
@@ -577,7 +598,8 @@ async function nuevoChat(){
     method:'POST',
     headers:{'Content-Type':'application/json'},
     body:JSON.stringify({titulo:'Nueva conversación'}),
-    credentials:'same-origin'
+    credentials:'same-origin',
+    signal:señalPaginaChat()
   });
   const d=await leerJsonSeguro(r);
   if(d.ok)await abrirChat(d.id);
@@ -585,7 +607,7 @@ async function nuevoChat(){
 
 async function eliminarChat(id){
   try{
-    const r=await fetch('/api/chats/'+id,{method:'DELETE',credentials:'same-origin'});
+    const r=await fetch('/api/chats/'+id,{method:'DELETE',credentials:'same-origin',signal:señalPaginaChat()});
     if(!r.ok){
       if(window.showToast)showToast('No se pudo eliminar la conversación','error');
       return;
@@ -597,7 +619,8 @@ async function eliminarChat(id){
     }
     await cargarListaChats();
     if(window.showToast)showToast('Conversación eliminada','success');
-  }catch(_){
+  }catch(error){
+    if(error?.name==='AbortError')return;
     if(window.showToast)showToast('No se pudo eliminar la conversación','error');
   }
 }
@@ -2128,28 +2151,60 @@ let manualQuoteSources=[];
 let quoteSourceSeq=1;
 let quoteVisualSeq=1;
 const quoteVisualOrder=new Map();
+let quoteCompanyCatalog=[];
+let quoteCompanyCatalogPromise=null;
 
 function normalizarClaveMarca(valor){
   return String(valor||'').normalize('NFD').replace(/[\u0300-\u036f]/g,'').toLowerCase().replace(/[^a-z0-9]+/g,' ').trim();
 }
+async function asegurarCatalogoCompaniasCotizacion(){
+  if(quoteCompanyCatalog.length)return quoteCompanyCatalog;
+  if(!quoteCompanyCatalogPromise){
+    quoteCompanyCatalogPromise=fetch('/api/cotizaciones/companias',{credentials:'same-origin'})
+      .then(leerJsonSeguro)
+      .then(data=>{quoteCompanyCatalog=Array.isArray(data?.companias)?data.companias:[];return quoteCompanyCatalog})
+      .catch(()=>[]);
+  }
+  return quoteCompanyCatalogPromise;
+}
+function resolverCompaniaCotizacion(nombre){
+  const target=normalizarClaveMarca(nombre);if(!target)return null;
+  return quoteCompanyCatalog.find(item=>{
+    const aliases=[item?.nombre,item?.key,...(Array.isArray(item?.aliases)?item.aliases:[])].map(normalizarClaveMarca).filter(Boolean);
+    const compacto=target.replace(/\s+/g,'');
+    return aliases.includes(target)||aliases.some(alias=>alias.replace(/\s+/g,'')===compacto||alias.length>=4&&(target===alias||target.startsWith(alias+' ')));
+  })||null;
+}
 function iconoMarcaSrc(item){
-  const source=String(item?.icon_url||item?.url||'').trim();
+  // En el cotizador usamos la misma identidad compacta que el sidebar: favicon
+  // del portal/web de la compañía. Los PNG horizontales de logos_manifest.json
+  // quedan reservados para Word/PDF, donde sí tienen el espacio apropiado.
+  const source=String(item?.icon_url||item?.url||item?.favicon_url||item?.logo_url||'').trim();
   if(!source)return '';
   if(source.startsWith('/static/')||source.startsWith('data:')||/\.(?:png|jpe?g|webp|gif|svg|ico)(?:[?#].*)?$/i.test(source))return source;
   if(/^https?:\/\//i.test(source))return 'https://www.google.com/s2/favicons?sz=64&domain_url='+encodeURIComponent(source);
   return '';
 }
 function marcaCompaniaPara(nombre){
-  const target=normalizarClaveMarca(nombre);if(!target)return null;
+  const catalogada=resolverCompaniaCotizacion(nombre);
+  const target=normalizarClaveMarca(catalogada?.nombre||nombre);if(!target)return null;
   const brands=Array.isArray(window.OIA_COMPANY_BRANDS)?window.OIA_COMPANY_BRANDS:[];
   let parcial=null;
   for(const item of brands){
     if(!item||typeof item!=='object')continue;
-    const nombres=[item.nombre,...(Array.isArray(item.aliases)?item.aliases:[])].map(normalizarClaveMarca).filter(Boolean);
-    if(nombres.includes(target))return item;
+    const nombres=[item.nombre,item.id,...(Array.isArray(item.aliases)?item.aliases:[])].map(normalizarClaveMarca).filter(Boolean);
+    if(nombres.includes(target)){
+      // El item configurable de la app manda para favicon/url/color. El
+      // catálogo documental sólo completa key/nombre/aliases; nunca reemplaza
+      // el favicon por el logo horizontal usado en documentos.
+      return {...catalogada,...item,logo_url:catalogada?.logo_url||'',icon_url:String(item.icon_url||item.url||'').trim()};
+    }
     if(!parcial&&nombres.some(x=>x.length>=3&&(target.includes(x)||x.includes(target))))parcial=item;
   }
-  return parcial;
+  if(parcial){
+    return {...catalogada,...parcial,logo_url:catalogada?.logo_url||'',icon_url:String(parcial.icon_url||parcial.url||'').trim()};
+  }
+  return catalogada?{...catalogada,icon_url:'',url:'',color:''}:null;
 }
 function rgbaMarca(hex,alpha){
   const m=String(hex||'').trim().match(/^#([0-9a-f]{6})$/i);if(!m)return '';
@@ -2171,6 +2226,7 @@ function prepararCabeceraMarcaCotizacion(section,compania){
     info.classList.add('quote-source-company-info');info.append(mark,copy);
   }
   const mark=info.querySelector('.quote-source-brand-mark');if(!mark)return;
+  const title=info.querySelector('.quote-source-company-copy>b');if(title)title.textContent=String(compania||'Compañía no identificada');
   const brand=marcaCompaniaPara(compania),src=iconoMarcaSrc(brand);
   mark.innerHTML='';
   if(src){const img=document.createElement('img');img.src=src;img.alt='';img.loading='lazy';mark.appendChild(img);section.classList.add('quote-source-identified');}
@@ -2195,6 +2251,168 @@ function presentarFuenteCotizacion(section,id,compania){
   const orden=quoteVisualOrder.get(String(id||''))||0;
   section.style.order=String(-orden);
   prepararCabeceraMarcaCotizacion(section,compania);
+  montarEditorCompaniaCotizacion(section,id);
+}
+
+function fuentesCotizacionEstado(){
+  const salida=[];
+  const atm=quoteSources.find(x=>x.id==='atm');if(atm)salida.push(atm);
+  if(mercantilFuente)salida.push(mercantilFuente);
+  salida.push(...federacionQuoteSources,...genericQuoteSources,...manualQuoteSources);
+  return salida;
+}
+function fuenteCotizacionPorId(id){return fuentesCotizacionEstado().find(x=>String(x?.id)===String(id))||null}
+function companiaEfectivaFuente(source,fallback='Compañía no identificada'){
+  return String(source?.compania_confirmada||source?.compania_detectada||source?.compania||fallback).trim()||fallback;
+}
+function inicializarIdentidadFuente(source,nombre){
+  if(!source)return source;
+  const detectada=String(source.compania_detectada||nombre||source.compania||'Compañía no identificada').trim()||'Compañía no identificada';
+  source.compania_detectada=detectada;
+  source.compania_confirmada=String(source.compania_confirmada||'').trim();
+  const efectiva=companiaEfectivaFuente(source,detectada),catalogada=resolverCompaniaCotizacion(efectiva);
+  source.compania=efectiva;source.company_key=String(catalogada?.key||source.company_key||'');
+  return source;
+}
+function rerenderFuenteCotizacion(source){
+  const id=String(source?.id||'');
+  if(id==='atm'){
+    const section=document.getElementById('atmQuoteSource');if(section)presentarFuenteCotizacion(section,id,companiaEfectivaFuente(source,'ATM'));
+  }else if(id==='mercantil')renderMercantilFuente();
+  else if(id.startsWith('federacion-'))renderFederacionQuoteSources();
+  else if(id.startsWith('generica-'))renderGenericQuoteSources();
+  else if(id.startsWith('manual-'))renderManualQuoteSources();
+}
+function confirmarCompaniaFuente(sourceId,nombre,key=''){
+  const source=fuenteCotizacionPorId(sourceId);if(!source)return;
+  const limpia=String(nombre||'').trim();if(!limpia)return;
+  const catalogada=resolverCompaniaCotizacion(limpia);
+  source.compania_confirmada=String(catalogada?.nombre||limpia);
+  source.compania=source.compania_confirmada;
+  source.company_key=String(catalogada?.key||key||'');
+  const espejo=quoteSources.find(x=>String(x?.id)===String(sourceId));
+  if(espejo&&espejo!==source){espejo.compania_detectada=source.compania_detectada;espejo.compania_confirmada=source.compania_confirmada;espejo.compania=source.compania;espejo.company_key=source.company_key;}
+  invalidarPropuestaCotizaciones();rerenderFuenteCotizacion(source);actualizarFooterCotizaciones();
+}
+function montarEditorCompaniaCotizacion(section,sourceId){
+  const source=fuenteCotizacionPorId(sourceId),head=section?.querySelector('.quote-source-head');if(!source||!head)return;
+  let actions=head.querySelector('.quote-source-head-actions');
+  if(!actions){
+    actions=document.createElement('div');actions.className='quote-source-head-actions';
+    const remove=head.querySelector('.quote-source-remove');if(remove)actions.appendChild(remove);
+    head.appendChild(actions);
+  }
+  let edit=actions.querySelector('.quote-company-edit');
+  if(!edit){edit=document.createElement('button');edit.type='button';edit.className='quote-company-edit';edit.innerHTML=oiaIconHtml('edit');edit.title='Editar compañía';edit.setAttribute('aria-label','Editar compañía');actions.prepend(edit);}
+  let editor=section.querySelector('.quote-company-editor');
+  if(!editor){
+    editor=document.createElement('div');editor.className='quote-company-editor';
+    const select=document.createElement('select');select.className='quote-company-select';select.setAttribute('aria-label','Seleccionar compañía');
+    const placeholder=document.createElement('option');placeholder.value='';placeholder.textContent='Seleccionar compañía';select.appendChild(placeholder);
+    quoteCompanyCatalog.forEach(item=>{const option=document.createElement('option');option.value=item.key;option.textContent=item.nombre;select.appendChild(option)});
+    const other=document.createElement('option');other.value='__other__';other.textContent='Otra compañía';select.appendChild(other);
+    const custom=document.createElement('input');custom.className='quote-company-custom';custom.placeholder='Nombre de la compañía';custom.maxLength=120;custom.hidden=true;
+    const confirm=document.createElement('button');confirm.type='button';confirm.className='quote-company-confirm';confirm.textContent='Confirmar';confirm.hidden=true;
+    const cancel=document.createElement('button');cancel.type='button';cancel.className='quote-company-cancel';cancel.textContent='Cancelar';
+    editor.append(select,custom,confirm,cancel);head.insertAdjacentElement('afterend',editor);
+    select.addEventListener('change',()=>{
+      custom.hidden=select.value!=='__other__';confirm.hidden=select.value!=='__other__';
+      if(select.value&&select.value!=='__other__'){
+        const item=quoteCompanyCatalog.find(x=>x.key===select.value);if(item)confirmarCompaniaFuente(sourceId,item.nombre,item.key);
+      }else if(select.value==='__other__')custom.focus();
+    });
+    const confirmarOtra=()=>{if(custom.value.trim())confirmarCompaniaFuente(sourceId,custom.value.trim(),'')};
+    confirm.addEventListener('click',confirmarOtra);custom.addEventListener('keydown',e=>{if(e.key==='Enter'){e.preventDefault();confirmarOtra()}});
+    cancel.addEventListener('click',()=>{editor.hidden=true;edit.setAttribute('aria-expanded','false')});
+  }
+  const conocida=resolverCompaniaCotizacion(companiaEfectivaFuente(source));
+  const select=editor.querySelector('.quote-company-select');if(select)select.value=conocida?.key||'';
+  const desconocida=normalizarClaveMarca(companiaEfectivaFuente(source)).includes('no identificada');
+  editor.hidden=!desconocida;
+  edit.setAttribute('aria-expanded',desconocida?'true':'false');
+  edit.onclick=()=>{editor.hidden=!editor.hidden;edit.setAttribute('aria-expanded',editor.hidden?'false':'true');if(!editor.hidden)editor.querySelector('select')?.focus()};
+}
+
+function normalizarPorcentajeCotizacion(valor){
+  const raw=String(valor??'').trim().replace(/(?:\s*%)+\s*$/,'').replace(',','.');if(!raw)return '';
+  const n=Number(raw);if(!Number.isFinite(n))return raw+'%';return `${Number.isInteger(n)?String(n):String(n).replace(/\.0+$/,'')}%`;
+}
+function servicioGruaOpcion(op){
+  if(typeof op?.servicio_grua==='boolean')return op.servicio_grua;
+  if(typeof op?.grua==='boolean')return op.grua;
+  if(typeof op?.remolque==='boolean')return op.remolque;
+  const texto=normalizarClaveMarca([op?.nombre_cliente,op?.descripcion_cliente,op?.descripcion,op?.texto_fuente].filter(Boolean).join(' '));
+  if(/\bsin (?:servicio de )?(?:grua|asistencia)\b/.test(texto))return false;
+  if(/\b(?:incluye|con) (?:servicio de )?grua\b/.test(texto))return true;
+  return null;
+}
+function nombreBaseComercialOpcion(op){
+  const codigo=String(op?.codigo||op?.codigo_real||op?.codigo_original||'').toUpperCase();
+  if(String(op?.tipo_vehiculo||'').toLowerCase()==='auto'){
+    if(['A','A1'].includes(codigo))return 'Responsabilidad Civil';
+    if(['B2','B4'].includes(codigo))return 'Robo, Incendio y Accidente Total';
+    if(['B3','B5'].includes(codigo))return 'Robo e Incendio Total';
+  }
+  if(String(op?.tipo_vehiculo||'').toLowerCase()==='moto'&&['RC','RC1'].includes(codigo))return 'Robo Clásico';
+  const original=String(op?.nombre_comercial||op?.nombre_cliente||op?.nombre_original||op?.nombre_plan||op?.titulo_leido||op?.nombre||codigo||'Cobertura').replace(/\s+(?:con|sin)\s+(?:gr[uú]a|asistencia)$/i,'').trim();
+  if(!/^Cobertura\s+[A-Z0-9.]+$/i.test(original)&&!/^\w{1,5}\d*(?:\.\d+)?$/i.test(original))return original;
+  const riesgos=normalizarClaveMarca(op?.descripcion_cliente||op?.descripcion||op?.texto_fuente||'');
+  const rc=riesgos.includes('responsabilidad civil'),robo=riesgos.includes('robo')||riesgos.includes('hurto'),incendio=riesgos.includes('incendio');
+  const parcial=riesgos.includes('total y parcial')||riesgos.includes('incendio total y parcial')||riesgos.includes('robo hurto total y parcial');
+  const dt=riesgos.includes('destruccion total')||riesgos.includes('accidente total'),dp=riesgos.includes('danos parciales por accidente');
+  if(dp||riesgos.includes('todo riesgo'))return 'Todo Riesgo';
+  if(riesgos.includes('amparo del robo total'))return dt?'Robo e Incendio + Robo Parcial al Amparo + Accidente Total':'Robo e Incendio + Robo Parcial al Amparo';
+  if(robo&&incendio&&dt)return parcial?'Robo e Incendio Total y/o Parcial + Accidente Total':'Robo, Incendio y Accidente Total';
+  if(robo&&incendio)return parcial?'Robo e Incendio Total y/o Parcial':'Robo e Incendio Total';
+  if(robo)return 'Robo Total';
+  if(incendio)return parcial?'Incendio Total y Parcial':'Incendio Total';
+  if(rc)return 'Responsabilidad Civil';
+  return original;
+}
+const QUOTE_PROFILE_COMMERCIAL_NAMES={
+  RC:'Responsabilidad Civil',B:'Robo, Incendio y Accidente Total',B1:'Robo e Incendio Total',
+  C:'Terceros Completo',C1:'Terceros Completo',C_PLUS:'Terceros Completo Plus',
+  LB:'Robo e Incendio + Robo Parcial al Amparo + Accidente Total',LB1:'Robo e Incendio + Robo Parcial al Amparo',
+  TODO_RIESGO:'Todo Riesgo',TR:'Todo Riesgo'
+};
+function familiaComercialOpcion(op){
+  const perfil=String(op?.familia||op?.perfil_normalizado||'').trim();if(perfil&&perfil!=='SIN_CLASIFICAR')return perfil;
+  return normalizarClaveMarca(nombreBaseComercialOpcion(op));
+}
+function nombreComercialNormalizadoOpcion(op){
+  const explicito=String(op?.nombre_comercial||'').trim();
+  if(explicito&&!/^cobertura(?:\s+|$)/i.test(explicito))return explicito;
+  const perfil=String(op?.perfil_normalizado||op?.familia||'').trim().toUpperCase();
+  return QUOTE_PROFILE_COMMERCIAL_NAMES[perfil]||nombreBaseComercialOpcion(op);
+}
+function opcionesFuenteCotizacion(source){
+  if(Array.isArray(source?.opciones)&&source.opciones.length)return source.opciones;
+  return source?[source]:[];
+}
+function modeloComercialOpcion(source,op){
+  const base=nombreComercialNormalizadoOpcion(op),familia=familiaComercialOpcion(op),variantes=[];
+  const pct=normalizarPorcentajeCotizacion(op?.franquicia_pct);
+  const esTR=familia==='TODO_RIESGO'||familia==='TR'||normalizarClaveMarca(base).includes('todo riesgo');
+  const varianteExplicita=String(op?.variante_comercial||'').trim();
+  const tokensExplicitos=varianteExplicita?varianteExplicita.split(/\s*[·|]\s*/).map(x=>x.trim()).filter(Boolean):[];
+  const tieneFranquiciaExplicita=tokensExplicitos.some(x=>/^franquicia\b/i.test(x));
+  if(esTR&&pct&&!tieneFranquiciaExplicita)variantes.push(`FRANQUICIA ${pct}`);
+  const gruaTokenExplicito=tokensExplicitos.find(x=>/^con gr[uú]a$|^sin gr[uú]a$/i.test(x))||'';
+  tokensExplicitos.filter(x=>!/^con gr[uú]a$|^sin gr[uú]a$/i.test(x)).forEach(x=>{if(!variantes.includes(x))variantes.push(x)});
+  const grua=servicioGruaOpcion(op),pares=opcionesFuenteCotizacion(source).filter(x=>familiaComercialOpcion(x)===familia);
+  const hayCon=pairsBool(pares,true),haySin=pairsBool(pares,false);
+  const gruaExplicita=String(op?.variante_grua||gruaTokenExplicito||'').trim();
+  let varianteGrua='';
+  if(/^con gr[uú]a$/i.test(gruaExplicita))varianteGrua='CON GRÚA';
+  else if(/^sin gr[uú]a$/i.test(gruaExplicita))varianteGrua='SIN GRÚA';
+  else if(typeof grua==='boolean'&&hayCon&&haySin)varianteGrua=grua?'CON GRÚA':'SIN GRÚA';
+  if(varianteGrua&&!variantes.some(x=>normalizarClaveMarca(x)===normalizarClaveMarca(varianteGrua)))variantes.push(varianteGrua);
+  return {codigo:String(op?.codigo_visual||op?.codigo||op?.codigo_real||op?.codigo_original||''),familia,nombre_comercial:base,variante_comercial:variantes.join(' · '),titulo_comercial:[base,...variantes].join(' · '),tiene_grua:grua,variante_grua:varianteGrua,franquicia_pct:pct.replace('%','')};
+}
+function pairsBool(items,value){return items.some(item=>servicioGruaOpcion(item)===value)}
+function descripcionSinVarianteGrua(descripcion,modelo){
+  const texto=String(descripcion||'').trim();if(!modelo?.variante_grua)return texto;
+  return texto.split(/\n+/).map(x=>x.replace(/(?:^|\.?\s+)(?:Incluye grúa|Sin grúa)\.?$/i,'').trim()).filter(Boolean).join('\n');
 }
 
 const ATM_CODIGOS_ORDEN=['A','A1','B','B1','B2','B3','B4','B5','C','CPr','CB','TR'];
@@ -2273,6 +2491,7 @@ async function abrirCotizadorATM(lectura=null){
   // Esto sólo corrige la jerarquía visual; no toca el scroll interno del modal.
   if(modal.parentElement!==document.body)document.body.appendChild(modal);
   modal.hidden=false;modal.setAttribute('aria-hidden','false');
+  await asegurarCatalogoCompaniasCotizacion();
   await asegurarCatalogoATM();
   const error=document.getElementById('atmCotiError');if(error)error.hidden=true;
   if(lectura&&typeof lectura==='object')cargarLecturaATMCapture(lectura);
@@ -2281,6 +2500,7 @@ async function abrirCotizadorATM(lectura=null){
 }
 
 function cerrarCotizadorATM(){
+  cerrarMenuDocumentoCotizacion();
   const modal=document.getElementById('atmCotiModal');
   if(!modal)return;
   modal.hidden=true;
@@ -2452,12 +2672,13 @@ function nombreSeleccionATM(c){
 function renderResumenSeleccionATM(){
   const wrap=document.getElementById('atmSelectedSummary'),actions=document.getElementById('atmCaptureActions');if(!wrap)return;
   const seleccion=seleccionadasATM();wrap.innerHTML='';
+  const source=quoteSources.find(x=>x.id==='atm')||{id:'atm',compania:'ATM',opciones:atmCoberturasDetectadas};
   seleccion.forEach(c=>{
-    const item=document.createElement('div');item.className='atm-selected-item';
-    const code=document.createElement('b');code.textContent=nombreSeleccionATM(c);code.title=String(c.titulo_leido||c.tooltip||'');
+    const modelo=modeloComercialOpcion(source,c);const item=document.createElement('div');item.className='atm-selected-item quote-selected-row';
+    const info=document.createElement('div');info.className='atm-selected-info';const code=document.createElement('b');code.textContent=nombreSeleccionATM(c);code.title=String(c.titulo_leido||c.tooltip||'');const name=document.createElement('small');name.textContent=modelo.titulo_comercial;info.append(code,name);
     const ef=document.createElement('span');ef.innerHTML=`<strong>${esc(c.precio_efectivo_comercial||'—')}</strong><small>Cuponera</small>`;
     const ad=document.createElement('span');ad.innerHTML=`<strong>${esc(c.precio_adherido_comercial||'—')}</strong><small>Adherido</small>`;
-    item.append(code,ef,ad);wrap.appendChild(item);
+    item.append(info,ef,ad);wrap.appendChild(item);
   });
   wrap.hidden=!seleccion.length;
   const selectedLabel=document.getElementById('atmSelectedLabel');if(selectedLabel)selectedLabel.hidden=!seleccion.length;
@@ -2471,9 +2692,11 @@ function cargarLecturaATMCapture(lectura){
   const source=document.getElementById('atmQuoteSource');if(source)source.hidden=!lista.length;
   if(lista.length)marcarFuenteVisualReciente('atm');
   const meta=document.getElementById('atmQuoteSourceMeta');if(meta)meta.textContent=`${atmTipoCotizacionActual==='moto'?'Moto':'Auto'} · ${lista.length} cobertura${lista.length===1?'':'s'} detectada${lista.length===1?'':'s'}`;
-  if(source&&lista.length)presentarFuenteCotizacion(source,'atm','ATM');
-  quoteSources=quoteSources.filter(x=>x.compania!=='ATM');
-  if(lista.length)quoteSources.push({id:'atm',compania:'ATM',tipo_fuente:'captura',tipo_vehiculo:atmTipoCotizacionActual,opciones:atmCoberturasDetectadas});
+  quoteSources=quoteSources.filter(x=>x.id!=='atm');
+  if(lista.length){
+    const fuente=inicializarIdentidadFuente({id:'atm',compania:'ATM',compania_detectada:'ATM',compania_confirmada:'',tipo_fuente:'captura',tipo_vehiculo:atmTipoCotizacionActual,marca:lectura?.marca||'',modelo:lectura?.modelo||'',vehiculo:lectura?.vehiculo||'',anio:lectura?.anio||'',opciones:atmCoberturasDetectadas},'ATM');
+    quoteSources.push(fuente);if(source)presentarFuenteCotizacion(source,'atm',companiaEfectivaFuente(fuente,'ATM'));
+  }
   aplicarReglasDescuentoATMTipo(atmTipoCotizacionActual);
   invalidarPropuestaATM();
   cambiarTabATM('capture');
@@ -2543,10 +2766,7 @@ function formatearPrecioComercialCotizacion(valorExacto,formateadoExacto=''){
 }
 function nombreClientePropuestaATM(c){
   const codigo=String(c.codigo||'');
-  if(codigo==='TR'){
-    const pct=String(c.franquicia_pct||'').trim();
-    return `Todo Riesgo - Franquicia ${pct}%`;
-  }
+  if(codigo==='TR')return 'Todo Riesgo';
   if(String(c.tipo_vehiculo||'').toLowerCase()==='moto'&&codigo==='A1')return 'Responsabilidad Civil sin asistencia';
   return String(c.nombre_cliente||entradaCatalogoATM(codigo,c.tipo_vehiculo)?.nombre_cliente||c.titulo_leido||c.nombre||'Cobertura').trim();
 }
@@ -2602,25 +2822,65 @@ function lineasCoberturaCotizacion(descripcion){
   });
   return salida.filter((x,i,a)=>x&&a.indexOf(x)===i);
 }
-function bloqueCoberturaWhatsApp({compania,nombre,suma='',descripcion='',precio='',cuponera='',adherido='',franquiciaPct='',franquiciaImporte=''}){
-  const lineas=[`*${String(compania||'').toUpperCase()} | ${String(nombre||'COBERTURA').toUpperCase()}*`];
-  if(suma)lineas.push('',`*Suma asegurada:* ${suma}`);
-  if(franquiciaPct||franquiciaImporte){
-    const detalle=[franquiciaPct?`${franquiciaPct}%`:'',franquiciaImporte||''].filter(Boolean).join(' · ');
+function datosCoberturaPropuesta({compania,companiaDetectada='',companiaConfirmada='',companyKey='',codigo='',familia='',nombre,nombreComercial='',varianteComercial='',varianteGrua='',servicioGrua=null,suma='',descripcion='',precio='',cuponera='',adherido='',franquiciaPct='',franquiciaImporte='',mostrarFranquiciaWhatsApp=true}){
+  const items=lineasCoberturaCotizacion(descripcion).map(texto=>({
+    tipo:/^En caso de un daño parcial/i.test(texto)?'nota':'beneficio',
+    texto
+  }));
+  const pct=normalizarPorcentajeCotizacion(franquiciaPct).replace('%','');
+  return {
+    compania:String(compania||'Compañía').trim()||'Compañía',
+    compania_detectada:String(companiaDetectada||compania||'').trim(),
+    compania_confirmada:String(companiaConfirmada||'').trim(),
+    company_key:String(companyKey||'').trim(),
+    codigo:String(codigo||'').trim(),familia:String(familia||'').trim(),
+    nombre:String(nombre||'Cobertura').trim()||'Cobertura',
+    nombre_comercial:String(nombreComercial||nombre||'Cobertura').trim()||'Cobertura',
+    variante_comercial:String(varianteComercial||'').trim(),
+    variante_grua:String(varianteGrua||'').trim(),
+    tiene_grua:typeof servicioGrua==='boolean'?servicioGrua:null,
+    suma:String(suma||'').trim(),
+    franquicia_pct:pct,
+    franquicia_importe:String(franquiciaImporte||'').trim(),
+    precio:String(precio||'').trim(),
+    cuponera:String(cuponera||'').trim(),
+    adherido:String(adherido||'').trim(),
+    mostrar_franquicia_whatsapp:mostrarFranquiciaWhatsApp!==false,
+    contenidos:items
+  };
+}
+function bloqueCoberturaWhatsAppDatos(item){
+  const lineas=[`*${String(item?.compania||'').toUpperCase()} | ${String(item?.nombre||'COBERTURA').toUpperCase()}*`];
+  if(item?.suma)lineas.push('',`*Suma asegurada:* ${item.suma}`);
+  if(item?.mostrar_franquicia_whatsapp!==false&&(item?.franquicia_pct||item?.franquicia_importe)){
+    const detalle=[item.franquicia_pct?`${item.franquicia_pct}%`:'',item.franquicia_importe||''].filter(Boolean).join(' · ');
     lineas.push('',`*Franquicia:* ${detalle}`);
   }
-  const items=lineasCoberturaCotizacion(descripcion);
+  const items=(item?.contenidos||[]).map(x=>String(x?.texto||'').trim()).filter(Boolean);
   if(items.length)lineas.push('',...items.map(x=>`• ${x}`));
-  if(cuponera||adherido){
-    lineas.push('');if(cuponera)lineas.push(`*Cuponera:* ${cuponera}`);if(adherido)lineas.push(`*Adherido:* ${adherido}`);
-  }else if(precio)lineas.push('',`*Precio:* ${precio}`);
+  if(item?.cuponera||item?.adherido){
+    lineas.push('');if(item.cuponera)lineas.push(`*Cuponera:* ${item.cuponera}`);if(item.adherido)lineas.push(`*Adherido:* ${item.adherido}`);
+  }else if(item?.precio)lineas.push('',`*Precio:* ${item.precio} por cuota`);
   return lineas.join('\n');
 }
-function bloqueATMPropuesta(c,saATM=''){
+function bloqueCoberturaWhatsApp(args){return bloqueCoberturaWhatsAppDatos(datosCoberturaPropuesta(args));}
+function datosATMPropuesta(c,saATM=''){
+  const source=quoteSources.find(x=>x.id==='atm')||{id:'atm',compania:'ATM',compania_detectada:'ATM',opciones:atmCoberturasDetectadas};
+  const base={...c,nombre_cliente:nombreClientePropuestaATM(c)};const modelo=modeloComercialOpcion(source,base);
   const cupones=c.precio_efectivo_comercial||formatearPrecioComercialATM(c.precio_efectivo_exacto,c.precio_efectivo_final);
   const adherido=c.precio_adherido_comercial||formatearPrecioComercialATM(c.precio_adherido_exacto,c.precio_adherido_final);
-  return bloqueCoberturaWhatsApp({compania:'ATM',nombre:nombreClientePropuestaATM(c),suma:saATM?formatoPesosCotizacion(parseNumeroCotizacion(saATM),false):'',descripcion:descripcionPropuestaATM(c),cuponera:cupones,adherido});
+  return datosCoberturaPropuesta({
+    compania:companiaEfectivaFuente(source,'ATM'),companiaDetectada:source.compania_detectada,companiaConfirmada:source.compania_confirmada,companyKey:source.company_key,
+    codigo:modelo.codigo,familia:modelo.familia,nombre:modelo.titulo_comercial,nombreComercial:modelo.nombre_comercial,varianteComercial:modelo.variante_comercial,varianteGrua:modelo.variante_grua,servicioGrua:modelo.tiene_grua,
+    suma:saATM?formatoPesosCotizacion(parseNumeroCotizacion(saATM),false):'',
+    descripcion:descripcionSinVarianteGrua(descripcionPropuestaATM(c),modelo),
+    cuponera:cupones,
+    adherido,
+    franquiciaPct:c.franquicia_pct||'',
+    mostrarFranquiciaWhatsApp:false
+  });
 }
+function bloqueATMPropuesta(c,saATM=''){return bloqueCoberturaWhatsAppDatos(datosATMPropuesta(c,saATM));}
 async function generarPropuestaATM(){
   const seleccion=seleccionadasATM();
   if(!seleccion.length){estadoCapturaATM('Elegí al menos una cobertura para generar la propuesta.','error');return}
@@ -2668,12 +2928,15 @@ function totalSeleccionadasCotizaciones(){
   return seleccionadasATM().length+(mercantilFuente?.opciones?.filter(x=>x.seleccionada).length||0)+federacionQuoteSources.filter(x=>x.seleccionada).length+genericQuoteSources.reduce((n,s)=>n+(s.opciones||[]).filter(x=>x.seleccionada).length,0)+manualQuoteSources.filter(x=>x.seleccionada).length;
 }
 function actualizarFooterCotizaciones(){
-  const footer=document.getElementById('quotesFooter'),count=document.getElementById('quotesSelectionCount'),gen=document.getElementById('atmGenerateProposal');
+  const footer=document.getElementById('quotesFooter'),count=document.getElementById('quotesSelectionCount'),gen=document.getElementById('atmGenerateProposal'),doc=document.getElementById('quotesGenerateDocument'),docToolbar=document.getElementById('quotesDocumentToolbar');
   const hayFuentes=!!atmCoberturasDetectadas.length||!!mercantilFuente||federacionQuoteSources.length>0||genericQuoteSources.length>0||manualQuoteSources.length>0;
   const n=totalSeleccionadasCotizaciones();
   if(footer)footer.hidden=!hayFuentes;
   if(count)count.textContent=`${n} alternativa${n===1?'':'s'} seleccionada${n===1?'':'s'}`;
   if(gen)gen.disabled=n===0;
+  if(doc)doc.disabled=n===0;
+  if(docToolbar)docToolbar.hidden=n===0;
+  if(n===0)cerrarMenuDocumentoCotizacion();
 }
 function invalidarPropuestaCotizaciones(){
   const wrap=document.getElementById('atmProposal'),area=document.getElementById('atmProposalText');
@@ -2719,12 +2982,12 @@ function cargarLecturaGenerica(lectura){
     seleccionada:(lectura?.coberturas?.length||0)===1,
   }));
   const source={
-    id,compania:lectura?.compania||'Compañía no identificada',tipo_fuente:'normalizada',
+    id,compania:lectura?.compania||'Compañía no identificada',compania_detectada:lectura?.compania_detectada||lectura?.compania||'Compañía no identificada',compania_confirmada:lectura?.compania_confirmada||'',company_key:lectura?.company_key||'',tipo_fuente:'normalizada',
     vehiculo:lectura?.vehiculo||'',anio:lectura?.anio||'',
     suma_asegurada:lectura?.suma_asegurada||'',suma_asegurada_formateada:lectura?.suma_asegurada_formateada||'',
     opciones
   };
-  genericQuoteSources.push(source);quoteSources.push(source);marcarFuenteVisualReciente(id);
+  inicializarIdentidadFuente(source,source.compania_detectada);genericQuoteSources.push(source);quoteSources.push(source);marcarFuenteVisualReciente(id);
   renderGenericQuoteSources();invalidarPropuestaCotizaciones();actualizarFooterCotizaciones();
 }
 function quitarFuenteGenerica(id){
@@ -2739,7 +3002,7 @@ function renderGenericQuoteSources(){
   genericQuoteSources.forEach(source=>{
     const section=document.createElement('section');section.className='quote-source generic-quote-source';
     const head=document.createElement('div');head.className='quote-source-head';
-    const info=document.createElement('div');const b=document.createElement('b');b.textContent=source.compania||'Compañía no identificada';
+    const info=document.createElement('div');const b=document.createElement('b');b.textContent=companiaEfectivaFuente(source);
     const small=document.createElement('small');const meta=[];if(source.vehiculo)meta.push([source.vehiculo,source.anio].filter(Boolean).join(' · '));if(source.suma_asegurada_formateada)meta.push(`SA ${source.suma_asegurada_formateada.replace(',00','')}`);meta.push(`${source.opciones.length} cobertura${source.opciones.length===1?'':'s'} normalizada${source.opciones.length===1?'':'s'}`);small.textContent=meta.join(' · ');info.append(b,small);
     const remove=document.createElement('button');remove.type='button';remove.className='quote-source-remove';remove.innerHTML=oiaIconHtml('close');remove.title='Quitar cotización';remove.setAttribute('aria-label','Quitar cotización');remove.addEventListener('click',()=>quitarFuenteGenerica(source.id));head.append(info,remove);section.appendChild(head);
 
@@ -2751,9 +3014,9 @@ function renderGenericQuoteSources(){
     if(seleccion.length){
       const selectedTitle=document.createElement('div');selectedTitle.className='quote-subsection-title quote-selected-label';selectedTitle.textContent='Seleccionadas';section.appendChild(selectedTitle);
       const selected=document.createElement('div');selected.className='mercantil-selected-summary generic-selected-summary';
-      seleccion.forEach(op=>{const row=document.createElement('div');row.className='mercantil-selected-item generic-selected-item';const rowInfo=document.createElement('div');rowInfo.className='mercantil-selected-info';const rb=document.createElement('b');rb.textContent=op.codigo_visual||op.codigo_original||op.perfil_normalizado||'Cobertura';const details=[];details.push(nombrePerfilGenerico(op));if(op.perfil_normalizado&&op.perfil_normalizado!=='SIN_CLASIFICAR')details.push(`Perfil ${op.perfil_normalizado.replace('_',' ')}`);if(op.franquicia_pct)details.push(`Franquicia ${op.franquicia_pct}%${op.franquicia_importe_formateado?' · '+op.franquicia_importe_formateado:''}`);if(op.servicio_grua===true)details.push('Incluye grúa');if(op.servicio_grua===false)details.push('Sin grúa');const rs=document.createElement('small');rs.textContent=details.join(' · ');rowInfo.append(rb,rs);const price=document.createElement('span');price.className='mercantil-price';price.innerHTML=op.precio_cuota_formateado?`<strong>${esc(op.precio_cuota_formateado)}</strong><small>Por cuota</small>`:'<strong>—</strong><small>Precio no detectado</small>';row.append(rowInfo,price);selected.appendChild(row)});section.appendChild(selected);
+      seleccion.forEach(op=>{const modelo=modeloComercialOpcion(source,op);const row=document.createElement('div');row.className='mercantil-selected-item generic-selected-item quote-selected-row';const rowInfo=document.createElement('div');rowInfo.className='mercantil-selected-info';const rb=document.createElement('b');rb.textContent=modelo.codigo||'Cobertura';const details=[modelo.titulo_comercial];if(op.franquicia_importe_formateado)details.push(op.franquicia_importe_formateado);const rs=document.createElement('small');rs.textContent=details.join(' · ');rowInfo.append(rb,rs);const price=document.createElement('span');price.className='mercantil-price';price.innerHTML=op.precio_cuota_formateado?`<strong>${esc(op.precio_cuota_formateado)}</strong><small>Por cuota</small>`:'<strong>—</strong><small>Precio no detectado</small>';row.append(rowInfo,price);selected.appendChild(row)});section.appendChild(selected);
     }
-    presentarFuenteCotizacion(section,source.id,source.compania||'Compañía no identificada');
+    presentarFuenteCotizacion(section,source.id,companiaEfectivaFuente(source));
     wrap.appendChild(section);
   });
 }
@@ -2779,7 +3042,7 @@ function cargarLecturaFederacion(lectura){
   const numero=String(lectura?.numero_cotizacion||'').trim();
   const id=numero?`federacion-${numero}`:`federacion-${quoteSourceSeq++}`;
   const item={
-    id,compania:'Federación Patronal',tipo_fuente:'pdf_federacion',seleccionada:true,
+    id,compania:'Federación Patronal',compania_detectada:'Federación Patronal',compania_confirmada:'',tipo_fuente:'pdf_federacion',seleccionada:true,
     numero_cotizacion:numero,seccion:lectura?.seccion||'',producto:lectura?.producto||'',tipo_vehiculo:lectura?.tipo_vehiculo||'',
     marca:lectura?.marca||'',modelo:lectura?.modelo||'',vehiculo:lectura?.vehiculo||'',anio:lectura?.anio||'',
     suma_asegurada:lectura?.suma_asegurada||'',suma_asegurada_formateada:lectura?.suma_asegurada_formateada||'',
@@ -2791,6 +3054,7 @@ function cargarLecturaFederacion(lectura){
     cantidad_cuotas:lectura?.cantidad_cuotas??'',precio_cuota:lectura?.precio_cuota||'',precio_cuota_formateado:lectura?.precio_cuota_formateado||'',
     total_contado:lectura?.total_contado||'',total_contado_formateado:lectura?.total_contado_formateado||''
   };
+  inicializarIdentidadFuente(item,'Federación Patronal');
   if(numero)federacionQuoteSources=federacionQuoteSources.filter(x=>x.numero_cotizacion!==numero);
   federacionQuoteSources.push(item);
   marcarFuenteVisualReciente(id);
@@ -2810,7 +3074,7 @@ function renderFederacionQuoteSources(){
   federacionQuoteSources.forEach(item=>{
     const section=document.createElement('section');section.className='quote-source federacion-quote-source';
     const head=document.createElement('div');head.className='quote-source-head';
-    const info=document.createElement('div');const b=document.createElement('b');b.textContent='Federación Patronal';
+    const info=document.createElement('div');const b=document.createElement('b');b.textContent=companiaEfectivaFuente(item,'Federación Patronal');
     const small=document.createElement('small');const meta=[];
     if(item.modelo)meta.push([item.modelo,item.anio].filter(Boolean).join(' · '));
     if(item.suma_asegurada_formateada)meta.push(`SA ${item.suma_asegurada_formateada}`);
@@ -2825,14 +3089,14 @@ function renderFederacionQuoteSources(){
     if(item.seleccionada){
       const selectedTitle=document.createElement('div');selectedTitle.className='quote-subsection-title quote-selected-label';selectedTitle.textContent='Seleccionadas';section.appendChild(selectedTitle);
       const selected=document.createElement('div');selected.className='mercantil-selected-summary federacion-selected-summary';
-      const row=document.createElement('div');row.className='mercantil-selected-item federacion-selected-item';
+      const modelo=modeloComercialOpcion(item,item);const row=document.createElement('div');row.className='mercantil-selected-item federacion-selected-item quote-selected-row';
       const rowInfo=document.createElement('div');rowInfo.className='mercantil-selected-info';const rb=document.createElement('b');rb.textContent=item.codigo_visual||item.codigo||'—';
-      const details=[];if(item.nombre_cliente)details.push(item.nombre_cliente);if(item.franquicia_pct)details.push(`Franquicia ${item.franquicia_pct}%${item.franquicia_importe_formateado?' · '+item.franquicia_importe_formateado:''}`);if(item.servicio_grua===true)details.push('Incluye grúa');if(item.servicio_grua===false)details.push('Sin grúa');
+      const details=[modelo.titulo_comercial];if(item.franquicia_importe_formateado)details.push(item.franquicia_importe_formateado);
       const rs=document.createElement('small');rs.textContent=details.join(' · ');rowInfo.append(rb,rs);
       const price=document.createElement('span');price.className='mercantil-price';price.innerHTML=`<strong>${esc(item.precio_cuota_formateado||'—')}</strong><small>${item.cantidad_cuotas?`${esc(item.cantidad_cuotas)} cuota${Number(item.cantidad_cuotas)===1?'':'s'}`:'Por cuota'}</small>`;
       row.append(rowInfo,price);selected.appendChild(row);section.appendChild(selected);
     }
-    presentarFuenteCotizacion(section,item.id,'Federación Patronal');
+    presentarFuenteCotizacion(section,item.id,companiaEfectivaFuente(item,'Federación Patronal'));
     wrap.appendChild(section);
   });
 }
@@ -2843,18 +3107,20 @@ function descripcionFederacionPropuesta(item){
   return partes.filter(Boolean).join('\n');
 }
 function cargarLecturaMercantil(lectura){
-  const opciones=Array.isArray(lectura?.coberturas)?lectura.coberturas.map(x=>({...x,seleccionada:false,descuento:Number(x.descuento_default??x.max_descuento??35),precio_final:null,precio_final_formateado:''})):[];
+  const descuentoGlobal=Number(lectura?.bonificacion??35);
+  const opciones=Array.isArray(lectura?.coberturas)?lectura.coberturas.map(x=>({...x,seleccionada:false,descuento:Number.isFinite(descuentoGlobal)?descuentoGlobal:35,precio_final:null,precio_final_formateado:''})):[];
   marcarFuenteVisualReciente('mercantil');
-  mercantilFuente={id:'mercantil',compania:'Mercantil Andina',tipo_fuente:'pdf',modelo:lectura?.modelo||'',anio:lectura?.anio||'',suma_asegurada:lectura?.suma_asegurada||'',suma_asegurada_formateada:lectura?.suma_asegurada_formateada||'',plan_pago:lectura?.plan_pago||'',opciones};
-  quoteSources=quoteSources.filter(x=>x.compania!=='Mercantil Andina');quoteSources.push(mercantilFuente);
+  mercantilFuente=inicializarIdentidadFuente({id:'mercantil',compania:'Mercantil Andina',compania_detectada:'Mercantil Andina',compania_confirmada:'',tipo_fuente:'pdf',bonificacion:Number.isFinite(descuentoGlobal)?descuentoGlobal:35,modelo:lectura?.modelo||'',anio:lectura?.anio||'',suma_asegurada:lectura?.suma_asegurada||'',suma_asegurada_formateada:lectura?.suma_asegurada_formateada||'',plan_pago:lectura?.plan_pago||'',opciones},'Mercantil Andina');
+  quoteSources=quoteSources.filter(x=>x.id!=='mercantil');quoteSources.push(mercantilFuente);
   renderMercantilFuente();actualizarFooterCotizaciones();
 }
 function renderMercantilFuente(){
   const section=document.getElementById('mercantilQuoteSource'),matrix=document.getElementById('mercantilCoverageMatrix'),meta=document.getElementById('mercantilQuoteMeta');
   if(!section||!matrix)return;
   if(!mercantilFuente){section.hidden=true;matrix.innerHTML='';return;}
-  section.hidden=false;presentarFuenteCotizacion(section,'mercantil','Mercantil Andina');
+  section.hidden=false;presentarFuenteCotizacion(section,'mercantil',companiaEfectivaFuente(mercantilFuente,'Mercantil Andina'));
   const datos=[];if(mercantilFuente.modelo)datos.push([mercantilFuente.modelo,mercantilFuente.anio].filter(Boolean).join(' · '));if(mercantilFuente.suma_asegurada_formateada)datos.push(`SA ${mercantilFuente.suma_asegurada_formateada.replace(',00','')}`);datos.push(`${mercantilFuente.opciones.length} coberturas detectadas`);if(meta)meta.textContent=datos.join(' · ');
+  const bonificacion=document.getElementById('mercantilBonificacion');if(bonificacion&&document.activeElement!==bonificacion)bonificacion.value=String(mercantilFuente.bonificacion??35);
   matrix.innerHTML='';
   mercantilFuente.opciones.forEach(op=>{
     const btn=document.createElement('button');btn.type='button';btn.className='atm-code-cell mercantil-code-cell'+(op.seleccionada?' active':'');btn.textContent=(op.codigo_visual==='MP'?'MP*':(op.codigo_visual||op.codigo_real));btn.title=op.tooltip||op.nombre_cliente||op.codigo_real;btn.setAttribute('aria-label',`${op.codigo_visual}: ${btn.title}`);btn.addEventListener('click',()=>togglearMercantil(op.codigo_real));matrix.appendChild(btn);
@@ -2865,27 +3131,31 @@ function togglearMercantil(codigoReal){
   const op=mercantilFuente?.opciones?.find(x=>x.codigo_real===codigoReal);if(!op)return;
   op.seleccionada=!op.seleccionada;invalidarPropuestaCotizaciones();renderMercantilFuente();if(op.seleccionada)recalcularMercantilItem(op);actualizarFooterCotizaciones();
 }
-async function recalcularMercantilItem(op){
+async function recalcularMercantilItem(op,{render=true}={}){
   if(!op)return false;
-  let d=Number(op.descuento);const max=Number(op.max_descuento||35);if(!Number.isFinite(d))d=max;d=Math.max(0,Math.min(max,d));op.descuento=d;
+  let d=Number(mercantilFuente?.bonificacion??op.descuento??35);const max=50;if(!Number.isFinite(d))d=35;d=Math.max(0,Math.min(max,d));op.descuento=d;
   try{
     const resp=await fetch('/api/mercantil/cotizar',{method:'POST',credentials:'same-origin',headers:{'Content-Type':'application/json'},body:JSON.stringify({precio_base:op.precio_base,descuento:d,max_descuento:max})});
     const data=await leerJsonSeguro(resp);if(!resp.ok||data.ok===false)throw Error(data.error||'No pude calcular el precio final.');
-    op.precio_final=data.precio_final;op.precio_final_formateado=formatoPesosCotizacion(Number(data.precio_final),true);renderResumenMercantil();return true;
+    op.precio_final=data.precio_final;op.precio_final_formateado=formatoPesosCotizacion(Number(data.precio_final),true);if(render)renderResumenMercantil();return true;
   }catch(e){mostrarEstadoCotizaciones(e?.message||'No pude calcular Mercantil.','error');return false;}
+}
+async function recalcularMercantilTodas(){
+  const opciones=mercantilFuente?.opciones||[];if(!opciones.length)return true;
+  const resultados=await Promise.all(opciones.map(op=>recalcularMercantilItem(op,{render:false})));
+  renderResumenMercantil();return resultados.every(Boolean);
 }
 function renderResumenMercantil(){
   const wrap=document.getElementById('mercantilSelectedSummary');if(!wrap)return;wrap.innerHTML='';
   const seleccion=mercantilFuente?.opciones?.filter(x=>x.seleccionada)||[];
   seleccion.forEach(op=>{
-    const row=document.createElement('div');row.className='mercantil-selected-item';
+    const modelo=modeloComercialOpcion(mercantilFuente,op);const row=document.createElement('div');row.className='mercantil-selected-item quote-selected-row';
     const info=document.createElement('div');info.className='mercantil-selected-info';
-    const b=document.createElement('b');b.textContent=op.codigo_visual;const small=document.createElement('small');small.textContent=op.franquicia_pct?`${op.nombre_cliente} · Franquicia ${op.franquicia_pct}%${op.franquicia_importe_formateado?' · '+op.franquicia_importe_formateado.replace(',00',''):''}`:op.nombre_cliente;info.append(b,small);
+    const b=document.createElement('b');b.textContent=op.codigo_visual;const small=document.createElement('small');small.textContent=[modelo.titulo_comercial,op.franquicia_importe_formateado?op.franquicia_importe_formateado.replace(',00',''):''].filter(Boolean).join(' · ');info.append(b,small);
     const original=document.createElement('span');original.className='mercantil-price';original.innerHTML=`<small>Cotizado</small><strong>${esc(op.precio_base_formateado||'—')}</strong>`;
-    const label=document.createElement('label');label.className='mercantil-discount';label.innerHTML='<small>Bonificación</small>';const inp=document.createElement('input');inp.type='number';inp.min='0';inp.max=String(op.max_descuento||35);inp.step='1';inp.value=String(op.descuento??op.max_descuento??35);const pct=document.createElement('span');pct.textContent='%';label.append(inp,pct);
+    const discount=document.createElement('span');discount.className='mercantil-price mercantil-discount-value';discount.innerHTML=`<small>Bonificación</small><strong>${esc(normalizarPorcentajeCotizacion(mercantilFuente?.bonificacion??35))}</strong>`;
     const final=document.createElement('span');final.className='mercantil-price mercantil-price-final';final.innerHTML=`<small>Final</small><strong>${esc(op.precio_final_formateado||'Calculando…')}</strong>`;
-    inp.addEventListener('input',()=>{let n=Number(inp.value);const max=Number(op.max_descuento||35);if(Number.isFinite(n)){n=Math.max(0,Math.min(max,n));if(String(n)!==inp.value)inp.value=String(n);op.descuento=n;invalidarPropuestaCotizaciones();clearTimeout(op._timer);op._timer=setTimeout(()=>recalcularMercantilItem(op),180);}});
-    row.append(info,original,label,final);wrap.appendChild(row);
+    row.append(info,original,discount,final);wrap.appendChild(row);
   });
   wrap.hidden=!seleccion.length;const selectedLabel=document.getElementById('mercantilSelectedLabel');if(selectedLabel)selectedLabel.hidden=!seleccion.length;actualizarFooterCotizaciones();
 }
@@ -2932,6 +3202,7 @@ function parsearAlternativaManual(texto){
 }
 function agregarAlternativaManual(texto,silencioso=false){
   const item=parsearAlternativaManual(texto);if(!item){if(!silencioso)mostrarEstadoCotizaciones('No pude interpretar esa alternativa. Probá, por ejemplo: Federación CF SA 71500000 precio 152000','error');return false;}
+  inicializarIdentidadFuente(item,item.compania);
   manualQuoteSources.push(item);quoteSources.push({...item,tipo_fuente:'manual',opciones:[item]});marcarFuenteVisualReciente(item.id);renderManualQuoteSources();invalidarPropuestaCotizaciones();actualizarFooterCotizaciones();mostrarEstadoCotizaciones(`${item.compania} agregada a la propuesta.`,'ok');return true;
 }
 function renderManualQuoteSources(){
@@ -2939,9 +3210,12 @@ function renderManualQuoteSources(){
   manualQuoteSources.forEach(item=>{
     const section=document.createElement('section');section.className='quote-source manual-quote-source';
     const head=document.createElement('div');head.className='quote-source-head';
-    const info=document.createElement('div');const b=document.createElement('b');b.textContent=item.compania;const small=document.createElement('small');small.textContent=[item.codigo,item.suma_asegurada?`SA ${formatoPesosCotizacion(item.suma_asegurada,false)}`:'',formatoPesosCotizacion(item.precio,true)].filter(Boolean).join(' · ');info.append(b,small);
+    const info=document.createElement('div');const b=document.createElement('b');b.textContent=companiaEfectivaFuente(item);const small=document.createElement('small');small.textContent=[item.suma_asegurada?`SA ${formatoPesosCotizacion(item.suma_asegurada,false)}`:'','1 cobertura'].filter(Boolean).join(' · ');info.append(b,small);
     const remove=document.createElement('button');remove.type='button';remove.className='quote-source-remove';remove.innerHTML=oiaIconHtml('close');remove.title='Quitar alternativa';remove.setAttribute('aria-label','Quitar alternativa');remove.addEventListener('click',()=>{manualQuoteSources=manualQuoteSources.filter(x=>x.id!==item.id);quoteSources=quoteSources.filter(x=>x.id!==item.id);quitarOrdenVisualFuente(item.id);renderManualQuoteSources();invalidarPropuestaCotizaciones();actualizarFooterCotizaciones();});head.append(info,remove);
-    const line=document.createElement('label');line.className='manual-quote-select';const check=document.createElement('input');check.type='checkbox';check.checked=item.seleccionada;check.addEventListener('change',()=>{item.seleccionada=check.checked;invalidarPropuestaCotizaciones();actualizarFooterCotizaciones();});const span=document.createElement('span');span.textContent=item.descripcion||'Alternativa manual';line.append(check,span);section.append(head,line);presentarFuenteCotizacion(section,item.id,item.compania);wrap.appendChild(section);
+    section.appendChild(head);const cobTitle=document.createElement('div');cobTitle.className='quote-subsection-title';cobTitle.textContent='Coberturas';section.appendChild(cobTitle);
+    const matrix=document.createElement('div');matrix.className='mercantil-code-matrix manual-code-matrix';const code=document.createElement('button');code.type='button';code.className='atm-code-cell manual-code-cell'+(item.seleccionada?' active':'');code.textContent=item.codigo||'COB';code.title=nombreComercialManual(companiaEfectivaFuente(item),item.codigo);code.addEventListener('click',()=>{item.seleccionada=!item.seleccionada;const espejo=quoteSources.find(x=>x.id===item.id);if(espejo)espejo.seleccionada=item.seleccionada;renderManualQuoteSources();invalidarPropuestaCotizaciones();actualizarFooterCotizaciones()});matrix.appendChild(code);section.appendChild(matrix);
+    if(item.seleccionada){const selectedTitle=document.createElement('div');selectedTitle.className='quote-subsection-title quote-selected-label';selectedTitle.textContent='Seleccionadas';section.appendChild(selectedTitle);const selected=document.createElement('div');selected.className='mercantil-selected-summary manual-selected-summary';const modelo=modeloComercialOpcion(item,{...item,nombre_cliente:nombreComercialManual(companiaEfectivaFuente(item),item.codigo)});const row=document.createElement('div');row.className='mercantil-selected-item manual-selected-item quote-selected-row';const rowInfo=document.createElement('div');rowInfo.className='mercantil-selected-info';const rb=document.createElement('b');rb.textContent=item.codigo||'COB';const rs=document.createElement('small');rs.textContent=modelo.titulo_comercial;rowInfo.append(rb,rs);const price=document.createElement('span');price.className='mercantil-price';price.innerHTML=`<strong>${esc(formatoPesosCotizacion(item.precio,true))}</strong><small>Por cuota</small>`;row.append(rowInfo,price);selected.appendChild(row);section.appendChild(selected)}
+    presentarFuenteCotizacion(section,item.id,companiaEfectivaFuente(item));wrap.appendChild(section);
   });
 }
 async function procesarArchivoCotizaciones(file){
@@ -2956,60 +3230,158 @@ async function procesarComposerCotizaciones(){
   try{await normalizarTextoCotizaciones(texto);ta.value='';autoSizeQuotesComposer();}catch(e){mostrarEstadoCotizaciones(e?.message||'No pude interpretar esa cotización.','error');}
 }
 function autoSizeQuotesComposer(){const ta=document.getElementById('quotesComposerText');if(!ta)return;ta.style.height='auto';ta.style.height=Math.min(140,Math.max(42,ta.scrollHeight))+'px';}
-function quitarFuenteATM(){atmCoberturasDetectadas=[];quoteSources=quoteSources.filter(x=>x.compania!=='ATM');quitarOrdenVisualFuente('atm');const s=document.getElementById('atmQuoteSource');if(s)s.hidden=true;const sa=document.getElementById('atmSumaAsegurada');if(sa)sa.value='';renderMatrizCoberturasATM();renderResumenSeleccionATM();invalidarPropuestaCotizaciones();actualizarFooterCotizaciones();}
-function quitarFuenteMercantil(){mercantilFuente=null;quoteSources=quoteSources.filter(x=>x.compania!=='Mercantil Andina');quitarOrdenVisualFuente('mercantil');renderMercantilFuente();invalidarPropuestaCotizaciones();actualizarFooterCotizaciones();}
-function limpiarCotizaciones(){quitarFuenteATM();quitarFuenteMercantil();federacionQuoteSources=[];genericQuoteSources=[];manualQuoteSources=[];quoteSources=[];quoteVisualOrder.clear();quoteVisualSeq=1;renderFederacionQuoteSources();renderGenericQuoteSources();renderManualQuoteSources();mostrarEstadoCotizaciones('');const ta=document.getElementById('quotesComposerText');if(ta){ta.value='';autoSizeQuotesComposer();}}
+function quitarFuenteATM(){atmCoberturasDetectadas=[];quoteSources=quoteSources.filter(x=>x.id!=='atm');quitarOrdenVisualFuente('atm');const s=document.getElementById('atmQuoteSource');if(s)s.hidden=true;const sa=document.getElementById('atmSumaAsegurada');if(sa)sa.value='';renderMatrizCoberturasATM();renderResumenSeleccionATM();invalidarPropuestaCotizaciones();actualizarFooterCotizaciones();}
+function quitarFuenteMercantil(){mercantilFuente=null;quoteSources=quoteSources.filter(x=>x.id!=='mercantil');quitarOrdenVisualFuente('mercantil');renderMercantilFuente();invalidarPropuestaCotizaciones();actualizarFooterCotizaciones();}
+function limpiarCotizaciones(){cerrarMenuDocumentoCotizacion();quitarFuenteATM();quitarFuenteMercantil();federacionQuoteSources=[];genericQuoteSources=[];manualQuoteSources=[];quoteSources=[];quoteVisualOrder.clear();quoteVisualSeq=1;renderFederacionQuoteSources();renderGenericQuoteSources();renderManualQuoteSources();mostrarEstadoCotizaciones('');const ta=document.getElementById('quotesComposerText');if(ta){ta.value='';autoSizeQuotesComposer();}}
 async function asegurarMercantilCalculada(){
-  const seleccion=mercantilFuente?.opciones?.filter(x=>x.seleccionada)||[];for(const op of seleccion){if(!op.precio_final_formateado){const ok=await recalcularMercantilItem(op);if(!ok)return false;}}return true;
+  const seleccion=mercantilFuente?.opciones?.filter(x=>x.seleccionada)||[];for(const op of seleccion){if(!op.precio_final_formateado||Number(op.descuento)!==Number(mercantilFuente?.bonificacion)){const ok=await recalcularMercantilItem(op);if(!ok)return false;}}return true;
 }
-async function generarPropuestaCotizaciones(){
-  if(!totalSeleccionadasCotizaciones()){mostrarEstadoCotizaciones('Elegí al menos una cobertura o alternativa.','error');return;}
-  if(seleccionadasATM().length){const ok=await calcularCoberturasSeleccionadasATM();if(!ok)return;}
-  if(!(await asegurarMercantilCalculada()))return;
-  const bloques=[];
+function vehiculoConAnioCotizacion(base,anio){
+  const b=String(base||'').trim(),a=String(anio||'').trim();if(!b)return '';
+  if(!a||new RegExp(`(?:^|\\s)${a.replace(/[.*+?^${}()|[\]\\]/g,'\\$&')}(?:$|\\s)`).test(b))return b;
+  return `${b} ${a}`;
+}
+function vehiculoPropuestaCotizaciones(){
+  const fed=federacionQuoteSources.find(x=>x.seleccionada);
+  if(fed){
+    const base=String(fed.vehiculo||[fed.marca,fed.modelo].filter(Boolean).join(' ')||'').trim();
+    if(base)return vehiculoConAnioCotizacion(base,fed.anio);
+  }
+  for(const source of genericQuoteSources){
+    if(!(source.opciones||[]).some(x=>x.seleccionada))continue;
+    const base=String(source.vehiculo||'').trim();if(base)return vehiculoConAnioCotizacion(base,source.anio);
+  }
+  if((mercantilFuente?.opciones||[]).some(x=>x.seleccionada)&&mercantilFuente?.modelo){
+    return vehiculoConAnioCotizacion(mercantilFuente.modelo,mercantilFuente.anio);
+  }
+  const atm=quoteSources.find(x=>x.id==='atm');
+  if(atm){
+    const base=String(atm.vehiculo||[atm.marca,atm.modelo].filter(Boolean).join(' ')||'').trim();
+    if(base)return vehiculoConAnioCotizacion(base,atm.anio);
+  }
+  return '';
+}
+function obtenerDatosPropuestaCotizaciones(){
+  const alternativas=[];
   const saATM=document.getElementById('atmSumaAsegurada')?.value?.trim()||'';
-  seleccionadasATM().forEach(c=>bloques.push(bloqueATMPropuesta(c,saATM)));
+  seleccionadasATM().forEach(c=>alternativas.push(datosATMPropuesta(c,saATM)));
   (mercantilFuente?.opciones||[]).filter(x=>x.seleccionada).forEach(op=>{
-    const nombre=op.franquicia_pct?'Todo Riesgo':op.nombre_cliente;
-    const suma=mercantilFuente?.suma_asegurada_formateada?mercantilFuente.suma_asegurada_formateada.replace(',00',''):'';
-    const franquiciaImporte=op.franquicia_importe_formateado?op.franquicia_importe_formateado.replace(',00',''):'';
-    bloques.push(bloqueCoberturaWhatsApp({compania:'Mercantil Andina',nombre,suma,descripcion:op.descripcion_cliente,precio:`${formatearPrecioComercialCotizacion(op.precio_final,op.precio_final_formateado)} por cuota`,franquiciaPct:op.franquicia_pct||'',franquiciaImporte}));
+    const modelo=modeloComercialOpcion(mercantilFuente,op);
+    alternativas.push(datosCoberturaPropuesta({
+      compania:companiaEfectivaFuente(mercantilFuente,'Mercantil Andina'),companiaDetectada:mercantilFuente.compania_detectada,companiaConfirmada:mercantilFuente.compania_confirmada,companyKey:mercantilFuente.company_key,
+      codigo:modelo.codigo,familia:modelo.familia,nombre:modelo.titulo_comercial,nombreComercial:modelo.nombre_comercial,varianteComercial:modelo.variante_comercial,varianteGrua:modelo.variante_grua,servicioGrua:modelo.tiene_grua,
+      suma:mercantilFuente?.suma_asegurada_formateada?mercantilFuente.suma_asegurada_formateada.replace(',00',''):'',
+      descripcion:descripcionSinVarianteGrua(op.descripcion_cliente,modelo),
+      precio:formatearPrecioComercialCotizacion(op.precio_final,op.precio_final_formateado),
+      franquiciaPct:op.franquicia_pct||'',
+      franquiciaImporte:op.franquicia_importe_formateado?op.franquicia_importe_formateado.replace(',00',''):''
+    }));
   });
   federacionQuoteSources.filter(x=>x.seleccionada).forEach(item=>{
-    const suma=item.suma_asegurada_formateada||'';
-    const franquiciaImporte=item.franquicia_importe_formateado||'';
-    bloques.push(bloqueCoberturaWhatsApp({compania:'Federación Patronal',nombre:item.nombre_cliente||nombreComercialManual('Federación Patronal',item.codigo),suma,descripcion:descripcionFederacionPropuesta(item),precio:`${formatearPrecioComercialCotizacion(item.precio_cuota,item.precio_cuota_formateado)} por cuota`,franquiciaPct:item.franquicia_pct||'',franquiciaImporte}));
+    const modelo=modeloComercialOpcion(item,item);
+    alternativas.push(datosCoberturaPropuesta({
+      compania:companiaEfectivaFuente(item,'Federación Patronal'),companiaDetectada:item.compania_detectada,companiaConfirmada:item.compania_confirmada,companyKey:item.company_key,
+      codigo:modelo.codigo,familia:modelo.familia,nombre:modelo.titulo_comercial,nombreComercial:modelo.nombre_comercial,varianteComercial:modelo.variante_comercial,varianteGrua:modelo.variante_grua,servicioGrua:modelo.tiene_grua,
+      suma:item.suma_asegurada_formateada||'',
+      descripcion:descripcionSinVarianteGrua(descripcionFederacionPropuesta(item),modelo),
+      precio:formatearPrecioComercialCotizacion(item.precio_cuota,item.precio_cuota_formateado),
+      franquiciaPct:item.franquicia_pct||'',
+      franquiciaImporte:item.franquicia_importe_formateado||''
+    }));
   });
   genericQuoteSources.forEach(source=>{
     (source.opciones||[]).filter(x=>x.seleccionada).forEach(op=>{
-      const suma=source.suma_asegurada_formateada?source.suma_asegurada_formateada.replace(',00',''):'';
-      const precio=op.precio_cuota_formateado?`${formatearPrecioComercialCotizacion(op.precio_cuota,op.precio_cuota_formateado)} por cuota`:'';
+      const modelo=modeloComercialOpcion(source,op);
       const descripcion=[op.descripcion_cliente||'',op.servicio_grua===true?'Incluye grúa.':op.servicio_grua===false?'Sin grúa.':''].filter(Boolean).join('\n');
-      bloques.push(bloqueCoberturaWhatsApp({compania:source.compania||'Compañía',nombre:nombrePerfilGenerico(op),suma,descripcion,precio,franquiciaPct:op.franquicia_pct||'',franquiciaImporte:op.franquicia_importe_formateado||''}));
+      alternativas.push(datosCoberturaPropuesta({
+        compania:companiaEfectivaFuente(source),companiaDetectada:source.compania_detectada,companiaConfirmada:source.compania_confirmada,companyKey:source.company_key,
+        codigo:modelo.codigo,familia:modelo.familia,nombre:modelo.titulo_comercial,nombreComercial:modelo.nombre_comercial,varianteComercial:modelo.variante_comercial,varianteGrua:modelo.variante_grua,servicioGrua:modelo.tiene_grua,
+        suma:source.suma_asegurada_formateada?source.suma_asegurada_formateada.replace(',00',''):'',
+        descripcion:descripcionSinVarianteGrua(descripcion,modelo),
+        precio:op.precio_cuota_formateado?formatearPrecioComercialCotizacion(op.precio_cuota,op.precio_cuota_formateado):'',
+        franquiciaPct:op.franquicia_pct||'',
+        franquiciaImporte:op.franquicia_importe_formateado||''
+      }));
     });
   });
   manualQuoteSources.filter(x=>x.seleccionada).forEach(item=>{
-    bloques.push(bloqueCoberturaWhatsApp({compania:item.compania,nombre:nombreComercialManual(item.compania,item.codigo),suma:item.suma_asegurada?formatoPesosCotizacion(item.suma_asegurada,false):'',descripcion:item.descripcion,precio:`${formatearPrecioComercialCotizacion(item.precio,formatoPesosCotizacion(item.precio,true))} por cuota`}));
+    const op={...item,nombre_cliente:nombreComercialManual(companiaEfectivaFuente(item),item.codigo)};const modelo=modeloComercialOpcion(item,op);
+    alternativas.push(datosCoberturaPropuesta({
+      compania:companiaEfectivaFuente(item),companiaDetectada:item.compania_detectada,companiaConfirmada:item.compania_confirmada,companyKey:item.company_key,
+      codigo:modelo.codigo,familia:modelo.familia,nombre:modelo.titulo_comercial,nombreComercial:modelo.nombre_comercial,varianteComercial:modelo.variante_comercial,varianteGrua:modelo.variante_grua,servicioGrua:modelo.tiene_grua,
+      suma:item.suma_asegurada?formatoPesosCotizacion(item.suma_asegurada,false):'',
+      descripcion:item.descripcion,
+      precio:formatearPrecioComercialCotizacion(item.precio,formatoPesosCotizacion(item.precio,true))
+    }));
   });
+  return {vehiculo:vehiculoPropuestaCotizaciones(),alternativas};
+}
+async function prepararDatosPropuestaCotizaciones(){
+  if(!totalSeleccionadasCotizaciones()){mostrarEstadoCotizaciones('Elegí al menos una cobertura o alternativa.','error');return null;}
+  if(seleccionadasATM().length){const ok=await calcularCoberturasSeleccionadasATM();if(!ok)return null;}
+  if(!(await asegurarMercantilCalculada()))return null;
+  return obtenerDatosPropuestaCotizaciones();
+}
+async function generarPropuestaCotizaciones(){
+  const propuesta=await prepararDatosPropuestaCotizaciones();if(!propuesta)return;
+  const bloques=propuesta.alternativas.map(bloqueCoberturaWhatsAppDatos);
   const text=['¡Hola! Te paso algunas opciones de cobertura para tu vehículo para que puedas compararlas y elegir la que mejor te sirva:','',bloques.join('\n\n')].join('\n');
   const area=document.getElementById('atmProposalText'),wrap=document.getElementById('atmProposal');if(area)area.value=text;if(wrap)wrap.hidden=false;mostrarEstadoCotizaciones('Propuesta lista para copiar.','ok');
 }
+function nombreDescargaDesdeDisposition(value){
+  const raw=String(value||'');
+  const utf=raw.match(/filename\*=UTF-8''([^;]+)/i);if(utf){try{return decodeURIComponent(utf[1])}catch(_){}}
+  const simple=raw.match(/filename="?([^";]+)"?/i);return simple?simple[1]:'';
+}
+function cerrarMenuDocumentoCotizacion(){const menu=document.getElementById('quotesDocumentMenu');const btn=document.getElementById('quotesGenerateDocument');if(menu)menu.hidden=true;if(btn)btn.setAttribute('aria-expanded','false');}
+async function generarDocumentoCotizaciones(formato){
+  const propuesta=await prepararDatosPropuestaCotizaciones();if(!propuesta)return;
+  const btn=document.querySelector(`[data-quote-document-format="${formato}"]`);const main=document.getElementById('quotesGenerateDocument');
+  cerrarMenuDocumentoCotizacion();if(btn)btn.disabled=true;if(main)main.disabled=true;mostrarEstadoCotizaciones(`Generando ${String(formato||'').toUpperCase()}…`);
+  try{
+    const resp=await fetch('/api/cotizaciones/generar-documento',{method:'POST',credentials:'same-origin',headers:{'Content-Type':'application/json'},body:JSON.stringify({formato,propuesta})});
+    if(!resp.ok){const d=await leerJsonSeguro(resp);throw Error(d.error||'No pude generar la cotización.');}
+    const blob=await resp.blob();const url=URL.createObjectURL(blob);const a=document.createElement('a');a.href=url;a.download=nombreDescargaDesdeDisposition(resp.headers.get('Content-Disposition'))||`Cotizacion.${formato==='docx'?'docx':formato}`;document.body.appendChild(a);a.click();a.remove();setTimeout(()=>URL.revokeObjectURL(url),1200);
+    const missing=String(resp.headers.get('X-OficinaIA-Font-Warning')||'').trim();
+    if(missing&&window.showToast)showToast(`Archivo generado. El servidor no tiene ${missing.replace(/,/g,' / ')}; LibreOffice puede sustituir esa tipografía al exportar.`, 'warning');
+    mostrarEstadoCotizaciones('Cotización generada correctamente.','ok');
+  }catch(e){mostrarEstadoCotizaciones(e?.message||'No pude generar la cotización.','error');}
+  finally{if(btn)btn.disabled=false;actualizarFooterCotizaciones();}
+}
 function actualizarCalculadoraDirecta(){const p=parseNumeroCotizacion(document.getElementById('quotesCalcPrice')?.value),d=Number(String(document.getElementById('quotesCalcDiscount')?.value||'').replace(',','.'));const out=document.getElementById('quotesCalcResult');if(!out)return;if(!Number.isFinite(p)||!Number.isFinite(d)){out.textContent='—';return;}out.textContent=formatoPesosCotizacion(p*(1-d/100),true);}
-function inicializarCotizadorATM(){
+function inicializarCotizadorATM(pageSignal=null){
   const modal=document.getElementById('atmCotiModal');if(!modal||modal.dataset.wired==='1')return;modal.dataset.wired='1';
   asegurarCatalogoATM();
   document.getElementById('atmCotiClose')?.addEventListener('click',cerrarCotizadorATM);
   document.getElementById('atmCotiSubmit')?.addEventListener('click',calcularCotizacionATM);
   document.getElementById('atmGenerateProposal')?.addEventListener('click',generarPropuestaCotizaciones);
+  const docButton=document.getElementById('quotesGenerateDocument'),docMenu=document.getElementById('quotesDocumentMenu');
+  docButton?.addEventListener('click',e=>{
+    e.preventDefault();e.stopPropagation();
+    if(docButton.disabled)return;
+    const abrir=!!docMenu?.hidden;if(docMenu)docMenu.hidden=!abrir;
+    docButton.setAttribute('aria-expanded',abrir?'true':'false');
+  });
+  docMenu?.addEventListener('click',e=>{
+    const option=e.target.closest('[data-quote-document-format]');if(!option)return;
+    e.preventDefault();e.stopPropagation();generarDocumentoCotizaciones(option.dataset.quoteDocumentFormat);
+  });
+  document.addEventListener('click',e=>{if(docMenu?.hidden)return;if(e.target.closest('#quotesDocumentMenu')||e.target.closest('#quotesGenerateDocument'))return;cerrarMenuDocumentoCotizacion();},pageSignal?{signal:pageSignal}:undefined);
   document.getElementById('atmCopyProposal')?.addEventListener('click',copiarPropuestaATM);
   document.querySelectorAll('[data-atm-descuento]').forEach(btn=>btn.addEventListener('click',()=>{if(btn.disabled)return;const input=document.getElementById('atmDescuento');if(input){input.value=btn.dataset.atmDescuento;invalidarPropuestaCotizaciones();programarRecalculoSeleccionATM();input.focus()}}));
   document.getElementById('atmDescuento')?.addEventListener('input',()=>{normalizarDescuentoATMTipo();invalidarPropuestaCotizaciones();programarRecalculoSeleccionATM();});
   document.getElementById('atmSumaAsegurada')?.addEventListener('input',invalidarPropuestaCotizaciones);
   document.getElementById('atmQuoteRemove')?.addEventListener('click',quitarFuenteATM);
   document.getElementById('mercantilQuoteRemove')?.addEventListener('click',quitarFuenteMercantil);
+  document.getElementById('mercantilBonificacion')?.addEventListener('input',e=>{
+    if(!mercantilFuente)return;let n=Number(String(e.target.value||'').replace(',','.'));if(!Number.isFinite(n))return;
+    n=Math.max(0,Math.min(50,n));if(String(n)!==e.target.value)e.target.value=String(n);mercantilFuente.bonificacion=n;
+    mercantilFuente.opciones.forEach(op=>{op.descuento=n;op.precio_final=null;op.precio_final_formateado=''});
+    invalidarPropuestaCotizaciones();renderResumenMercantil();clearTimeout(mercantilFuente._timer);mercantilFuente._timer=setTimeout(recalcularMercantilTodas,180);
+  });
   document.getElementById('quotesClearBtn')?.addEventListener('click',limpiarCotizaciones);
   modal.addEventListener('click',e=>{if(e.target===modal)cerrarCotizadorATM()});
-  document.addEventListener('keydown',e=>{if(e.key==='Escape'&&!modal.hidden){const calc=document.getElementById('quotesCalculator');if(calc&&!calc.hidden){calc.hidden=true;return;}cerrarCotizadorATM();}});
+  document.addEventListener('keydown',e=>{if(e.key==='Escape'&&!modal.hidden){const menu=document.getElementById('quotesDocumentMenu');if(menu&&!menu.hidden){cerrarMenuDocumentoCotizacion();return;}const calc=document.getElementById('quotesCalculator');if(calc&&!calc.hidden){calc.hidden=true;return;}cerrarCotizadorATM();}},pageSignal?{signal:pageSignal}:undefined);
   document.getElementById('atmPrecioBase')?.addEventListener('keydown',e=>{if(e.key==='Enter'){e.preventDefault();calcularCotizacionATM();}});
 
   const composer=document.getElementById('quotesComposer'),text=document.getElementById('quotesComposerText'),fileInput=document.getElementById('quotesFileInput');
@@ -3031,14 +3403,59 @@ function inicializarCotizadorATM(){
   actualizarFooterCotizaciones();autoSizeQuotesComposer();
 }
 
-function inicializarMenuAccionesChat(){
+function inicializarMenuAccionesChat(pageSignal=null){
   const btn=document.getElementById('chatActionBtn'),menu=document.getElementById('chatActionMenu');
   if(!btn||!menu||btn.dataset.wired==='1')return;
   btn.dataset.wired='1';
   btn.addEventListener('click',e=>{e.preventDefault();e.stopPropagation();const abrir=menu.hidden;cerrarMenuComandos();menu.hidden=!abrir;btn.setAttribute('aria-expanded',abrir?'true':'false')});
   menu.addEventListener('click',e=>{const item=e.target.closest('[data-chat-action]');if(!item)return;e.preventDefault();ejecutarAccionRapidaChat(item.dataset.chatAction)});
-  document.addEventListener('click',e=>{if(menu.hidden)return;if(e.target.closest('#chatActionMenu')||e.target.closest('#chatActionBtn'))return;cerrarMenuAccionesChat()});
-  document.addEventListener('keydown',e=>{if(e.key==='Escape')cerrarMenuAccionesChat()});
+  document.addEventListener('click',e=>{if(menu.hidden)return;if(e.target.closest('#chatActionMenu')||e.target.closest('#chatActionBtn'))return;cerrarMenuAccionesChat()},pageSignal?{signal:pageSignal}:undefined);
+  document.addEventListener('keydown',e=>{if(e.key==='Escape')cerrarMenuAccionesChat()},pageSignal?{signal:pageSignal}:undefined);
+}
+
+async function leerRespuestaChatStreaming(response,thinking){
+  const reader=response.body?.getReader?.();
+  if(!reader)throw new Error('El navegador no pudo abrir el stream del chat.');
+  const decoder=new TextDecoder();
+  let buffer='',texto='',donePayload=null;
+  const bubble=thinking?.querySelector?.('.bubble');
+  const pintar=()=>{
+    if(!bubble||!thinking?.isConnected)return;
+    const visible=textoVisibleAsistente(texto||'',{});
+    if(visible)bubble.innerHTML=fmt(visible);
+  };
+  while(true){
+    const {value,done}=await reader.read();
+    if(done)break;
+    buffer+=decoder.decode(value,{stream:true});
+    const lineas=buffer.split('\n');
+    buffer=lineas.pop()||'';
+    for(const linea of lineas){
+      const limpia=linea.trim();
+      if(!limpia)continue;
+      let evento;
+      try{evento=JSON.parse(limpia)}catch(_){continue}
+      if(evento?.type==='delta'){
+        texto+=String(evento.text||'');
+        pintar();
+      }else if(evento?.type==='done'){
+        donePayload=evento;
+      }else if(evento?.type==='error'){
+        throw new Error(evento.error||'Se interrumpió la respuesta del asistente.');
+      }
+    }
+  }
+  buffer+=decoder.decode();
+  if(buffer.trim()){
+    try{
+      const evento=JSON.parse(buffer.trim());
+      if(evento?.type==='delta'){texto+=String(evento.text||'');pintar()}
+      else if(evento?.type==='done')donePayload=evento;
+      else if(evento?.type==='error')throw new Error(evento.error||'Se interrumpió la respuesta del asistente.');
+    }catch(error){if(error instanceof SyntaxError){}else throw error}
+  }
+  if(!donePayload)throw new Error('La respuesta del asistente terminó antes de completarse.');
+  return donePayload;
 }
 
 async function enviarMensaje(){
@@ -3082,8 +3499,15 @@ async function enviarMensaje(){
       fd.append('historial',JSON.stringify(historial));
       fd.append('chat_id',String(currentChatId||''));
       archivos.forEach(a=>fd.append('archivo',a,a.name));
-      const r=await fetch('/api/chat',{method:'POST',body:fd,credentials:'same-origin'});
-      const d=await leerJsonSeguro(r);
+      const r=await fetch('/api/chat',{
+        method:'POST',body:fd,credentials:'same-origin',
+        headers:{'X-Chat-Stream':'1'},
+        signal:señalPaginaChat()
+      });
+      const contentType=String(r.headers.get('content-type')||'').toLowerCase();
+      const d=contentType.includes('application/x-ndjson')
+        ? await leerRespuestaChatStreaming(r,thinking)
+        : await leerJsonSeguro(r);
       if(!r.ok||d.ok===false)throw Error(d.error||'No se pudo consultar el asistente.');
       currentChatId=d.chat_id||currentChatId;
 
@@ -3106,6 +3530,7 @@ async function enviarMensaje(){
       if(d.abrir_cotizador_atm)abrirCotizadorATM(d.atm_cotizacion_detectada||null);
       try{await cargarListaChats()}catch(_){}
     }catch(e){
+      if(e?.name==='AbortError')return;
       // Si el usuario no empezó un borrador nuevo mientras esperaba, devolvemos
       // el snapshot al editor. Nunca obligamos a volver a seleccionar archivos.
       if(composerEditSeq===composerSeqLimpio && attachmentEditSeq===adjuntosSeqLimpios && !i.value.trim() && !archivosAdjuntosChat.length){
@@ -3133,11 +3558,12 @@ async function initChat(){
   if(!i)return;
   chatInitInProgress=true;
   chatInitReadyPromise=new Promise(resolve=>{resolveChatInitReady=resolve});
+  const pageSignal=iniciarCicloPaginaChat();
   try{
-  inicializarLightboxChat();
-  inicializarMenuAccionesChat();
+  inicializarLightboxChat(pageSignal);
+  inicializarMenuAccionesChat(pageSignal);
   inicializarDictadoChat();
-  inicializarCotizadorATM();
+  inicializarCotizadorATM(pageSignal);
   limpiarMetadataVisualMensajes(document.getElementById('chat'));
   wireWelcomeWorkflows(document);try{const h=document.getElementById('chat');if(h&&h.querySelector('#chatWelcome')){h.classList.add('history-empty');h.scrollTop=0}}catch(_){};
 
@@ -3205,18 +3631,19 @@ async function initChat(){
     }
   });
 
-  wireDragAndDropArchivo();
+  wireDragAndDropArchivo(pageSignal);
 
   document.addEventListener('click',e=>{
     const menu=document.getElementById('chatCommandMenu');
     if(menu&&!menu.hidden&&!e.target.closest('#chatCommandMenu')&&e.target!==i){
       cerrarMenuComandos();
     }
-  });
+  },{signal:pageSignal});
 
 
-  const r=await fetch('/api/chats',{credentials:'same-origin'});
+  const r=await fetch('/api/chats',{credentials:'same-origin',signal:pageSignal});
   const d=await leerJsonSeguro(r);
+  if(pageSignal.aborted)return;
   if(!r.ok||!d.ok)throw new Error(d.error||'No se pudo cargar el historial.');
 
   if(window.FORZAR_CHAT_NUEVO||!d.chats.length){
@@ -3224,17 +3651,22 @@ async function initChat(){
       method:'POST',
       headers:{'Content-Type':'application/json'},
       body:JSON.stringify({titulo:'Nueva conversación'}),
-      credentials:'same-origin'
+      credentials:'same-origin',signal:pageSignal
     });
     const j=await leerJsonSeguro(x);
+    if(pageSignal.aborted)return;
     if(j.ok)await abrirChat(j.id);
     window.FORZAR_CHAT_NUEVO=false;
   }else{
+    if(pageSignal.aborted)return;
     await abrirChat(d.chats[0].id);
   }
 
+  if(pageSignal.aborted)return;
   size();
   scroll();
+  }catch(error){
+    if(error?.name!=='AbortError')throw error;
   }finally{
     chatInitInProgress=false;
     try{resolveChatInitReady?.()}catch(_){}
@@ -3380,7 +3812,7 @@ function validarYAdjuntarArchivo(file,inputEl){
 // relatedTarget para decidir si realmente se salió de la zona, y se
 // agregan redes de seguridad a nivel documento/ventana para ocultar el
 // overlay pase lo que pase.
-function wireDragAndDropArchivo(){
+function wireDragAndDropArchivo(pageSignal=null){
   const zona=document.getElementById('chatDropZone');
   const overlay=document.getElementById('chatDropOverlay');
   const pdf=document.getElementById('archivoInput');
@@ -3431,15 +3863,15 @@ function wireDragAndDropArchivo(){
     if(archivos.length)validarYAdjuntarArchivos(archivos,pdf,{reemplazar:false});
   });
 
-  document.addEventListener('dragend',ocultar);
+  document.addEventListener('dragend',ocultar,pageSignal?{signal:pageSignal}:undefined);
   document.addEventListener('drop',e=>{
     if(e.target!==zona && !zona.contains(e.target))ocultar();
-  });
+  },pageSignal?{signal:pageSignal}:undefined);
   document.addEventListener('dragleave',e=>{
     if(e.clientX<=0 && e.clientY<=0)ocultar();
-  });
-  window.addEventListener('blur',ocultar);
-  document.addEventListener('keydown',e=>{if(e.key==='Escape')ocultar()});
+  },pageSignal?{signal:pageSignal}:undefined);
+  window.addEventListener('blur',ocultar,pageSignal?{signal:pageSignal}:undefined);
+  document.addEventListener('keydown',e=>{if(e.key==='Escape')ocultar()},pageSignal?{signal:pageSignal}:undefined);
 }
 
 document.addEventListener('DOMContentLoaded',()=>{const s=document.getElementById('buscadorCompanias');if(s){let t;s.oninput=()=>{clearTimeout(t);t=setTimeout(()=>buscar(s.value.trim()),220)}}});
@@ -3463,7 +3895,8 @@ document.addEventListener('DOMContentLoaded',()=>{
   });
 });
 
-function inicializarFechaGlobal(){const e=document.getElementById('fechaHoy');if(!e)return;const actualizar=()=>{e.textContent=new Date().toLocaleDateString('es-AR',{weekday:'long',day:'numeric',month:'long'}).replace(/^./,x=>x.toUpperCase())};actualizar();const ahora=new Date(),manana=new Date(ahora);manana.setHours(24,0,0,0);setTimeout(()=>{actualizar();setInterval(actualizar,86400000)},manana-ahora)}
+function inicializarFechaGlobal(){const e=document.getElementById('fechaHoy');if(!e)return;const actualizar=()=>{e.textContent=new Date().toLocaleDateString('es-AR',{weekday:'long',day:'numeric',month:'long'}).replace(/^./,x=>x.toUpperCase())};actualizar();if(window.__oiaDateTimerWired)return;window.__oiaDateTimerWired=true;const ahora=new Date(),manana=new Date(ahora);manana.setHours(24,0,0,0);setTimeout(()=>{inicializarFechaGlobal();setInterval(inicializarFechaGlobal,86400000)},manana-ahora)}
+window.OIA_reinitGlobalDate=inicializarFechaGlobal;
 document.addEventListener('DOMContentLoaded',inicializarFechaGlobal);
 
 /* ==========================================================
@@ -3480,7 +3913,10 @@ document.addEventListener('DOMContentLoaded',inicializarFechaGlobal);
   function viewportDensity(){return 1}
   function applyFont(){const general=getFont(),density=viewportDensity(),effective=(general/16)*density;document.documentElement.style.setProperty('--ui-font-size',general+'px');document.documentElement.style.setProperty('--viewport-density',String(density));document.documentElement.style.setProperty('--font-scale',String(effective));document.documentElement.style.setProperty('--sidebar-font-size',general+'px');document.documentElement.style.setProperty('--chat-font-size',general+'px')}
   window.showToast=function(message,type){const host=document.getElementById('toastHost');if(!host)return;const el=document.createElement('div');el.className='toast '+(type||'info');el.setAttribute('role','status');el.textContent=message;host.appendChild(el);const hide=()=>{el.classList.add('leaving');setTimeout(()=>el.remove(),200)};setTimeout(hide,type==='error'?4500:2800);el.addEventListener('click',hide)};
-  function initAppearance(){applyTheme(getTheme());applyFont();document.getElementById('themeToggle')?.addEventListener('click',toggleTheme);let resizeTimer=null;window.addEventListener('resize',()=>{clearTimeout(resizeTimer);resizeTimer=setTimeout(applyFont,80)},{passive:true});if(window.matchMedia){const mq=window.matchMedia('(prefers-color-scheme: dark)');const onChange=()=>{if(localStorage.getItem(THEME_KEY)===null)applyTheme(mq.matches?'dark':'light')};if(mq.addEventListener)mq.addEventListener('change',onChange);else if(mq.addListener)mq.addListener(onChange)}}
+  function bindThemeButton(){const btn=document.getElementById('themeToggle');if(!btn||btn.dataset.oiaThemeWired==='1')return;btn.dataset.oiaThemeWired='1';btn.addEventListener('click',toggleTheme)}
+  function reinitAppearance(){applyTheme(getTheme());applyFont();bindThemeButton()}
+  function initAppearance(){reinitAppearance();if(!window.__oiaAppearanceGlobalWired){window.__oiaAppearanceGlobalWired=true;let resizeTimer=null;window.addEventListener('resize',()=>{clearTimeout(resizeTimer);resizeTimer=setTimeout(applyFont,80)},{passive:true});if(window.matchMedia){const mq=window.matchMedia('(prefers-color-scheme: dark)');const onChange=()=>{if(localStorage.getItem(THEME_KEY)===null)applyTheme(mq.matches?'dark':'light')};if(mq.addEventListener)mq.addEventListener('change',onChange);else if(mq.addListener)mq.addListener(onChange)}}}
+  window.OIA_reinitAppearance=reinitAppearance;
   if(document.readyState==='loading')document.addEventListener('DOMContentLoaded',initAppearance);else initAppearance();
 })();
 
@@ -3536,11 +3972,14 @@ document.addEventListener('DOMContentLoaded',inicializarFechaGlobal);
     let collapsed=false;
     try{collapsed=localStorage.getItem(KEY)==='collapsed'}catch(_){}
     apply(collapsed);
+    if(btn.dataset.oiaChatListWired==='1')return;
+    btn.dataset.oiaChatListWired='1';
     btn.addEventListener('click',()=>{
       const now=document.documentElement.getAttribute('data-chat-list')==='collapsed';
       apply(!now);
     });
   }
+  window.OIA_reinitChatList=init;
   if(document.readyState==='loading')document.addEventListener('DOMContentLoaded',init);
   else init();
 })();
@@ -3581,15 +4020,14 @@ document.addEventListener('DOMContentLoaded',inicializarFechaGlobal);
   window.cerrarSheetChats=cerrarSheetChats;
   function init(){
     const openBtn=document.getElementById('chatListOpen');
-    if(openBtn)openBtn.addEventListener('click',abrirSheetChats);
+    if(openBtn&&openBtn.dataset.oiaSheetWired!=='1'){openBtn.dataset.oiaSheetWired='1';openBtn.addEventListener('click',abrirSheetChats)}
     document.getElementById('chatListSheet')?.querySelectorAll('[data-close-sheet]').forEach(el=>{
-      el.addEventListener('click',cerrarSheetChats);
+      if(el.dataset.oiaSheetWired==='1')return;el.dataset.oiaSheetWired='1';el.addEventListener('click',cerrarSheetChats);
     });
-    document.getElementById('chatListSheetNew')?.addEventListener('click',()=>{
-      nuevoChat();
-      cerrarSheetChats();
-    });
+    const newBtn=document.getElementById('chatListSheetNew');
+    if(newBtn&&newBtn.dataset.oiaSheetWired!=='1'){newBtn.dataset.oiaSheetWired='1';newBtn.addEventListener('click',()=>{nuevoChat();cerrarSheetChats()})}
   }
+  window.OIA_reinitChatSheet=init;
   if(document.readyState==='loading')document.addEventListener('DOMContentLoaded',init);
   else init();
 })();
@@ -3814,5 +4252,6 @@ document.addEventListener('DOMContentLoaded',inicializarFechaGlobal);
       tarjeta.hidden = true;
     };
   }
+  window.OIA_reinitPageModules=function(){refrescarBadgePendientes();inyectarPlantillasMetadato();mostrarTipOficinaIA()};
   document.addEventListener('DOMContentLoaded', mostrarTipOficinaIA);
 })();

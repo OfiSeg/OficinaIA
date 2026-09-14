@@ -74,21 +74,17 @@ EXCEL_POLICY = """
 - Para conteos simples de filas/personas usá contar_registros. Para "vehículos" y tipos de riesgo usá analizar_excel, porque una fila del Excel puede ser hogar/combinado y no un vehículo. consultar_excel devuelve una muestra y nunca debe usarse para contar visualmente.
 - En contar_registros usá tipo_conteo="unicos" sólo para personas/asegurados únicos. Para pólizas, vehículos, remolques, trailers y registros usá "filas".
 - Para preguntas temporales calculá desde/hasta con la FECHA ACTUAL DEL SISTEMA y pasá DD/MM/AAAA a contar_registros o buscar_registros_estructurados. Una fila sin fecha no puede satisfacer "hoy", "ayer" o un rango temporal.
-- "¿cuántos remolques/trailers/grúas tiene ATM?" sin lenguaje de asistencia significa inventario/Excel. "¿cuántos servicios de remolque/grúa cubre ATM?" significa cobertura/metadatos.
+- "¿cuántos remolques/grúas tiene/ofrece/incluye ATM?" pregunta por la prestación de la compañía y pertenece a documentación/metadatos. Inventario/Excel exige señal de cartera propia, por ejemplo "¿cuántos remolques tengo en ATM?" o "en mi Excel".
 - Para vehículos/patentes usá buscar_vehiculos. Para detalles de un registro filtrado por fecha/persona/patente/póliza usá buscar_registros_estructurados. Para búsquedas abiertas generales usá consultar_excel.
 - Si aparece un identificador concreto, no mezcles registros de otros identificadores.
 """
 
 
 ARCA_POLICY = """
-- ARCA/padrón público y cartera/Excel son fuentes distintas. Encontrar una persona en ARCA no significa que sea asegurada de la oficina.
-- Para CUIT/CUIL, DNI o búsqueda de personas reales en padrón ARCA, usá resolver_cuit_por_dni, buscar_personas_arca o estado_padron_arca.
-- No inventes CUIT/CUIL, no inventes personas y no generes variantes artificiales de nombres. Cada candidato debe venir de ARCA.
-- /cuit fuerza ARCA. También podés usar ARCA cuando el usuario pida claramente CUIT/CUIL o cuando un flujo operativo lo requiera.
-- Un nombre solo no confirma identidad: mostrá candidatos. DNI resuelve con mucha más precisión. Nombre + DNI sirve para corroborar.
-- Si el padrón no está cargado, explicalo y no prometas resultados.
-- No mezcles ARCA con Excel salvo motivo operativo concreto, por ejemplo completar CUIT ausente en una propuesta de alta con revisión del productor.
-- El productor conserva la decisión final ante homónimos, discrepancias o lecturas dudosas.
+- ARCA/CUIT/CUIL NO está disponible como herramienta general de Gemini.
+- La única puerta de entrada al padrón es el parser determinístico de los comandos explícitos /cuit y /cuil, antes de llegar a Sofia.
+- Un nombre, DNI, CUIT/CUIL numérico, la palabra ARCA o una consulta de lenguaje natural jamás deben activar ni sugerir una búsqueda ARCA desde este flujo.
+- Si el usuario no usó /cuit o /cuil, continuá con el dominio normal (cartera, documental o conversación) sin desviar a ARCA.
 """
 
 WRITE_POLICY = """

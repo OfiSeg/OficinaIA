@@ -21,8 +21,8 @@ Estas reglas son contrato funcional y NO deben relajarse durante refactors:
 
 1. Mencionar `ATM` en una pregunta documental nunca activa una calculadora textual. La sintaxis legacy con importe sólo abre la UI de Cotizaciones; no calcula en el chat.
 2. `su` / `sus` no son señal suficiente para activar un registro de cartera. `sus coberturas`, `sus grúas`, `sus remolques` deben continuar al dominio documental.
-3. Consultas de compañías/servicios (`Federación Patronal`, `ATM`, `Mercantil`, grúas, remolques, coberturas, franquicias, etc.) nunca deben caer al parser de personas/ARCA.
-4. Una pregunta de selección de fuente `cartera o ARCA` no activa ARCA hasta una decisión explícita.
+3. ARCA/CUIT/CUIL se activa exclusivamente mediante `/cuit` o `/cuil`. Fuera de esos comandos, nombres, DNI, CUIT/CUIL numéricos, la palabra ARCA y cualquier texto natural nunca deben caer al parser de personas/ARCA.
+4. Una vez abierto explícitamente `/cuit` o `/cuil`, ese modo puede recibir nombre, DNI o CUIT/CUIL como dato de búsqueda; fuera de ese modo no existe activación implícita por contexto ni por historial.
 5. Metadata de una compañía jamás puede reemplazarse con metadata de otra si la compañía pedida no tiene fichas. Responder evidencia insuficiente.
 6. Internet sólo debe estar disponible a Gemini cuando el usuario lo pide explícitamente.
 7. El historial sirve para resolver continuidad semántica, no para reactivar herramientas o estados operativos.

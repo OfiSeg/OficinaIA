@@ -1,0 +1,91 @@
+{
+  "federacion_patronal": {
+    "file": "federacion_patronal.png",
+    "pixel_size": [
+      1114,
+      180
+    ],
+    "visible_height_px": 180,
+    "recommended_word_height_cm": 0.65,
+    "preserve_aspect_ratio": true
+  },
+  "san_cristobal": {
+    "file": "san_cristobal.png",
+    "pixel_size": [
+      1511,
+      180
+    ],
+    "visible_height_px": 180,
+    "recommended_word_height_cm": 0.65,
+    "preserve_aspect_ratio": true
+  },
+  "atm": {
+    "file": "atm.png",
+    "pixel_size": [
+      451,
+      180
+    ],
+    "visible_height_px": 180,
+    "recommended_word_height_cm": 0.65,
+    "preserve_aspect_ratio": true,
+    "variant": "ATM solamente; se eliminó por completo la franja inferior 'seguros'"
+  },
+  "mercantil_andina": {
+    "file": "mercantil_andina.png",
+    "pixel_size": [
+      1004,
+      180
+    ],
+    "visible_height_px": 180,
+    "recommended_word_height_cm": 0.65,
+    "preserve_aspect_ratio": true
+  },
+  "agrosalta": {
+    "file": "agrosalta.png",
+    "pixel_size": [
+      706,
+      180
+    ],
+    "visible_height_px": 180,
+    "recommended_word_height_cm": 0.65,
+    "preserve_aspect_ratio": true
+  },
+  "rivadavia": {
+    "file": "rivadavia.png",
+    "pixel_size": [
+      1062,
+      180
+    ],
+    "visible_height_px": 180,
+    "recommended_word_height_cm": 0.65,
+    "preserve_aspect_ratio": true
+  },
+  "aliases": {
+    "ATM": "atm",
+    "Federación Patronal": "federacion_patronal",
+    "Federacion Patronal": "federacion_patronal",
+    "FEDERACION": "federacion_patronal",
+    "Mercantil Andina": "mercantil_andina",
+    "MERCANTIL": "mercantil_andina",
+    "San Cristóbal": "san_cristobal",
+    "San Cristobal": "san_cristobal",
+    "GRUPO SAN CRISTOBAL": "san_cristobal",
+    "Agrosalta": "agrosalta",
+    "AGROSALTA": "agrosalta",
+    "Rivadavia": "rivadavia",
+    "Seguros Rivadavia": "rivadavia",
+    "Allianz": "allianz",
+    "ALLIANZ": "allianz",
+    "Allianz Seguros": "allianz"
+  },
+  "allianz": {
+    "file": "allianz.png",
+    "pixel_size": [
+      761,
+      180
+    ],
+    "visible_height_px": 180,
+    "recommended_word_height_cm": 0.65,
+    "preserve_aspect_ratio": true
+  }
+}

@@ -36,7 +36,9 @@
 <link rel="shortcut icon" href="{{ static_asset('img/favicon.ico') }}">
 <link rel="stylesheet" href="{{ static_asset('css/estilo.css') }}">
 <link rel="stylesheet" href="{{ static_asset('css/design-system.css') }}">
+<meta data-oia-page-head-boundary="start">
 {% block head %}{% endblock %}
+<meta data-oia-page-head-boundary="end">
 </head>
 <body class="{% block body_class %}{% endblock %}">
 <div class="app">
@@ -105,9 +107,11 @@
     {% endif %}
   </aside>
 
-  <main class="main">
-    {% block global_actions_slot %}<div class="app-global-bar" aria-label="Barra global">{{ render_global_actions('global-actions-inline') }}</div>{% endblock %}
-    {% block content %}{% endblock %}
+  <main class="main" id="oiaMainContent">
+    {% if request.endpoint != 'documentos' %}
+    <div class="app-global-bar" aria-label="Barra global">{{ render_global_actions('global-actions-inline') }}</div>
+    {% endif %}
+    <div id="oiaPageContent" class="oia-page-content-shell">{% block content %}{% endblock %}</div>
   </main>
 </div>
 <div class="toast-host" id="toastHost" aria-live="polite" aria-relevant="additions"></div>

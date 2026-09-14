@@ -58,9 +58,16 @@ assert shortcuts[1]["icon_url"].endswith("gmail.png")
 js = Path("static/js/app.js").read_text(encoding="utf-8")
 assert "marcaCompaniaPara" in js
 assert "marcarFuenteVisualReciente('mercantil')" in js
-assert "presentarFuenteCotizacion(section,item.id,'Federación Patronal')" in js
+assert "presentarFuenteCotizacion(section,item.id,companiaEfectivaFuente(item,'Federación Patronal'))" in js
+assert "resolverCompaniaCotizacion" in js and "logo_url" in js
+# En UI el favicon configurable debe tener prioridad sobre el PNG horizontal
+# del manifiesto documental.
+assert "item?.icon_url||item?.url||item?.favicon_url||item?.logo_url" in js
+assert "icon_url:String(item.icon_url||item.url||'').trim()" in js
 css = Path("static/css/design-system.css").read_text(encoding="utf-8")
 assert "quote-source-branded" in css
 assert "#federacionQuoteSources,#genericQuoteSources,#manualQuoteSources{display:contents" in css
+assert ".atm-selected-summary" in css and "grid-template-columns:minmax(0,1fr)!important" in css
+assert ".atm-selected-item.quote-selected-row" in css
 
-print("OK - marcas configurables y jerarquía visual de cotizaciones")
+print("OK - favicons UI, marcas configurables y presentación ATM uniforme")

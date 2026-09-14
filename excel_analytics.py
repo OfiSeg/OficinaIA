@@ -186,7 +186,9 @@ def _find_field(rows: list[dict], requested: str) -> str | None:
         "asegurado": ("ASEGURADO", "CLIENTE", "NOMBRE"),
         "numero": ("NUMERO", "NRO", "TELEFONO", "TEL"),
     }.get(_norm(requested), (requested,))
-    for row in rows[:20]:
+    # El esquema de Google Sheets puede materializar columnas recién en filas
+    # posteriores cuando las primeras tienen celdas finales vacías.
+    for row in rows:
         key = _field(row, aliases)
         if key:
             return key
@@ -401,6 +403,15 @@ def _answer_analytic_clause(rows: list[dict], consulta: str) -> dict:
     # Comparación global auto/moto.
     if ("moto" in q and "auto" in q) and any(x in q for x in ("mas", "cuantos", "cantidad", "diferencia", "porcentaje")):
         return clasificacion(rows, company)
+
+    # Conteo de una sola clase sin compañía explícita ("cuántos autos tengo",
+    # "cantidad de motos"). El router deriva estas consultas a analítica porque
+    # una fila del Excel no equivale necesariamente a un vehículo.
+    if clase and any(x in q for x in ("cuanto", "cuantos", "cuantas", "cantidad", "total", "tengo", "tenemos", "hay")):
+        result = clasificacion(rows, company)
+        result["clase_solicitada"] = clase
+        result["cantidad_solicitada"] = result["autos"] if clase == "AUTO" else result["motos"]
+        return result
 
     # Porcentaje de una compañía o su complemento.
     if "porcentaje" in q and company:

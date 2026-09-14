@@ -1,4 +1,4 @@
-{% extends 'base.html' %}
+{% extends base_template|default('base.html') %}
 {% from "_icons.html" import icon %}
 {% block title %}Pendientes · {{config_global.nombre_oficina}}{% endblock %}
 {% block content %}

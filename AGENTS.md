@@ -194,8 +194,8 @@ Si una tarea puntual hace que otra pantalla cambie sin que el usuario lo haya pe
 
 - La calculadora textual ATM está desactivada en el chat. La única calculadora ATM autorizada es la UI de Cotizaciones (`/api/atm/cotizar`). Mencionar `ATM` en lenguaje natural nunca debe disparar cálculo de precios.
 - `su` / `sus` no activan por sí solos un registro de cartera. Frases como `sus coberturas`, `sus grúas` o `sus remolques` pertenecen al dominio documental/compañías.
-- ARCA/CUIT sólo se activa por intención explícita o por un nombre desnudo inequívoco. Una consulta documental que contenga una compañía jamás debe interpretarse como persona.
-- Preguntar `¿cartera o ARCA?` no puede establecer ARCA como contexto activo antes de la elección del usuario.
+- ARCA/CUIT/CUIL se activa exclusivamente con los comandos `/cuit` o `/cuil`. Nombres, DNI, CUIT/CUIL numéricos, la palabra ARCA y cualquier texto natural deben seguir el router normal y jamás activar ARCA por heurística.
+- Fuera de `/cuit` o `/cuil` no existe activación implícita de ARCA ni selección automática de esa fuente; dentro del modo abierto por esos comandos sí se aceptan nombre, DNI o CUIT/CUIL como dato de búsqueda.
 - Si una consulta nombra una compañía y no hay metadata interna de esa compañía, devolver evidencia insuficiente. Nunca usar metadata de otra compañía como fallback.
 - Internet no se ofrece a Gemini salvo pedido explícito del usuario (`internet`, `web`, `Google`, etc.). Consultas internas de compañía deben priorizar metadata/manuales y reconocer ausencia de evidencia.
 - El historial conversacional se conserva para entender el hilo, pero nunca debe reactivar calculadoras, ARCA, alta u otra acción por una palabra ambigua.

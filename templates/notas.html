@@ -1,4 +1,4 @@
-{% extends 'base.html' %}
+{% extends base_template|default('base.html') %}
 {% from "_icons.html" import icon %}
 {% block title %}Excel · {{config_global.nombre_oficina}}{% endblock %}
 {% block content %}
@@ -144,6 +144,12 @@ html[data-theme="dark"] .workspace-tabs{background:#1e2834}html[data-theme="dark
 
 {% block scripts %}
 <script>
+(()=>{
+const pageAbort=new AbortController();
+document.addEventListener('oia:before-partial-navigation',()=>pageAbort.abort(),{once:true,signal:pageAbort.signal});
+window.excelLoaded=false;
+window.wordLoaded=false;
+
 let excelData=[],excelCols=1,excelSaveTimer=null,excelHoja='Datos',excelLibroId='1';
 let selectedExcelRow=null,selectedExcelCol=null;
 const table=document.getElementById('excelTable'),excelStatus=document.getElementById('excelStatus');
@@ -209,10 +215,10 @@ bindIf('limpiarColumnas',async()=>{try{const r=await fetch(`/api/excel/limpiar-c
 document.getElementById('importarExcel').onchange=async e=>{const file=e.target.files[0];if(!file)return;const fd=new FormData();fd.append('archivo',file);fd.append('libro_id',excelLibroId);setExcelStatus('Importando...');try{const r=await fetch('/api/excel/importar',{method:'POST',body:fd}),d=await r.json();if(!d.ok)throw Error(d.error||'Error');excelData=d.filas||[];excelCols=d.columnas||1;excelHoja=d.hoja||'Datos';asegurarFormaExcel();selectedExcelRow=selectedExcelCol=null;renderExcel();window.excelLoaded=true;setExcelStatus('Excel importado correctamente','ok')}catch(e){setExcelStatus(e.message||'No se pudo importar','error')}e.target.value=''};
 
 // Un único botón de exportación abre las dos variantes disponibles.
-const exportTrigger=document.getElementById('exportarExcel'),exportPopover=document.getElementById('excelExportPopover');
+const exportTrigger=document.getElementById('exportarExcel'),exportPopover=document.getElementById('excelExportPopover'),exportMenu=document.getElementById('excelExportMenu');
 function cerrarExport(){exportPopover.hidden=true;exportTrigger.setAttribute('aria-expanded','false')}
 exportTrigger.addEventListener('click',e=>{e.stopPropagation();const abrir=exportPopover.hidden;exportPopover.hidden=!abrir;exportTrigger.setAttribute('aria-expanded',abrir?'true':'false')});
-exportPopover.addEventListener('click',()=>cerrarExport());document.addEventListener('click',e=>{if(!document.getElementById('excelExportMenu').contains(e.target))cerrarExport()});
+exportPopover.addEventListener('click',()=>cerrarExport());document.addEventListener('click',e=>{if(exportMenu?.isConnected&&!exportMenu.contains(e.target))cerrarExport()},{signal:pageAbort.signal});
 
 // WORD: editor enriquecido local, manteniendo el mismo endpoint de persistencia.
 let wordSaveTimer=null;const wordEditor=document.getElementById('editorWord'),wordStatus=document.getElementById('wordStatus');
@@ -247,5 +253,7 @@ document.querySelectorAll('.workspace-tabs[data-tabs="workspace"] .workspace-tab
  if(btn.dataset.tab==='wordPanel'&&!window.wordLoaded){cargarWord();window.wordLoaded=true}
 });
 cargarExcel('1');
+
+})();
 </script>
 {% endblock %}

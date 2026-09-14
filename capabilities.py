@@ -167,8 +167,8 @@ CAPABILITIES: dict[str, dict] = {
         "requires_padron_arca": True,
         "label": "Resolver CUIT/CUIL",
         "description": (
-            "Puede resolver CUIT/CUIL a partir de un DNI utilizando el padrón ARCA "
-            "cargado internamente, sin inventar resultados ni depender de Gemini como base de datos."
+            "Puede resolver CUIT/CUIL a partir de un DNI utilizando el padrón ARCA, "
+            "exclusivamente cuando el usuario inicia la consulta con /cuit o /cuil."
         ),
     },
     "buscar_personas_arca": {
@@ -176,8 +176,8 @@ CAPABILITIES: dict[str, dict] = {
         "requires_padron_arca": True,
         "label": "Buscar personas en ARCA",
         "description": (
-            "Puede buscar personas reales por apellido y nombre dentro del padrón ARCA "
-            "y mostrar hasta 10 candidatos reales para que el productor decida."
+            "Puede buscar personas reales por apellido y nombre dentro del padrón ARCA y mostrar "
+            "candidatos, exclusivamente cuando el usuario usa /cuit o /cuil."
         ),
     },
     "cuit_desde_archivo": {
@@ -185,8 +185,8 @@ CAPABILITIES: dict[str, dict] = {
         "requires_padron_arca": True,
         "label": "CUIT desde documentación",
         "description": (
-            "Puede extraer DNI/nombre de documentación compatible y consultar ARCA "
-            "cuando el usuario lo pida o el flujo operativo lo requiera."
+            "Puede extraer DNI/nombre de documentación compatible y consultar ARCA sólo cuando "
+            "el mismo turno usa explícitamente /cuit o /cuil."
         ),
     },
     "salud": {
@@ -212,7 +212,7 @@ def capability_is_available(capability_id: str) -> bool:
     return bool(item.get("enabled")) and _runtime_ready(item.get("requires_config"))
 
 
-def get_capabilities(*, include_unavailable: bool = True) -> dict[str, dict]:
+def get_capabilities(*, include_unavailable: bool = True, include_arca: bool = True) -> dict[str, dict]:
     """Devuelve una copia segura del manifiesto con estado de runtime.
 
     ``enabled`` describe que la funcionalidad existe en el código. ``available``
@@ -223,6 +223,11 @@ def get_capabilities(*, include_unavailable: bool = True) -> dict[str, dict]:
     for key, item in CAPABILITIES.items():
         data = deepcopy(item)
         data["id"] = key
+        # ARCA no participa del chat general. Sus capacidades sólo se evalúan
+        # cuando un caller las pide explícitamente; así construir el prompt de
+        # un mensaje normal ni siquiera consulta el estado del padrón.
+        if data.get("requires_padron_arca") and not include_arca:
+            continue
         padron_ok = True
         if data.get("requires_padron_arca"):
             try:
@@ -245,7 +250,7 @@ def capabilities_for_prompt() -> str:
     humano, diferencie asistencia de ejecución y no prometa integraciones cuya
     configuración falte en este runtime.
     """
-    capacidades = get_capabilities(include_unavailable=True)
+    capacidades = get_capabilities(include_unavailable=True, include_arca=False)
     disponibles = [c for c in capacidades.values() if c.get("available")]
     no_disponibles = [c for c in capacidades.values() if c.get("enabled") and not c.get("available")]
 

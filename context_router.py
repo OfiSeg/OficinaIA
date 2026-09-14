@@ -36,13 +36,15 @@ class ExecutionPlan:
 
 
 _TERMINOS_ESTRUCTURADOS = (
-    "asegurado", "asegurados", "patente", "patentes", "poliza", "polizas",
+    "asegurado", "asegurados", "cliente", "clientes", "persona", "personas",
+    "registro", "registros", "patente", "patentes", "poliza", "polizas",
     "planilla", "excel", "dni", "numero de poliza", "cuantos registros",
     "cantidad de vehiculos", "cantidad de vehiculo",
 )
 
 _ENTIDADES_EXCEL = (
-    "asegurado", "asegurados", "poliza", "polizas", "vehiculo", "vehiculos",
+    "asegurado", "asegurados", "cliente", "clientes", "persona", "personas",
+    "registro", "registros", "poliza", "polizas", "vehiculo", "vehiculos",
     "remolque", "remolques", "trailer", "trailers", "acoplado", "acoplados",
     "grua", "gruas", "moto", "motos", "auto", "autos", "camion", "camiones",
     "hogar", "hogares", "combinado familiar", "combinados familiares", "seguro de hogar", "seguros de hogar",
@@ -78,7 +80,7 @@ _PATRONES_COMPARATIVOS = (
     r"\ben cuales companias\b",
     r"\bque compania (?:toma|acepta|asegura|emite|cotiza)\b",
     r"\bque companias (?:toman|aceptan|aseguran|emiten|cotizan)\b",
-    r"\bdonde (?:puedo )?(?:emitir|asegurar|cotizar|colocar)\b",
+    r"\bdonde (?:puedo )?(?:emitir|emito|asegurar|aseguro|cotizar|cotizo|colocar|coloco)\b",
     r"\bquien (?:toma|acepta|asegura|emite|cotiza)\b",
     r"\bquienes (?:toman|aceptan|aseguran|emiten|cotizan)\b",
     r"\bcompar(?:a|ame|ar)\b.*\bcompan",
@@ -92,12 +94,62 @@ def es_consulta_comparativa(texto: str) -> bool:
     return bool(t and any(re.search(p, t) for p in _PATRONES_COMPARATIVOS))
 
 
+
+
+def _menciona_compania(texto_norm: str) -> bool:
+    try:
+        from companias import aliases_companias
+        for alias, (_codigo, display) in aliases_companias().items():
+            for candidato in (alias, display):
+                c = normalizar_texto(candidato)
+                if c and re.search(rf"(?<![a-z0-9]){re.escape(c)}(?![a-z0-9])", texto_norm):
+                    return True
+    except Exception:
+        pass
+    return False
+
+
+def _es_servicio_compania(texto_norm: str) -> bool:
+    """Distingue asistencia de compañía de inventario de la cartera.
+
+    "¿cuántas grúas/remolques tiene/ofrece ATM?" pregunta por la prestación.
+    "¿cuántos remolques tengo en ATM/Excel?" pregunta por filas de cartera.
+    """
+    if not any(x in texto_norm for x in ("grua", "gruas", "remolque", "remolques", "auxilio", "traslado")):
+        return False
+    if any(x in texto_norm for x in ("mi cartera", "en excel", "en el excel", "planilla", "yo tengo", "tengo en", "mis remolques", "mis gruas")) or re.search(r"\b(tengo|tenemos|mis)\b", texto_norm):
+        return False
+    señales_servicio = (
+        "cubre", "cubren", "cobertura", "coberturas", "asistencia", "asistencias",
+        "servicio", "servicios", "prestacion", "prestaciones", "kilomet", "contempla",
+        "contemplan", "incluye", "incluyen", "ofrece", "ofrecen", "brinda", "brindan",
+        "tiene", "tienen", "hay", "da ", "otorga", "otorgan", "por ano", "por año", "por mes",
+        "cada cobertura", "segun cobertura", "según cobertura",
+    )
+    # La pregunta por prestación no depende de que la aseguradora esté en una
+    # tabla local de aliases. Eso evita que una compañía nueva/no configurada
+    # convierta "cuántas grúas tiene X" en un conteo de filas de Excel.
+    return any(x in texto_norm for x in señales_servicio)
+
+
+def _parece_extremo_excel(texto_norm: str) -> bool:
+    if not re.search(r"\b(primero|primera|ultimo|ultima|mas reciente|mas antiguo|mas antigua|primer|último|última)\b", texto_norm):
+        return False
+    # Asegurado/cliente/registro/póliza son entidades propias de la cartera en
+    # OficinaIA. Exigir además la palabra "Excel" hacía que formulaciones
+    # naturales como "primer asegurado" cayeran al chat general.
+    entidades = ("asegurado", "asegurados", "cliente", "clientes", "registro", "registros", "poliza", "polizas")
+    return any(re.search(rf"(?<![a-z0-9]){re.escape(x)}(?![a-z0-9])", texto_norm) for x in entidades)
+
 def _parece_conteo_excel(texto_norm: str) -> bool:
     es_conteo = bool(re.search(r"\b(cuantos|cuantas|cantidad|total)\b", texto_norm))
     if not es_conteo:
         return False
-    # Si el usuario habla de servicio/cobertura, no es inventario aunque diga remolque/grúa.
-    if any(x in texto_norm for x in ("cubre", "cobertura", "asistencia", "servicio", "prestacion", "kilomet", "contempla", "contemplan", "incluye", "incluyen")):
+    # Grúa/remolque en tercera persona sobre una compañía es una pregunta de
+    # asistencia/cobertura. El inventario propio exige señal de cartera.
+    if _es_servicio_compania(texto_norm):
+        return False
+    if any(x in texto_norm for x in ("cubre", "cobertura", "asistencia", "servicio", "prestacion", "kilomet", "contempla", "contemplan", "incluye", "incluyen", "ofrece", "ofrecen", "brinda", "brindan")):
         return False
     return any(t in texto_norm for t in _ENTIDADES_EXCEL)
 
@@ -113,7 +165,8 @@ def _parece_analisis_excel(texto_norm: str) -> bool:
         return True
     señales = (
         "porcentaje", "representa", "ranking", "ordena", "ordenar",
-        "segundo", "segunda", "mayor", "menor", "promedio", "media",
+        "segundo", "segunda", "primero", "primera", "ultimo", "ultima", "mas reciente", "mas antiguo",
+        "mayor", "menor", "promedio", "media",
         "duplicad", "repetid", "sin patente", "patente vacia",
         "no tienen patente", "no tiene patente",
     )
@@ -130,9 +183,19 @@ def _parece_analisis_excel(texto_norm: str) -> bool:
     # Una sola clase también requiere el clasificador determinístico: por ejemplo
     # "cuántos autos de ATM" o "qué compañía tiene más motos".
     if any(x in texto_norm for x in ("auto", "automotor", "moto", "motocicleta", "motovehiculo")):
-        if any(x in texto_norm for x in ("cuanto", "cantidad", "porcentaje", "compania", "cartera", "mas", "menos")):
+        if any(x in texto_norm for x in ("cuanto", "cuantos", "cuantas", "cantidad", "total", "tengo", "tenemos", "porcentaje", "compania", "cartera", "mas", "menos")):
             return True
     return False
+
+def _contiene_termino_documental(texto_norm: str, termino: str) -> bool:
+    # Abreviaturas cortas como RC deben coincidir como token completo. Con un
+    # substring simple, "ARCA" contenía "rc" y terminaba absurdamente en
+    # documentación de coberturas. Los términos largos conservan matching
+    # flexible para plurales/variantes ya soportadas por el router.
+    if len(termino) <= 3 and " " not in termino:
+        return bool(re.search(rf"(?<![a-z0-9]){re.escape(termino)}(?![a-z0-9])", texto_norm))
+    return termino in texto_norm
+
 
 def requiere_metadatos(texto: str) -> bool:
     t = normalizar_texto(texto)
@@ -143,8 +206,8 @@ def requiere_metadatos(texto: str) -> bool:
     if any(term in t for term in _TERMINOS_ESTRUCTURADOS):
         # Una póliza/Excel explícitos pertenecen al dominio estructurado salvo que además
         # exista una pregunta documental clara (p. ej. "qué cobertura tiene la póliza").
-        return any(term in t for term in ("cobertura", "cubre", "limite", "asistencia", "granizo", "grua"))
-    return any(term in t for term in _TERMINOS_DOCUMENTALES)
+        return any(_contiene_termino_documental(t, term) for term in ("cobertura", "cubre", "limite", "asistencia", "granizo", "grua"))
+    return any(_contiene_termino_documental(t, term) for term in _TERMINOS_DOCUMENTALES)
 
 
 def detectar_alcance(texto: str) -> tuple[str, bool]:
@@ -172,6 +235,26 @@ def construir_plan_base(pregunta: str) -> ExecutionPlan:
             requiere_completitud=True,
             requiere_metadatos=False,
             motivo="consulta transversal de colocación/comparación",
+        )
+
+    if _es_servicio_compania(t):
+        return ExecutionPlan(
+            intencion="consulta_documental",
+            alcance=alcance,
+            fuentes=("buscar_en_metadatos",),
+            requiere_completitud=completitud,
+            requiere_metadatos=True,
+            motivo="consulta de asistencia/servicio de una compañía",
+        )
+
+    if _parece_extremo_excel(t):
+        return ExecutionPlan(
+            intencion="analisis_excel",
+            alcance="puntual",
+            fuentes=("analizar_excel",),
+            requiere_completitud=False,
+            requiere_metadatos=False,
+            motivo="orden/extremo determinístico sobre la cartera",
         )
 
     if _parece_analisis_excel(t):

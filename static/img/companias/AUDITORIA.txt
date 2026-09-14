@@ -1,0 +1,21 @@
+AUDITORÍA DE LOGOS NORMALIZADOS — SEGUROS SAN JOSÉ
+
+Altura visual obligatoria: 180px
+Altura de inserción recomendada en Word: 0,65 cm
+
+RESULTADO:
+- agrosalta.png: canvas 706x180 | visible 670x180 | altura=180px | Word=0.65cm | proporción preservada
+- allianz.png: canvas 761x180 | visible 725x180 | altura=180px | Word=0.65cm | proporción preservada
+- atm.png: canvas 451x180 | visible 415x180 | altura=180px | Word=0.65cm | proporción preservada
+- federacion_patronal.png: canvas 1114x180 | visible 1078x180 | altura=180px | Word=0.65cm | proporción preservada
+- mercantil_andina.png: canvas 1004x180 | visible 968x180 | altura=180px | Word=0.65cm | proporción preservada
+- rivadavia.png: canvas 1062x180 | visible 1026x180 | altura=180px | Word=0.65cm | proporción preservada
+- san_cristobal.png: canvas 1511x180 | visible 1475x180 | altura=180px | Word=0.65cm | proporción preservada
+
+INCIDENCIAS:
+- Ninguna. Todos los PNG cumplen la altura visual estándar.
+
+ATM:
+- Se auditó desde el archivo fuente original.
+- Se eliminó COMPLETAMENTE la franja inferior correspondiente a “seguros”.
+- El asset final contiene únicamente la marca ATM de la parte superior.

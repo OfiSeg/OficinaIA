@@ -1,4 +1,4 @@
-{% extends 'base.html' %}
+{% extends base_template|default('base.html') %}
 {% from "_icons.html" import icon %}
 {% block title %}Manuales y pólizas · {{config_global.nombre_oficina}}{% endblock %}
 {% block content %}
@@ -119,6 +119,7 @@ html[data-theme="dark"] .btn-soft{background:var(--surface,#1a222d);color:var(--
 {% block scripts %}
 <script>
 (() => {
+  let metaLoaded = false;
   const jsonResponse = async (response) => {
     const text = await response.text();
     try { return JSON.parse(text); }
@@ -131,9 +132,9 @@ html[data-theme="dark"] .btn-soft{background:var(--surface,#1a222d);color:var(--
       document.querySelectorAll('.library-panel').forEach(x => x.classList.add('hidden'));
       btn.classList.add('active');
       document.getElementById(btn.dataset.target).classList.remove('hidden');
-      if (btn.dataset.target === 'metaPanel' && !window.metaLoaded) {
+      if (btn.dataset.target === 'metaPanel' && !metaLoaded) {
         cargarListaMetadatos();
-        window.metaLoaded = true;
+        metaLoaded = true;
       }
     });
   });

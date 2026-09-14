@@ -15,10 +15,10 @@ class AIResult:
     elapsed: float = 0.0
 
 
-def responder(mensaje, contexto, historial, adjunto=None, adjuntos=None):
+def responder(mensaje, contexto, historial, adjunto=None, adjuntos=None, on_text_delta=None):
     from servicios_ia import consultar_gemini
     inicio = time.monotonic()
-    resultado = consultar_gemini(mensaje, contexto, historial=historial, adjunto=adjunto, adjuntos=adjuntos)
+    resultado = consultar_gemini(mensaje, contexto, historial=historial, adjunto=adjunto, adjuntos=adjuntos, on_text_delta=on_text_delta)
     elapsed = time.monotonic() - inicio
     if isinstance(resultado, tuple):
         return AIResult(

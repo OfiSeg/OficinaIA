@@ -134,22 +134,64 @@ def _plural(n: int, uno: str, varios: str) -> str:
     return uno if int(n) == 1 else varios
 
 
-def guardar_contexto(session_obj, *, chat_id, filtros: dict, cantidad: int, registros: list[dict] | None, etiqueta: str, origen: str):
+def _compactar_registro_contexto(fila: dict, *, detalle: bool) -> dict:
+    """Guarda sólo los campos necesarios para continuidad conversacional.
+
+    Flask persiste la sesión en cookie; copiar filas completas de Excel por varios
+    chats puede superar el límite práctico del header. El contexto necesita
+    identidad para listas y, cuando ya hay un único registro seleccionado, los
+    campos que realmente se pueden pedir en un follow-up.
+    """
+    campos = [
+        ("ASEGURADO", ("ASEGURADO", "CLIENTE", "NOMBRE", "NOMBRE Y APELLIDO")),
+        ("VEHICULO", ("VEHICULO", "VEHÍCULO", "MARCA MODELO", "MODELO")),
+        ("PATENTE", ("PATENTE", "DOMINIO")),
+        ("CIA", ("CIA", "COMPAÑIA", "COMPAÑÍA", "COMPANIA", "ASEGURADORA")),
+    ]
+    if detalle:
+        campos.extend([
+            ("MEDIO DE PAGO", ("MEDIO DE PAGO", "PAGO", "FORMA DE PAGO")),
+            ("IMPORTE APROX", ("IMPORTE APROX", "IMPORTE", "PRECIO", "PREMIO")),
+            ("CP", ("CP", "CODIGO POSTAL", "CÓDIGO POSTAL")),
+            ("EMITIDO DÍA:", ("EMITIDO DÍA:", "EMITIDO DIA", "EMITIDO", "FECHA EMISION", "FECHA DE EMISION", "FECHA DE REGISTRO")),
+            ("NUMERO", ("NUMERO", "TELEFONO", "TELÉFONO", "CELULAR")),
+            ("MAIL", ("MAIL", "EMAIL", "CORREO")),
+        ])
+    compacto = {}
+    for destino, aliases in campos:
+        valor = _valor(fila or {}, *aliases)
+        if valor:
+            compacto[destino] = valor
+    return compacto
+
+
+def guardar_contexto(session_obj, *, chat_id, filtros: dict, cantidad: int, registros: list[dict] | None, etiqueta: str, origen: str, extras: dict | None = None):
     # Una única política de estado efímero gobierna cartera/ARCA/alta.
     # Al confirmar CARTERA se invalida ARCA y el contexto expira solo.
-    chat_state.cambiar_fuente(session_obj, "CARTERA")
+    chat_state.cambiar_fuente(session_obj, "CARTERA", chat_id=chat_id)
+    cantidad_int = int(cantidad or 0)
+    muestra = list(registros or [])[:10]
+    # Para una selección única retenemos sus campos detallables; para un
+    # conjunto sólo identidad/resumen. Esto mantiene la cookie acotada sin
+    # perder selección por nombre/patente ni follow-ups del registro elegido.
+    registros_contexto = [
+        _compactar_registro_contexto(fila, detalle=(cantidad_int == 1))
+        for fila in muestra
+    ]
+    payload = {
+        "tipo": "registro_excel_set",
+        "filtros": dict(filtros or {}),
+        "cantidad": cantidad_int,
+        "registros": registros_contexto,
+        "etiqueta": str(etiqueta or "").strip(),
+        "origen": str(origen or "").strip(),
+    }
+    if isinstance(extras, dict):
+        payload.update(extras)
     return chat_state.guardar(
         session_obj,
         "registro_contexto_activo",
-        {
-            "tipo": "registro_excel_set",
-            "filtros": dict(filtros or {}),
-            "cantidad": int(cantidad or 0),
-            # Sólo se guarda una muestra chica para no inflar la cookie de sesión.
-            "registros": list(registros or [])[:10],
-            "etiqueta": str(etiqueta or "").strip(),
-            "origen": str(origen or "").strip(),
-        },
+        payload,
         chat_id=chat_id,
     )
 
@@ -161,8 +203,8 @@ def obtener_contexto(session_obj, chat_id) -> dict | None:
     return ctx
 
 
-def limpiar_contexto(session_obj):
-    chat_state.limpiar(session_obj, "registro_contexto_activo")
+def limpiar_contexto(session_obj, chat_id=None):
+    chat_state.limpiar(session_obj, "registro_contexto_activo", chat_id=chat_id)
 
 
 def responder_conteo_temporal(mensaje: str, *, session_obj, chat_id) -> str | None:
@@ -222,7 +264,7 @@ def _es_pronombre_o_followup_registro(mensaje: str) -> bool:
         r"^(decime|dame|pasame|mostrame|tirame)\s+(sus|su|los|las)?\s*(detalles|datos)\b",
         r"^(sus|su)\s+(patente|cia|compania|vehiculo|medio de pago|cp|importe|precio|mail|telefono|numero)\b",
         r"^(cuanto paga|cuanto sale|que paga|que importe)\??$",
-        r"^(ese|esa|el mismo|la misma|el anterior|el de hoy|el que cargue|el que te dije)\s*(registro|asegurado|cliente)?\s*(detalles|datos)?\??$",
+        r"^(ese|esa|el mismo|la misma|el que cargue|el que te dije)\s*(registro|asegurado|cliente)?\s*(detalles|datos)?\??$",
     )
     return any(re.search(p, t) for p in patrones)
 
@@ -287,9 +329,6 @@ def _indice_ordinal(mensaje: str) -> int | None:
         "octavo": 7, "octava": 7, "ocho": 7,
         "noveno": 8, "novena": 8, "nueve": 8,
         "decimo": 9, "decima": 9, "diez": 9,
-        # -1 significa "último elemento del conjunto activo" y se resuelve
-        # contra el tamaño real de la lista, no como un número fijo.
-        "ultimo": -1, "ultima": -1,
     }
     m = re.match(r"^(?:el|la)?\s*(\d{1,2})\s*$", t)
     if m:
@@ -332,29 +371,265 @@ def _indices_por_identidad_contextual(mensaje: str, registros: list[dict]) -> li
     return exactos or nombres_parciales
 
 
+
+
+def _es_consulta_conteo_simple(mensaje: str) -> bool:
+    t = normalizar(mensaje)
+    if not re.search(r"\b(cuantos|cuantas|cantidad|total)\b", t):
+        return False
+    if resolver_rango_temporal(mensaje):
+        return False
+    # Servicios/coberturas pertenecen al dominio documental; no contar filas.
+    if any(x in t for x in (
+        "cobertura", "coberturas", "cubre", "cubren", "asistencia", "asistencias",
+        "servicio", "servicios", "prestacion", "prestaciones", "kilomet", "franquicia",
+    )):
+        return False
+    entidades = (
+        "asegurado", "asegurados", "cliente", "clientes", "persona", "personas",
+        "poliza", "polizas", "registro", "registros",
+        "remolque", "remolques", "trailer", "trailers", "grua", "gruas",
+    )
+    if not any(x in t for x in entidades):
+        return False
+    # Remolque/grúa en tercera persona suele ser asistencia de compañía. Sólo
+    # contamos filas cuando el usuario marca posesión/cartera de forma explícita.
+    if any(x in t for x in ("remolque", "remolques", "trailer", "trailers", "grua", "gruas")):
+        return bool(re.search(r"\b(tengo|tenemos|mis)\b", t) or any(x in t for x in ("mi cartera", "en excel", "en el excel", "planilla")))
+    return any(x in t for x in ("tengo", "tenemos", "mi cartera", "cartera", "excel", "planilla", "hay"))
+
+
+def _filtros_contexto_base(mensaje: str) -> dict:
+    """Extrae filtros inequívocos sin delegar semántica a Gemini."""
+    t = normalizar(mensaje)
+    filtros: dict = {}
+    try:
+        from companias import aliases_companias
+        candidatos = []
+        for alias, (_codigo, display) in aliases_companias().items():
+            a = normalizar(alias)
+            d = normalizar(display)
+            for token in {a, d}:
+                if token and re.search(rf"(?<![a-z0-9]){re.escape(token)}(?![a-z0-9])", t):
+                    candidatos.append((len(token), display))
+        if candidatos:
+            candidatos.sort(reverse=True)
+            filtros["compania"] = candidatos[0][1]
+    except Exception:
+        pass
+    if not filtros.get("compania"):
+        # El dominio documental conoce además aseguradoras no incluidas en la
+        # tabla histórica de códigos de emisión. Si aparece una sola de ellas,
+        # también sirve como filtro literal de cartera (el motor normaliza ambos
+        # lados y no necesita inventar un código canónico nuevo).
+        try:
+            detectar = getattr(servicios_ia, "_companias_mencionadas_en_consulta", None)
+            mencionadas = list(detectar(mensaje) or []) if callable(detectar) else []
+            if len(mencionadas) == 1:
+                filtros["compania"] = mencionadas[0]
+        except Exception:
+            pass
+    if any(x in t for x in ("remolque", "remolques", "trailer", "trailers")):
+        filtros["tipo_vehiculo"] = "remolque"
+    elif any(x in t for x in ("grua", "gruas")):
+        filtros["tipo_vehiculo"] = "grua"
+    return filtros
+
+
+def responder_conteo_simple(mensaje: str, *, session_obj, chat_id) -> str | None:
+    if not _es_consulta_conteo_simple(mensaje):
+        return None
+    filtros = _filtros_contexto_base(mensaje)
+    tipo = _tipo_conteo(mensaje)
+    conteo = servicios_ia.contar_registros(**filtros, tipo_conteo=tipo)
+    filas = servicios_ia.buscar_registros_estructurados(**filtros, limite=25)
+    cantidad = int((conteo or {}).get("cantidad") or 0)
+    registros = list((filas or {}).get("registros") or [])
+    guardar_contexto(
+        session_obj, chat_id=chat_id, filtros=filtros, cantidad=cantidad,
+        registros=registros, etiqueta="cartera", origen="conteo_simple",
+    )
+    compania = str(filtros.get("compania") or "").strip()
+    pref = f"En {compania}, " if compania else ""
+    if tipo == "unicos":
+        return f"{pref}tenés {cantidad} {_plural(cantidad, 'asegurado único', 'asegurados únicos')} en la cartera."
+    return f"{pref}hay {cantidad} {_plural(cantidad, 'registro', 'registros')} cargados en el Excel interno."
+
+
+def _filas_filtradas_completas(filtros: dict) -> list[dict]:
+    """Devuelve el conjunto completo; nunca usa previews truncadas."""
+    datos, _fuente = servicios_ia._dataset_estructurado()
+    permitidos = {"compania", "campo", "valor", "tipo_vehiculo", "desde", "hasta", "campo_fecha"}
+    base_kwargs = {k: v for k, v in dict(filtros or {}).items() if k in permitidos and v not in (None, "")}
+    filas, _ = servicios_ia._filtrar_filas(datos, **base_kwargs)
+    return list(filas)
+
+
+def _ordenar_registros_cronologicos(filtros: dict) -> list[tuple[int, dict, date | None]]:
+    filas = _filas_filtradas_completas(filtros)
+    fecha_aliases = ("EMITIDO DÍA:", "EMITIDO DIA", "EMITIDO", "FECHA EMISION", "FECHA DE EMISION", "FECHA DE REGISTRO")
+    con_fecha: list[tuple[int, dict, date]] = []
+    sin_fecha: list[tuple[int, dict, None]] = []
+    for pos, fila in enumerate(filas):
+        clave = servicios_ia._campo_por_alias(fila, fecha_aliases)
+        fecha = servicios_ia._parsear_fecha_excel(fila.get(clave, "") if clave else "")
+        if fecha is None:
+            sin_fecha.append((pos, fila, None))
+        else:
+            con_fecha.append((pos, fila, fecha))
+    # Fecha y, en empates, orden físico del Excel. Así "último" es estable.
+    con_fecha.sort(key=lambda x: (x[2], x[0]))
+    return con_fecha if con_fecha else sin_fecha
+
+
+def _tipo_extremo(mensaje: str) -> str | None:
+    t = normalizar(mensaje)
+    if re.search(r"\b(ultimo|ultima|mas reciente|reciente|ultimo cargado|ultima cargada|ultimo registrado|ultima registrada)\b", t):
+        return "ultimo"
+    if re.search(r"\b(primer|primero|primera|mas antiguo|mas antigua|primer registrado|primera registrada)\b", t):
+        return "primero"
+    return None
+
+
+def _es_consulta_extremo_explicita(mensaje: str) -> bool:
+    if not _tipo_extremo(mensaje):
+        return False
+    t = normalizar(mensaje)
+    # Estas entidades son inequívocamente de cartera dentro del producto; no
+    # obligamos al usuario a repetir "Excel/cartera" para preguntar, por
+    # ejemplo, "primer asegurado" o "última póliza".
+    entidades = ("asegurado", "asegurados", "cliente", "clientes", "registro", "registros", "poliza", "polizas")
+    return any(re.search(rf"(?<![a-z0-9]){re.escape(x)}(?![a-z0-9])", t) for x in entidades)
+
+
+def _respuesta_extremo(mensaje: str, *, session_obj, chat_id, filtros: dict, origen: str) -> str | None:
+    tipo = _tipo_extremo(mensaje)
+    if not tipo:
+        return None
+    ordenados = _ordenar_registros_cronologicos(filtros)
+    if not ordenados:
+        return "No encontré registros de cartera con esos filtros."
+    idx = len(ordenados) - 1 if tipo == "ultimo" else 0
+    _pos_fisica, fila, fecha = ordenados[idx]
+    guardar_contexto(
+        session_obj, chat_id=chat_id, filtros=filtros, cantidad=1, registros=[fila],
+        etiqueta="registro seleccionado", origen=origen,
+        extras={"navegacion_posicion": idx, "navegacion_total": len(ordenados)},
+    )
+    nombre = _valor(fila, "ASEGURADO", "CLIENTE", "NOMBRE", "NOMBRE Y APELLIDO") or "Sin nombre"
+    if fecha is not None:
+        etiqueta = "último" if tipo == "ultimo" else "primer"
+        return f"El {etiqueta} asegurado con fecha de registro es **{nombre}**, del **{date_string(fecha)}**.\n\n" + _formatear_registro(fila)
+    etiqueta = "último" if tipo == "ultimo" else "primer"
+    return f"El {etiqueta} registro del Excel es **{nombre}**. No tiene una fecha de registro interpretable cargada.\n\n" + _formatear_registro(fila)
+
+
+def responder_extremo_registro(mensaje: str, *, session_obj, chat_id) -> str | None:
+    ctx = obtener_contexto(session_obj, chat_id)
+    if _es_consulta_extremo_explicita(mensaje):
+        filtros = _filtros_contexto_base(mensaje)
+        return _respuesta_extremo(mensaje, session_obj=session_obj, chat_id=chat_id, filtros=filtros, origen="extremo_explicito")
+    # Follow-up corto como "cuál fue el último" sólo se resuelve si YA hay un
+    # contexto real de cartera. Nunca crea cartera a partir del historial textual.
+    if ctx and _tipo_extremo(mensaje) and len(normalizar(mensaje).split()) <= 7:
+        return _respuesta_extremo(mensaje, session_obj=session_obj, chat_id=chat_id, filtros=dict(ctx.get("filtros") or {}), origen="extremo_followup")
+    return None
+
+
+def responder_navegacion_registro(mensaje: str, *, session_obj, chat_id) -> str | None:
+    ctx = obtener_contexto(session_obj, chat_id)
+    if not ctx:
+        return None
+    t = normalizar(mensaje).strip(" .¿?!")
+    delta = None
+    if re.fullmatch(r"(?:y\s+)?(?:el\s+)?anterior", t):
+        delta = -1
+    elif re.fullmatch(r"(?:y\s+)?(?:el\s+)?siguiente", t):
+        delta = 1
+    if delta is None or "navegacion_posicion" not in ctx:
+        return None
+    ordenados = _ordenar_registros_cronologicos(dict(ctx.get("filtros") or {}))
+    actual = int(ctx.get("navegacion_posicion") or 0)
+    nuevo = actual + delta
+    if not (0 <= nuevo < len(ordenados)):
+        return "No hay otro registro en esa dirección dentro del conjunto actual."
+    _pos, fila, _fecha = ordenados[nuevo]
+    guardar_contexto(
+        session_obj, chat_id=chat_id, filtros=dict(ctx.get("filtros") or {}), cantidad=1,
+        registros=[fila], etiqueta=ctx.get("etiqueta", ""), origen="navegacion_registro",
+        extras={"navegacion_posicion": nuevo, "navegacion_total": len(ordenados)},
+    )
+    return _formatear_registro(fila)
+
+
+def responder_referencia_temporal_registro(mensaje: str, *, session_obj, chat_id) -> str | None:
+    """Resuelve referencias singulares explícitas como ``el de hoy``.
+
+    Una fecha mencionada en el turno actual SIEMPRE reemplaza el rango viejo; no
+    se interpreta como pronombre del conjunto anterior. Si hay más de un registro
+    no elegimos arbitrariamente.
+    """
+    t = normalizar(mensaje).strip(" .¿?!")
+    match = re.fullmatch(r"(?:y\s+)?(?:el\s+)?de\s+(hoy|ayer)", t)
+    if not match:
+        return None
+    rango = resolver_rango_temporal(match.group(1))
+    if not rango:
+        return None
+    filtros = rango.filtros()
+    resultado = servicios_ia.buscar_registros_estructurados(**filtros, limite=25)
+    registros = list((resultado or {}).get("registros") or [])
+    cantidad = int((resultado or {}).get("cantidad") or 0)
+    guardar_contexto(
+        session_obj, chat_id=chat_id, filtros=filtros, cantidad=cantidad,
+        registros=registros, etiqueta=rango.etiqueta, origen="referencia_temporal_directa",
+    )
+    if cantidad == 0:
+        return f"No encontré registros emitidos {rango.etiqueta} con fecha cargada en la cartera."
+    if cantidad == 1 and registros:
+        return _formatear_registro(registros[0])
+    return (
+        f"{rango.etiqueta.capitalize()} encontré {cantidad} registros, así que no voy a elegir uno arbitrariamente.\n\n"
+        f"{_resumen_opciones(registros)}\n\n"
+        "Decime cuál querés ver, por ejemplo: `el segundo`."
+    )
+
+
+def responder_consulta_directa(mensaje: str, *, session_obj, chat_id) -> str | None:
+    """Entrada determinística única para cartera antes de Gemini."""
+    # Los comandos slash tienen dueño propio (/cuit, /cuil, /envios, /flota,
+    # etc.). La capa de cartera nunca debe adelantarse a ellos por una palabra
+    # o número contenido en el argumento del comando.
+    if str(mensaje or "").lstrip().startswith("/"):
+        return None
+
+    # Una referencia temporal nueva tiene prioridad sobre cualquier contexto viejo.
+    temporal = responder_conteo_temporal(mensaje, session_obj=session_obj, chat_id=chat_id)
+    if temporal is not None:
+        return temporal
+    referencia_temporal = responder_referencia_temporal_registro(mensaje, session_obj=session_obj, chat_id=chat_id)
+    if referencia_temporal is not None:
+        return referencia_temporal
+    conteo = responder_conteo_simple(mensaje, session_obj=session_obj, chat_id=chat_id)
+    if conteo is not None:
+        return conteo
+    extremo = responder_extremo_registro(mensaje, session_obj=session_obj, chat_id=chat_id)
+    if extremo is not None:
+        return extremo
+    nav = responder_navegacion_registro(mensaje, session_obj=session_obj, chat_id=chat_id)
+    if nav is not None:
+        return nav
+    return responder_followup_registro(mensaje, session_obj=session_obj, chat_id=chat_id)
+
 def responder_followup_registro(mensaje: str, *, session_obj, chat_id) -> str | None:
     ctx = obtener_contexto(session_obj, chat_id)
     indice = _indice_ordinal(mensaje)
     if not ctx:
-        t = normalizar(mensaje)
-        if "de hoy" in t or "el hoy" in t:
-            rango = RangoTemporal(office_today(), office_today(), "hoy")
-            filtros_hoy = rango.filtros()
-            resultado_hoy = servicios_ia.buscar_registros_estructurados(**filtros_hoy, limite=25)
-            registros_hoy = list(resultado_hoy.get("registros") or []) if isinstance(resultado_hoy, dict) else []
-            cantidad_hoy = int(resultado_hoy.get("cantidad") or 0) if isinstance(resultado_hoy, dict) else 0
-            guardar_contexto(session_obj, chat_id=chat_id, filtros=filtros_hoy, cantidad=cantidad_hoy, registros=registros_hoy, etiqueta="hoy", origen="referencia_temporal_directa")
-            if cantidad_hoy == 1 and registros_hoy:
-                return _formatear_registro(registros_hoy[0])
-            if cantidad_hoy > 1:
-                return (
-                    f"Hoy encontré {cantidad_hoy} registros, así que no voy a elegir uno arbitrariamente.\n\n"
-                    f"{_resumen_opciones(registros_hoy)}\n\n"
-                    "Decime cuál querés ver, por ejemplo: `el segundo`."
-                )
-            return "Hoy no encontré registros emitidos con fecha cargada en la cartera."
-        if _es_pronombre_o_followup_registro(mensaje):
-            return "¿De qué registro querés los detalles? Decime nombre, patente o fecha para ubicarlo."
+        # Sin un contexto de cartera realmente activo, una frase breve como
+        # "y la patente?" no pertenece automáticamente a Excel. Puede estar
+        # siguiendo una póliza/PDF u otro dominio del chat, así que dejamos que
+        # el router normal la resuelva en vez de secuestrarla con una
+        # aclaración de Cartera.
         return None
 
     # Un contexto viejo de cartera no debe disparar una lectura de Sheets ante
@@ -363,8 +638,23 @@ def responder_followup_registro(mensaje: str, *, session_obj, chat_id) -> str | 
     # anterior, por ejemplo "BAO GABRIEL ROBERTO".
     registros_ctx = list(ctx.get("registros") or [])[:10]
     coincidencias_ctx = _indices_por_identidad_contextual(mensaje, registros_ctx)
-    if indice is None and not coincidencias_ctx and not _es_pronombre_o_followup_registro(mensaje):
+    es_followup = _es_pronombre_o_followup_registro(mensaje)
+    if indice is None and not coincidencias_ctx and not es_followup:
         return None
+
+    # Si el turno anterior ya seleccionó exactamente un registro (por ejemplo
+    # "cuál fue el último"), ese registro es la fuente del follow-up. No volver
+    # a consultar el filtro base porque podría representar toda la cartera y
+    # convertir una selección única en cientos de resultados.
+    cantidad_ctx = int(ctx.get("cantidad") or 0)
+    if indice is None and es_followup and cantidad_ctx == 1 and len(registros_ctx) == 1:
+        fila = registros_ctx[0]
+        pedido = _campo_pedido(mensaje)
+        if pedido:
+            etiqueta, aliases = pedido
+            valor = _valor(fila, *aliases)
+            return f"**{etiqueta}:** {valor or 'No consta en el registro.'}"
+        return _formatear_registro(fila)
 
     filtros = dict(ctx.get("filtros") or {})
     resultado = servicios_ia.buscar_registros_estructurados(**filtros, limite=25)
@@ -372,7 +662,7 @@ def responder_followup_registro(mensaje: str, *, session_obj, chat_id) -> str | 
     cantidad = int(resultado.get("cantidad") or ctx.get("cantidad") or 0) if isinstance(resultado, dict) else int(ctx.get("cantidad") or 0)
 
     if indice is not None and registros:
-        indice_real = len(registros[:10]) - 1 if indice == -1 else indice
+        indice_real = indice
         if 0 <= indice_real < min(len(registros), 10):
             elegido = registros[indice_real]
             guardar_contexto(session_obj, chat_id=chat_id, filtros=filtros, cantidad=1, registros=[elegido], etiqueta=ctx.get("etiqueta", ""), origen="seleccion_productor")

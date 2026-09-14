@@ -77,10 +77,23 @@ PROFILE_LABELS = {
     PERFIL_C: "Terceros Completo",
     PERFIL_C1: "Terceros Completo",
     PERFIL_C_PLUS: "Terceros Completo Plus",
-    PERFIL_LB: "Cobertura LB",
-    PERFIL_LB1: "Cobertura LB1",
+    PERFIL_LB: "Robo e Incendio + Robo Parcial al Amparo + Accidente Total",
+    PERFIL_LB1: "Robo e Incendio + Robo Parcial al Amparo",
     PERFIL_TR: "Todo Riesgo",
     PERFIL_SIN_CLASIFICAR: "Cobertura",
+}
+
+PROFILE_ORDER = {
+    PERFIL_RC: 10,
+    PERFIL_B1: 30,
+    PERFIL_B: 40,
+    PERFIL_C1: 55,
+    PERFIL_LB1: 57,
+    PERFIL_C: 60,
+    PERFIL_LB: 62,
+    PERFIL_C_PLUS: 70,
+    PERFIL_TR: 80,
+    PERFIL_SIN_CLASIFICAR: 90,
 }
 
 
@@ -425,7 +438,7 @@ def _canonicalizar_compania(nombre: str) -> str:
 
 
 def _pct_visual(valor: str) -> str:
-    raw = str(valor or "").strip().replace(",", ".")
+    raw = re.sub(r"(?:\s*%)+\s*$", "", str(valor or "").strip()).replace(",", ".")
     try:
         d = Decimal(raw)
     except Exception:
@@ -433,6 +446,46 @@ def _pct_visual(valor: str) -> str:
     if d == d.to_integral():
         return str(int(d))
     return format(d.normalize(), "f")
+
+
+def normalizar_porcentaje(valor) -> str:
+    """Devuelve un porcentaje comercial estable con un único signo final."""
+    limpio = _pct_visual(valor)
+    return f"{limpio}%" if limpio else ""
+
+
+def _aplicar_modelo_comercial(opciones: list[dict]) -> list[dict]:
+    """Completa una representación comercial única sin perder el dato fuente.
+
+    La variante de grúa sólo sube al título cuando dentro de la misma familia
+    existen las dos alternativas. Todo Riesgo siempre conserva su franquicia
+    explícita como variante comercial.
+    """
+    grupos_grua: dict[str, set[bool]] = {}
+    for item in opciones:
+        familia = str(item.get("perfil_normalizado") or PERFIL_SIN_CLASIFICAR)
+        grua = item.get("servicio_grua")
+        if isinstance(grua, bool):
+            grupos_grua.setdefault(familia, set()).add(grua)
+
+    for item in opciones:
+        perfil = str(item.get("perfil_normalizado") or PERFIL_SIN_CLASIFICAR)
+        nombre = str(item.get("nombre_cliente") or item.get("nombre_original") or item.get("codigo_original") or "Cobertura").strip()
+        variantes: list[str] = []
+        pct = normalizar_porcentaje(item.get("franquicia_pct"))
+        if perfil == PERFIL_TR and pct:
+            variantes.append(f"FRANQUICIA {pct}")
+        grua = item.get("servicio_grua")
+        if isinstance(grua, bool) and grupos_grua.get(perfil) == {False, True}:
+            variantes.append("CON GRÚA" if grua else "SIN GRÚA")
+        item["codigo"] = str(item.get("codigo_original") or "").strip()
+        item["familia"] = perfil
+        item["nombre_comercial"] = nombre
+        item["variante_comercial"] = " · ".join(variantes)
+        item["titulo_comercial"] = " · ".join([nombre, *variantes])
+        item["tiene_grua"] = grua if isinstance(grua, bool) else None
+        item["orden_comercial"] = PROFILE_ORDER.get(perfil, 90)
+    return opciones
 
 
 def _codigo_visual_cobertura(codigo: str, perfil: str, franquicia_pct: str) -> str:
@@ -445,25 +498,19 @@ def _codigo_visual_cobertura(codigo: str, perfil: str, franquicia_pct: str) -> s
 
 
 def _ordenar_coberturas(opciones: list[dict]) -> list[dict]:
-    """Mantiene orden fuente y ordena sólo grupos contiguos de Todo Riesgo por franquicia."""
+    """Ordena de menor a mayor protección y franquicias TR en forma estable."""
     salida = list(opciones or [])
-    i = 0
-    while i < len(salida):
-        if salida[i].get("perfil_normalizado") != PERFIL_TR:
-            i += 1
-            continue
-        j = i
-        while j < len(salida) and salida[j].get("perfil_normalizado") == PERFIL_TR:
-            j += 1
-        bloque = salida[i:j]
-        def clave(item):
-            try:
-                return (0, Decimal(str(item.get("franquicia_pct") or "").replace(",", ".")))
-            except Exception:
-                return (1, Decimal("9999"))
-        salida[i:j] = sorted(bloque, key=clave)
-        i = j
-    return salida
+
+    def clave(par):
+        indice, item = par
+        perfil = str(item.get("perfil_normalizado") or PERFIL_SIN_CLASIFICAR)
+        try:
+            franquicia = Decimal(str(item.get("franquicia_pct") or "").replace("%", "").replace(",", "."))
+        except Exception:
+            franquicia = Decimal("9999")
+        return (PROFILE_ORDER.get(perfil, 90), franquicia if perfil == PERFIL_TR else Decimal("0"), indice)
+
+    return [item for _indice, item in sorted(enumerate(salida), key=clave)]
 
 
 def _detectar_compania(texto: str) -> str:
@@ -474,6 +521,7 @@ def _detectar_compania(texto: str) -> str:
         (r"\bATM\s+SEGUROS\b|\bATM\b", "ATM"),
         (r"\bSANCOR\s+SEGUROS\b", "Sancor Seguros"),
         (r"\bSAN\s+CRISTOBAL\b", "San Cristóbal"),
+        (r"\b(?:COMPANIA\s+DE\s+SEGUROS\s+)?AGRO\s*SALTA\b|\bAGS\s+SEGUROS\b", "AgroSalta"),
         (r"\bRIVADAVIA\s+SEGUROS\b|\bSEGUROS\s+RIVADAVIA\b", "Rivadavia"),
         (r"\bALLIANZ\b", "Allianz"),
         (r"\bMAPFRE\b", "MAPFRE"),
@@ -713,10 +761,12 @@ def normalizar_texto_cotizacion(texto: str, *, compania: str = "") -> dict:
                 "servicio_grua": _grua_en_bloque(raw),
             })
 
-    opciones = _ordenar_coberturas(opciones)
+    opciones = _aplicar_modelo_comercial(_ordenar_coberturas(opciones))
     return {
         "es_cotizacion_generica": bool(opciones),
         "compania": cia,
+        "compania_detectada": cia,
+        "compania_confirmada": "",
         "vehiculo": vehiculo,
         "anio": anio,
         "suma_asegurada": str(suma) if suma is not None else None,
@@ -847,10 +897,12 @@ def _normalizar_dato_vision(dato: dict) -> dict:
             "servicio_grua": grua,
         })
 
-    opciones = _ordenar_coberturas(opciones)
+    opciones = _aplicar_modelo_comercial(_ordenar_coberturas(opciones))
     return {
         "es_cotizacion_generica": bool(opciones),
         "compania": cia,
+        "compania_detectada": cia,
+        "compania_confirmada": "",
         "vehiculo": str(dato.get("vehiculo") or "").strip(),
         "anio": str(dato.get("anio") or "").strip(),
         "suma_asegurada": str(suma) if suma is not None else None,
@@ -941,6 +993,7 @@ __all__ = [
     "detectar_riesgos",
     "clasificar_perfil",
     "normalizar_cobertura",
+    "normalizar_porcentaje",
     "normalizar_texto_cotizacion",
     "extraer_cotizacion_generica_pdf",
     "extraer_cotizacion_generica_pdf_vision",

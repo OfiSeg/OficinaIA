@@ -23,7 +23,7 @@ MERCANTIL_COBERTURAS = {
     },
     "B0": {
         "codigo_visual": "B0",
-        "nombre_cliente": "Cobertura B0",
+        "nombre_cliente": "Robo Total",
         "descripcion_cliente": "Responsabilidad civil y robo/hurto total.",
         "max_descuento": 35,
         "tipo": "basica",
@@ -37,7 +37,7 @@ MERCANTIL_COBERTURAS = {
     },
     "B3": {
         "codigo_visual": "B3",
-        "nombre_cliente": "Cobertura B3",
+        "nombre_cliente": "Incendio Total y Parcial",
         "descripcion_cliente": "Responsabilidad civil e incendio total y parcial.",
         "max_descuento": 35,
         "tipo": "basica",

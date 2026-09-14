@@ -1,5 +1,6 @@
 # -*- coding: utf-8 -*-
 """Pruebas rápidas sin red para el normalizador universal de Cotizaciones."""
+import quote_normalizer as _qn
 from quote_normalizer import normalizar_cobertura, normalizar_texto_cotizacion
 from federacion_quote_service import _cobertura as cobertura_federacion
 
@@ -86,13 +87,36 @@ $ 73.548,61
 """
 d = normalizar_texto_cotizacion(tabla)
 assert d["cantidad"] == 6, d
-assert [x["codigo_original"] for x in d["coberturas"]] == ["A", "B", "B1", "C", "C1", "CF"], d
-assert [x["perfil_normalizado"] for x in d["coberturas"][:5]] == ["RC", "B", "B1", "C", "C1"], d
-assert d["coberturas"][1]["precio_cuota_formateado"] == "$64.434,51", d
+assert [x["codigo_original"] for x in d["coberturas"]] == ["A", "B1", "B", "C1", "C", "CF"], d
+assert [x["perfil_normalizado"] for x in d["coberturas"][:5]] == ["RC", "B1", "B", "C1", "C"], d
+assert d["coberturas"][2]["precio_cuota_formateado"] == "$64.434,51", d
+assert all(x["nombre_comercial"] and x["familia"] and "orden_comercial" in x for x in d["coberturas"]), d
+
+# AgroSalta debe detectarse por alias y conservar compañía detectada separada
+# de una futura confirmación manual del operador.
+ags = normalizar_texto_cotizacion(
+    "COMPAÑIA DE SEGUROS AGROSALTA\nA - RESPONSABILIDAD CIVIL\nCuota: $50.000"
+)
+assert ags["compania"] == "AgroSalta", ags
+assert ags["compania_detectada"] == "AgroSalta" and ags["compania_confirmada"] == "", ags
+
+# Variantes materiales: grúa sólo sube al título cuando existe el par y la
+# franquicia TR siempre queda normalizada con un único signo.
+variantes = _qn._normalizar_dato_vision({
+    "es_cotizacion": True,
+    "compania": "AgroSalta",
+    "coberturas": [
+        {"codigo":"A", "nombre":"Responsabilidad Civil", "descripcion":"Responsabilidad Civil", "precio":"50000", "grua":"si"},
+        {"codigo":"A1", "nombre":"Responsabilidad Civil", "descripcion":"Responsabilidad Civil", "precio":"45000", "grua":"no"},
+        {"codigo":"D", "nombre":"Todo Riesgo", "descripcion":"Todo Riesgo", "precio":"250000", "franquicia_pct":"3%%"},
+    ],
+})
+assert variantes["coberturas"][0]["titulo_comercial"].endswith("CON GRÚA"), variantes
+assert variantes["coberturas"][1]["titulo_comercial"].endswith("SIN GRÚA"), variantes
+assert variantes["coberturas"][2]["titulo_comercial"] == "Todo Riesgo · FRANQUICIA 3%", variantes
 
 # Todo Riesgo universal: mismo código fuente D, pero etiqueta visual por % de
 # franquicia y orden ascendente, como ya se hace conceptualmente en Mercantil.
-import quote_normalizer as _qn
 vision = _qn._normalizar_dato_vision({
     "es_cotizacion": True,
     "compania": "San Cristóbal Seguros",

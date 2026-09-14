@@ -429,3 +429,186 @@ def generate_with_fallback(
         codigo="AI_MODEL_UNAVAILABLE",
     )
     raise final
+
+@dataclass
+class StreamTextResult:
+    """Respuesta mínima compatible con el tramo textual de servicios_ia.
+
+    El streaming sólo se usa cuando no hay tools expuestas en esa generación,
+    por lo que basta preservar ``text`` para el contrato existente.
+    """
+
+    text: str
+    candidates: tuple = ()
+
+
+def generate_stream_with_fallback(
+    *,
+    contents: Any,
+    config: Any,
+    on_text_delta: Any,
+    models: Iterable[str] | None = None,
+    client: Any | None = None,
+    log_prefix: str = "GEMINI STREAM",
+    max_attempts: int | None = None,
+):
+    """Genera texto incremental real con la misma política de fallback básica.
+
+    Importante: una vez emitido el primer delta no se reintenta ni se cambia de
+    modelo, porque repetir la generación duplicaría texto ya visible en el
+    navegador. Antes del primer delta se conservan fallback, backoff, deadline y
+    clasificación de errores de ``generate_with_fallback``. Si el SDK instalado
+    no ofrece streaming, se degrada a la llamada normal *sin* simular chunks.
+    """
+    state = current_state()
+    cliente = client or obtener_cliente_gemini()
+    if cliente is None:
+        raise RuntimeError("La IA todavía no está configurada. Falta GEMINI_API_KEY.")
+
+    stream_fn = getattr(getattr(cliente, "models", None), "generate_content_stream", None)
+    if not callable(stream_fn):
+        # Compatibilidad defensiva con SDKs viejos: respuesta completa, nunca
+        # fake-streaming de una respuesta que ya terminó de generarse.
+        return generate_with_fallback(
+            contents=contents,
+            config=config,
+            models=models,
+            client=cliente,
+            log_prefix=log_prefix,
+            max_attempts=max_attempts,
+        )
+
+    candidatos = tuple(models or DEFAULT_MODELS)
+    candidatos = tuple(m for m in candidatos if m not in state.disabled_models)
+    if not candidatos:
+        raise RuntimeError("No quedan modelos Gemini habilitados para este request.")
+
+    limite_intentos = max(1, min(AI_READ_ATTEMPTS, int(max_attempts or AI_READ_ATTEMPTS)))
+    intentos_realizados = 0
+    indice_modelo = 0
+    ultimo_error: Exception | None = None
+    sequence_id = state.next_sequence_id(log_prefix)
+    input_chars, input_media_parts, input_media_bytes = _input_metrics(contents)
+
+    while intentos_realizados < limite_intentos and candidatos:
+        _assert_time_available(state)
+        modelo = candidatos[indice_modelo % len(candidatos)]
+        indice_modelo += 1
+        intentos_realizados += 1
+        state.calls += 1
+        inicio = time.monotonic()
+        emitio_delta = False
+        partes_texto: list[str] = []
+        try:
+            stream = stream_fn(model=modelo, contents=contents, config=config)
+            for chunk in stream:
+                texto_chunk = str(getattr(chunk, "text", "") or "")
+                if not texto_chunk:
+                    continue
+                partes_texto.append(texto_chunk)
+                emitio_delta = True
+                if on_text_delta is not None:
+                    on_text_delta(texto_chunk)
+
+            texto = "".join(partes_texto).strip()
+            if not texto:
+                from resilience import RecoverablePayloadError
+                raise RecoverablePayloadError("Respuesta vacía del proveedor durante streaming.")
+
+            duracion_ok = time.monotonic() - inicio
+            print(
+                f"IA_METRIC operation={log_prefix} provider=gemini model={modelo} "
+                f"attempt={intentos_realizados}/{limite_intentos} duration={duracion_ok:.2f}s "
+                f"input_chars={input_chars} media_parts={input_media_parts} media_bytes={input_media_bytes} "
+                f"stream=1 sequence={sequence_id}"
+            )
+            if intentos_realizados > 1:
+                registrar_evento_ia_seguro(
+                    nivel="ok",
+                    mensaje=f"IA streaming recuperada correctamente en intento {intentos_realizados}/{limite_intentos}",
+                    detalle=(
+                        f"operation={log_prefix} | provider=gemini | modelo={modelo} | "
+                        f"intento={intentos_realizados}/{limite_intentos} | duracion={duracion_ok:.2f}s | "
+                        f"secuencia={sequence_id}"
+                    ),
+                    codigo="AI_RECOVERED",
+                )
+            return StreamTextResult(texto), modelo
+        except Exception as error:
+            ultimo_error = error
+            state.errors.append((modelo, str(error)))
+            duracion = time.monotonic() - inicio
+            detalle_error = describir_error_seguro(
+                error, model=modelo, attempt=intentos_realizados, attempts=limite_intentos,
+                duration_seconds=duracion, sequence_id=sequence_id,
+            ) + (
+                f" | operation={log_prefix} | input_chars={input_chars} "
+                f"| media_parts={input_media_parts} | media_bytes={input_media_bytes} | stream=1"
+            )
+            print(
+                f"ERROR {log_prefix} model={modelo} attempt={intentos_realizados}/{limite_intentos} "
+                f"duration={duracion:.2f}s error={detalle_error}"
+            )
+
+            # No hay forma segura de reintentar después de haber mostrado texto.
+            if emitio_delta:
+                registrar_evento_ia_seguro(
+                    nivel="error", mensaje="IA streaming se interrumpió después de emitir texto",
+                    detalle=detalle_error, codigo="AI_STREAM_INTERRUPTED",
+                )
+                raise
+
+            if _es_error_auth_permanente(error):
+                registrar_evento_ia_seguro(
+                    nivel="error", mensaje="IA falló por autenticación/configuración",
+                    detalle=detalle_error, codigo="AI_FINAL_FAILURE",
+                )
+                raise
+
+            if _es_modelo_no_disponible(error):
+                registrar_evento_ia_seguro(
+                    nivel="aviso", mensaje="Modelo de IA no disponible; se intentará fallback si existe",
+                    detalle=detalle_error, codigo="AI_MODEL_UNAVAILABLE",
+                )
+                state.disabled_models.add(modelo)
+                candidatos = tuple(m for m in candidatos if m != modelo)
+                indice_modelo = 0
+                if not candidatos:
+                    break
+                continue
+
+            if not is_transient_error(error):
+                if len(candidatos) > 1 and intentos_realizados < limite_intentos:
+                    continue
+                registrar_evento_ia_seguro(
+                    nivel="error", mensaje="IA falló por una causa no recuperable",
+                    detalle=detalle_error, codigo="AI_FINAL_FAILURE",
+                )
+                raise
+
+            if intentos_realizados >= limite_intentos:
+                registrar_evento_ia_seguro(
+                    nivel="error",
+                    mensaje=f"IA agotó {limite_intentos}/{limite_intentos} intentos; operación no completada",
+                    detalle=detalle_error, codigo="AI_RETRIES_EXHAUSTED",
+                )
+                break
+
+            delay = AI_RETRY_DELAYS[min(intentos_realizados, len(AI_RETRY_DELAYS) - 1)]
+            if state.remaining() <= delay + MIN_TIME_FOR_NEW_CALL_SECONDS:
+                registrar_evento_ia_seguro(
+                    nivel="error", mensaje="IA no pudo reintentar por presupuesto/deadline",
+                    detalle=detalle_error, codigo="AI_BUDGET_EXHAUSTED",
+                )
+                break
+            registrar_evento_ia_seguro(
+                nivel="aviso",
+                mensaje=f"Fallo temporal de IA absorbido; reintento {intentos_realizados + 1}/{limite_intentos}",
+                detalle=detalle_error, codigo="AI_TRANSIENT_RETRY",
+            )
+            time.sleep(delay)
+
+    if ultimo_error is not None:
+        raise ultimo_error
+    raise RuntimeError("No hay modelos Gemini disponibles para ejecutar la solicitud.")
+

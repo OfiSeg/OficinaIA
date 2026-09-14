@@ -1171,7 +1171,7 @@ body.chat-layout .composer.is-file-dragging textarea::placeholder{color:var(--oi
 .atm-moto-row-label{min-height:44px!important;font-size:12.5px!important}
 .atm-code-cell.atm-moto-code-cell{min-height:44px!important;height:44px!important}
 .atm-moto-code-cell>span{font-size:13px!important}.atm-moto-code-cell>small{font-size:11.5px!important}
-.atm-selected-item{min-height:48px!important;padding:7px 8px!important;grid-template-columns:52px 1fr 1fr!important}
+.atm-selected-item{min-height:54px!important;padding:8px 9px!important;grid-template-columns:minmax(180px,1.45fr) minmax(105px,1fr) minmax(105px,1fr)!important}
 .atm-selected-item>b,.atm-selected-item strong,.mercantil-price strong{font-size:14px!important;line-height:1.15!important}
 .atm-selected-item small,.mercantil-price small,.mercantil-discount small{font-size:12.5px!important;line-height:1.25!important}
 .quotes-footer>span{font-size:13px!important}.quotes-whatsapp-copy{width:40px!important;min-width:40px!important;height:40px!important}.quotes-whatsapp-copy img{width:26px!important;height:26px!important}
@@ -1247,6 +1247,7 @@ body.chat-layout .composer.is-file-dragging textarea::placeholder{color:var(--oi
 .mercantil-discount input{font-size:13.5px!important}.mercantil-discount span{font-size:12.5px!important}
 .manual-quote-select{font-size:13.5px!important}
 .quotes-footer .atm-coti-submit{font-size:13.5px!important}
+.quotes-document-btn{width:40px!important;min-width:40px!important;height:40px!important;min-height:40px!important;padding:6px!important;border-radius:9px!important}.quotes-document-btn .app-icon{width:26px!important;height:26px!important}.quotes-document-menu{min-width:160px!important}.quotes-document-menu button{height:36px!important;font-size:13px!important}
 .quotes-calculator-head b{font-size:14.5px!important}
 .quotes-calc-grid label{font-size:12.5px!important}.quotes-calc-grid input,.quotes-calc-grid select{font-size:13.5px!important}
 .quotes-calc-result small{font-size:12.5px!important}.quotes-calc-result strong{font-size:15px!important}
@@ -1448,6 +1449,13 @@ body.chat-layout .chat-list-toggle-label{line-height:1!important}
   grid-template-columns:minmax(150px,1fr) minmax(112px,124px) minmax(112px,124px) minmax(120px,134px)!important;
   gap:10px!important;align-items:end!important;
 }
+.generic-selected-item,.federacion-selected-item,.manual-selected-item{
+  grid-template-columns:minmax(190px,1fr) minmax(120px,140px)!important;
+  align-items:center!important;
+}
+.atm-selected-info{min-width:0;display:grid;gap:3px}
+.atm-selected-info>b{font-size:14px;font-weight:800;color:var(--oi-ink)}
+.atm-selected-info>small,.mercantil-selected-info>small{white-space:normal!important;overflow:visible!important;text-overflow:clip!important}
 .mercantil-price,.mercantil-discount{
   min-height:52px!important;
   align-self:end!important;
@@ -1480,12 +1488,15 @@ body.chat-layout .chat-list-toggle-label{line-height:1!important}
   body.chat-layout .chat-window-bar{padding-right:7px!important}
   .mercantil-selected-item{grid-template-columns:repeat(3,minmax(0,1fr))!important}
   .mercantil-selected-info{grid-column:1/-1!important}
+  .atm-selected-item{grid-template-columns:minmax(0,1fr) 105px 105px!important}
+  .generic-selected-item,.federacion-selected-item,.manual-selected-item{grid-template-columns:minmax(0,1fr) 120px!important}
 }
 @media(max-width:480px){
   .mercantil-selected-item{grid-template-columns:1fr!important}
   .mercantil-selected-info{grid-column:1!important}
   .mercantil-price{text-align:left!important}
   .mercantil-price strong{justify-content:flex-start!important}
+  .atm-selected-item,.generic-selected-item,.federacion-selected-item,.manual-selected-item{grid-template-columns:1fr!important}
 }
 
 
@@ -1747,6 +1758,33 @@ body>.toast-host{z-index:100100!important;isolation:isolate;filter:none!importan
   gap:9px!important;
   flex-wrap:nowrap!important;
 }
+.quote-source-head-actions{display:flex!important;align-items:center!important;gap:4px!important;flex:0 0 auto!important}
+.quote-company-edit{
+  width:34px;height:34px;display:grid;place-items:center;border:0;border-radius:8px;
+  background:transparent;color:var(--oi-muted);cursor:pointer;
+}
+.quote-company-edit:hover,.quote-company-edit[aria-expanded="true"]{background:var(--oi-surface-muted);color:var(--oi-ink)}
+.quote-company-edit .app-icon{width:18px;height:18px}
+.quote-company-editor{
+  display:grid;grid-template-columns:minmax(180px,1fr) minmax(180px,1fr) auto auto;
+  gap:7px;align-items:center;margin:-2px 0 10px;padding:9px;
+  border:1px solid var(--oi-line);border-radius:10px;background:var(--oi-surface-soft);
+}
+.quote-company-editor[hidden]{display:none}
+.quote-company-editor select,.quote-company-editor input{
+  min-width:0;height:36px;border:1px solid var(--oi-line);border-radius:8px;
+  background:var(--oi-surface);color:var(--oi-ink);padding:0 9px;font:inherit;font-size:13px;
+}
+.quote-company-editor select:focus,.quote-company-editor input:focus{outline:2px solid color-mix(in srgb,var(--oi-accent) 22%,transparent);border-color:var(--oi-accent)}
+.quote-company-confirm,.quote-company-cancel{height:36px;border-radius:8px;padding:0 11px;font:inherit;font-size:12.5px;font-weight:750;cursor:pointer}
+.quote-company-confirm{border:1px solid var(--oi-accent);background:var(--oi-accent);color:#fff}
+.quote-company-cancel{border:1px solid var(--oi-line);background:transparent;color:var(--oi-muted)}
+.mercantil-global-tools{padding-bottom:8px;border-bottom:1px solid var(--oi-line)}
+.mercantil-global-tools .quote-inline-field{min-width:190px}
+@media(max-width:620px){
+  .quote-company-editor{grid-template-columns:1fr auto}
+  .quote-company-editor .quote-company-custom{grid-column:1/-1}
+}
 .quote-source-company-copy{min-width:0;display:grid;gap:2px}
 .quote-source-company-copy>b,.quote-source-company-copy>small{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .quote-source-brand-mark{
@@ -1775,6 +1813,8 @@ html[data-theme="dark"] .quote-source.quote-source-branded{
    Chat IA conserva su propia barra "Conversaciones" con la misma geometría.
    ====================================================================== */
 body:not(.chat-layout) .main{padding-top:0!important}
+.oia-page-content-shell{display:contents}
+body.chat-layout .app-global-bar{display:none!important}
 .app-global-bar{
   position:relative!important;
   min-height:44px!important;height:44px!important;
@@ -1838,4 +1878,227 @@ html[data-theme="light"] .global-logout{
 .global-settings:hover,.global-logout:hover{
   color:var(--oi-accent)!important;
   --oia-icon-accent:currentColor!important;
+}
+
+/* ======================================================================
+   COTIZADOR UNIVERSAL · UNIFORMIDAD FINAL 2026-09-13
+   Esta capa vive en design-system.css (se carga después de estilo.css),
+   por lo que es la autoridad visual real del cotizador.
+   ====================================================================== */
+.quote-source{
+  position:relative!important;
+  padding:12px 13px!important;
+  border-radius:13px!important;
+  transition:border-color .15s ease,background-color .15s ease,box-shadow .15s ease!important;
+}
+.quote-source.quote-source-branded{
+  border-color:var(--quote-brand-line,var(--oi-line))!important;
+  background:
+    linear-gradient(180deg,var(--quote-brand-soft,transparent),transparent 46px),
+    var(--oi-surface)!important;
+  box-shadow:inset 3px 0 0 color-mix(in srgb,var(--quote-brand) 68%,transparent)!important;
+}
+.quote-source-head{
+  min-height:38px!important;
+  margin-bottom:9px!important;
+  padding-bottom:8px!important;
+  align-items:center!important;
+}
+.quote-source-head>div.quote-source-company-info{
+  display:grid!important;
+  grid-template-columns:34px minmax(0,1fr)!important;
+  align-items:center!important;
+  column-gap:10px!important;
+  row-gap:0!important;
+  flex:1 1 auto!important;
+  min-width:0!important;
+}
+.quote-source-brand-mark{
+  width:34px!important;
+  height:34px!important;
+  display:grid!important;
+  place-items:center!important;
+  overflow:hidden!important;
+  border:1px solid var(--quote-brand-line,var(--oi-line))!important;
+  border-radius:9px!important;
+  background:var(--quote-brand-soft,var(--oi-surface-muted))!important;
+  box-sizing:border-box!important;
+}
+.quote-source-brand-mark img{
+  width:auto!important;
+  height:auto!important;
+  max-width:28px!important;
+  max-height:26px!important;
+  object-fit:contain!important;
+  display:block!important;
+}
+.quote-source-brand-mark .app-icon{width:19px!important;height:19px!important;color:var(--quote-brand,var(--oi-muted))!important}
+.quote-source-company-copy{min-width:0!important;display:grid!important;gap:2px!important}
+.quote-source-company-copy>b{
+  font-size:14px!important;
+  line-height:1.2!important;
+  font-weight:780!important;
+  white-space:nowrap!important;
+  overflow:hidden!important;
+  text-overflow:ellipsis!important;
+}
+.quote-source-company-copy>small{
+  font-size:12px!important;
+  line-height:1.28!important;
+  white-space:nowrap!important;
+  overflow:hidden!important;
+  text-overflow:ellipsis!important;
+}
+.quote-source-head-actions{display:flex!important;align-items:center!important;gap:3px!important;flex:0 0 auto!important}
+.quote-company-edit,.quote-source-remove{
+  width:32px!important;
+  height:32px!important;
+  min-width:32px!important;
+  display:grid!important;
+  place-items:center!important;
+  border:0!important;
+  border-radius:8px!important;
+  background:transparent!important;
+  color:var(--oi-muted)!important;
+  cursor:pointer!important;
+}
+.quote-company-edit:hover,.quote-source-remove:hover{background:var(--oi-surface-muted)!important;color:var(--oi-ink)!important}
+.quote-company-edit .app-icon,.quote-source-remove .app-icon{width:17px!important;height:17px!important}
+.quote-subsection-title{
+  margin:10px 0 6px!important;
+  font-size:11.5px!important;
+  line-height:1.2!important;
+  letter-spacing:.055em!important;
+  text-transform:uppercase!important;
+  color:var(--oi-muted)!important;
+  font-weight:800!important;
+}
+.atm-code-matrix,.atm-moto-code-grid,.mercantil-code-matrix,.federacion-code-matrix,.generic-code-matrix,.manual-code-matrix{
+  gap:6px!important;
+  align-items:stretch!important;
+}
+.atm-code-cell,.mercantil-code-cell,.federacion-code-cell,.generic-code-cell,.manual-code-cell{
+  min-height:38px!important;
+  border-radius:9px!important;
+  font-size:13px!important;
+  font-weight:800!important;
+  transition:border-color .12s ease,background-color .12s ease,box-shadow .12s ease,transform .12s ease!important;
+}
+.atm-code-cell.active,.mercantil-code-cell.active,.federacion-code-cell.active,.generic-code-cell.active,.manual-code-cell.active{
+  box-shadow:0 0 0 1px color-mix(in srgb,var(--quote-brand,var(--oi-accent)) 34%,transparent)!important;
+}
+.quote-selected-row{
+  min-height:54px!important;
+  box-sizing:border-box!important;
+  border-radius:10px!important;
+  padding:8px 9px!important;
+  border:1px solid var(--oi-line)!important;
+  background:var(--oi-surface-soft)!important;
+}
+.quote-selected-row .atm-selected-info,
+.quote-selected-row .mercantil-selected-info{min-width:0!important;display:grid!important;gap:3px!important}
+.quote-selected-row .atm-selected-info>b,
+.quote-selected-row .mercantil-selected-info>b{
+  font-size:14px!important;
+  line-height:1.15!important;
+  font-weight:800!important;
+  color:var(--oi-ink)!important;
+}
+.quote-selected-row .atm-selected-info>small,
+.quote-selected-row .mercantil-selected-info>small{
+  font-size:12.5px!important;
+  line-height:1.28!important;
+  color:var(--oi-muted)!important;
+  white-space:normal!important;
+  overflow:visible!important;
+  text-overflow:clip!important;
+}
+.quote-selected-row .mercantil-price strong,
+.quote-selected-row>span>strong{font-size:14px!important;line-height:1.15!important;color:var(--oi-ink)!important}
+.quote-selected-row .mercantil-price small,
+.quote-selected-row>span>small{font-size:12px!important;line-height:1.2!important;color:var(--oi-muted)!important}
+html[data-theme="dark"] .quote-source.quote-source-branded{
+  background:linear-gradient(180deg,var(--quote-brand-soft,transparent),transparent 46px),var(--oi-surface)!important;
+}
+html[data-theme="dark"] .quote-selected-row{
+  background:var(--oi-surface-soft)!important;
+  border-color:var(--oi-line)!important;
+}
+
+
+/* ======================================================================
+   COTIZADOR UNIVERSAL · CORRECCIÓN DE PRESENTACIÓN 2026-09-13
+   Todas las compañías comparten la misma lectura vertical de coberturas.
+   ATM conserva sus dos precios, pero deja de renderizar tarjetas en mosaico.
+   La cabecera usa favicon compacto de la app; los logos horizontales quedan
+   exclusivamente para los documentos DOCX/PDF.
+   ====================================================================== */
+.quote-source-brand-mark{
+  width:28px!important;
+  height:28px!important;
+  min-width:28px!important;
+  border-radius:7px!important;
+  background:var(--oi-surface-muted)!important;
+  border:1px solid var(--oi-line)!important;
+  box-shadow:none!important;
+}
+.quote-source-brand-mark img{
+  width:18px!important;
+  height:18px!important;
+  max-width:18px!important;
+  max-height:18px!important;
+  object-fit:contain!important;
+  border-radius:4px!important;
+}
+.quote-source-head>div.quote-source-company-info{
+  grid-template-columns:28px minmax(0,1fr)!important;
+  column-gap:9px!important;
+}
+
+/* ATM usa la MISMA lista vertical que las demás fuentes. */
+.atm-selected-summary{
+  display:grid!important;
+  grid-template-columns:minmax(0,1fr)!important;
+  gap:5px!important;
+  width:100%!important;
+}
+.atm-selected-item.quote-selected-row{
+  display:grid!important;
+  grid-template-columns:minmax(0,1fr) minmax(112px,132px) minmax(112px,132px)!important;
+  gap:10px!important;
+  align-items:center!important;
+  width:100%!important;
+  min-width:0!important;
+  overflow:visible!important;
+}
+.atm-selected-item.quote-selected-row>span{
+  min-width:0!important;
+  display:grid!important;
+  gap:3px!important;
+  text-align:right!important;
+  overflow:visible!important;
+}
+.atm-selected-item.quote-selected-row>span>strong{
+  white-space:nowrap!important;
+  overflow:visible!important;
+  text-overflow:clip!important;
+}
+.atm-selected-item.quote-selected-row>span>small{
+  white-space:nowrap!important;
+  text-transform:none!important;
+  letter-spacing:0!important;
+}
+
+@media(max-width:620px){
+  .atm-selected-item.quote-selected-row{
+    grid-template-columns:minmax(0,1fr) minmax(96px,112px) minmax(96px,112px)!important;
+    gap:7px!important;
+  }
+}
+@media(max-width:480px){
+  .atm-selected-item.quote-selected-row{
+    grid-template-columns:1fr 1fr!important;
+  }
+  .atm-selected-item.quote-selected-row .atm-selected-info{grid-column:1/-1!important}
+  .atm-selected-item.quote-selected-row>span{text-align:left!important}
 }

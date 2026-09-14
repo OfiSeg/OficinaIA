@@ -1,4 +1,4 @@
-{% extends 'base.html' %}
+{% extends base_template|default('base.html') %}
 {% from "_icons.html" import icon %}
 {% from "_global_actions.html" import render_global_actions %}
 {% macro render_chat_welcome(shortcuts) -%}
@@ -22,7 +22,6 @@
 {%- endmacro %}
 {% block title %}Chat IA · {{config_global.nombre_oficina}}{% endblock %}
 {% block body_class %}chat-layout{% endblock %}
-{% block global_actions_slot %}{% endblock %}
 {% block content %}
 <div class="page chat-page">
 <div class="chat-window" id="chatWindow">
@@ -187,6 +186,9 @@
           <div><b>Mercantil Andina</b><small id="mercantilQuoteMeta"></small></div>
           <button type="button" class="quote-source-remove" id="mercantilQuoteRemove" title="Quitar Mercantil" aria-label="Quitar Mercantil">{{ icon('close') }}</button>
         </div>
+        <div class="quote-source-tools mercantil-global-tools">
+          <label class="quote-inline-field quote-discount-field">Bonificación <input id="mercantilBonificacion" type="number" inputmode="decimal" min="0" max="50" step="1" value="35"><span>%</span></label>
+        </div>
         <div class="quote-subsection-title">Coberturas</div><div class="mercantil-code-matrix" id="mercantilCoverageMatrix"></div>
         <div class="quote-subsection-title quote-selected-label" id="mercantilSelectedLabel" hidden>Seleccionadas</div><div class="mercantil-selected-summary" id="mercantilSelectedSummary" hidden></div>
       </section>
@@ -200,6 +202,18 @@
       <span id="quotesSelectionCount">0 alternativas seleccionadas</span>
       <button type="button" class="atm-coti-submit" id="atmGenerateProposal">Generar mensaje</button>
       <button type="button" class="quotes-clear-btn" id="quotesClearBtn">Limpiar cotización</button>
+    </div>
+
+    <div class="quotes-document-toolbar" id="quotesDocumentToolbar" hidden>
+      <div class="quotes-document-action">
+        <button type="button" class="quotes-document-btn" id="quotesGenerateDocument" aria-haspopup="menu" aria-controls="quotesDocumentMenu" aria-expanded="false" title="Descargar cotización" aria-label="Descargar cotización">{{ icon('png') }}</button>
+        <div class="quotes-document-menu" id="quotesDocumentMenu" role="menu" hidden>
+          <button type="button" role="menuitem" data-quote-document-format="docx">{{ icon('word') }}<span>Word</span></button>
+          <button type="button" role="menuitem" data-quote-document-format="pdf">{{ icon('pdf') }}<span>PDF</span></button>
+          <button type="button" role="menuitem" data-quote-document-format="png">{{ icon('png') }}<span>PNG</span></button>
+          <button type="button" role="menuitem" data-quote-document-format="jpg">{{ icon('jpg') }}<span>JPG</span></button>
+        </div>
+      </div>
     </div>
 
     <div class="atm-proposal atm-proposal-compact quotes-proposal" id="atmProposal" hidden>
@@ -265,6 +279,8 @@
 
 <script>
 (function(){
+  const pageAbort=new AbortController();
+  document.addEventListener('oia:before-partial-navigation',()=>pageAbort.abort(),{once:true,signal:pageAbort.signal});
   // Bloc de notas rápidas del chat: personal, por navegador, igual que el
   // resto de las preferencias de interfaz (tema y sidebar)
   // que ya viven en localStorage. No toca la IA, el historial ni Excel.
@@ -333,10 +349,10 @@
     if(panel.hidden)return;
     if(panel.contains(e.target)||e.target===btn)return;
     cerrarPanel();
-  });
+  },{signal:pageAbort.signal});
   document.addEventListener('keydown',e=>{
     if(e.key==='Escape'&&!panel.hidden)cerrarPanel();
-  });
+  },{signal:pageAbort.signal});
 
   function usarNota(id){
     const nota=leerNotas().find(n=>String(n.id)===String(id));

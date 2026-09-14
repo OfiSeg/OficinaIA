@@ -186,9 +186,20 @@ def parsear_consulta_atm(texto: str):
         if m_desc:
             descuento = next((g for g in m_desc.groups() if g), None)
 
-    # El precio es el importe principal: número de al menos 3 dígitos o miles con puntos.
-    candidatos = re.findall(r"(?<!\d)(?:\$\s*)?(\d{1,3}(?:\.\d{3})+|\d{3,})(?!\d)", raw)
-    precio = candidatos[0] if candidatos else None
+    # La sintaxis legacy sólo se considera cotización si hay un IMPORTE plausible.
+    # Años (2026), cilindradas (110/125) y otros números de una consulta natural
+    # jamás deben abrir Cotizaciones. El umbral conserva el uso histórico
+    # "ATM 158561 auto" sin convertir cualquier número de 3/4 dígitos en precio.
+    candidatos_raw = re.findall(r"(?<!\d)(?:\$\s*)?(\d{1,3}(?:\.\d{3})+|\d{3,})(?!\d)", raw)
+    precio = None
+    for candidato in candidatos_raw:
+        try:
+            numero = int(re.sub(r"\D", "", candidato))
+        except Exception:
+            continue
+        if numero >= 10000:
+            precio = candidato
+            break
     if not precio:
         return {"error": "Indicá el precio base ATM. Ejemplo: ATM 158561 auto."}
 
@@ -196,6 +207,24 @@ def parsear_consulta_atm(texto: str):
         return {
             "error": "Indicá Auto, Moto o un descuento manual entre 1% y 50%. Ejemplo: ATM 158561 auto."
         }
+
+    # No basta con que haya ATM + un número grande. La sintaxis legacy era una
+    # entrada corta de calculadora; una pregunta natural que casualmente incluya
+    # un importe (suma asegurada, kilómetros, modelo, etc.) debe seguir al router.
+    # Eliminamos únicamente los tokens propios de esa sintaxis y exigimos que no
+    # queden palabras semánticas ajenas.
+    residuo = n
+    residuo = re.sub(r"^/?atm\b", " ", residuo, count=1)
+    residuo = re.sub(r"\b(?:auto|moto)\b", " ", residuo)
+    residuo = re.sub(r"(?:descuento|dto)\s*(?:de\s+)?\d{1,2}(?:[.,]\d+)?\s*%?", " ", residuo)
+    residuo = re.sub(r"(?:con\s+)?\d{1,2}(?:[.,]\d+)?\s*%?\s*(?:de\s+)?(?:descuento|dto)", " ", residuo)
+    residuo = re.sub(r"\d{1,3}(?:\.\d{3})+|\d+(?:[.,]\d+)?", " ", residuo)
+    residuo = re.sub(r"\b(?:precio|base|con|de|descuento|dto)\b", " ", residuo)
+    residuo = re.sub(r"[$%.,:;()¿?¡!\-]+", " ", residuo)
+    residuo = re.sub(r"\s+", " ", residuo).strip()
+    if residuo:
+        return {"error": "La frase no corresponde a la sintaxis legacy de cotización ATM."}
+
     return {"precio": precio, "tipo": tipo, "descuento": descuento}
 
 

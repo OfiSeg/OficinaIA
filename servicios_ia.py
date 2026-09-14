@@ -7,7 +7,7 @@ from datetime import datetime, date
 from office_time import office_date_string, office_year
 from pathlib import Path
 from google.genai import types
-from ai_gateway import obtener_cliente_gemini, generate_with_fallback, DEFAULT_MODELS
+from ai_gateway import obtener_cliente_gemini, generate_with_fallback, generate_stream_with_fallback, DEFAULT_MODELS
 
 # Charla trivial prioriza el modelo Flash-Lite de baja latencia; si falla de
 # forma transitoria, el gateway puede probar 3.8 Flash una vez antes del fallback local.
@@ -25,7 +25,6 @@ import dispatch_service
 import system_health
 import document_grouping
 import runtime_config
-import arca_service
 
 
 
@@ -80,7 +79,7 @@ def _fallback_charla_informal(_pregunta: str) -> str:
     return "Todo bien 😄 ¿Qué necesitás hacer hoy?"
 
 
-def _consultar_charla_informal(pregunta: str, historial=None) -> str:
+def _consultar_charla_informal(pregunta: str, historial=None, on_text_delta=None) -> str:
     """Mismo Gemini, pero sin prompt gigante ni herramientas para una charla trivial."""
     timeout_ms = runtime_config.get_int("GEMINI_CHAT_SMALLTALK_TIMEOUT_MS", 5500)
     cliente = obtener_cliente_gemini(timeout_ms=timeout_ms)
@@ -106,14 +105,18 @@ def _consultar_charla_informal(pregunta: str, historial=None) -> str:
     if thinking is not None:
         kwargs["thinking_config"] = thinking
     try:
-        respuesta, _modelo = generate_with_fallback(
-            client=cliente,
-            models=SMALLTALK_MODELS,
-            contents=prompt,
-            config=types.GenerateContentConfig(**kwargs),
-            log_prefix="GEMINI CHAT SMALLTALK",
-            max_attempts=2,
-        )
+        generar = generate_stream_with_fallback if on_text_delta is not None else generate_with_fallback
+        params = {
+            "client": cliente,
+            "models": SMALLTALK_MODELS,
+            "contents": prompt,
+            "config": types.GenerateContentConfig(**kwargs),
+            "log_prefix": "GEMINI CHAT SMALLTALK",
+            "max_attempts": 2,
+        }
+        if on_text_delta is not None:
+            params["on_text_delta"] = on_text_delta
+        respuesta, _modelo = generar(**params)
         texto = str(getattr(respuesta, "text", "") or "").strip()
         return texto or _fallback_charla_informal(pregunta)
     except Exception as error:
@@ -306,7 +309,7 @@ def _campo_identidad_principal(datos):
         "DNI", "DOCUMENTO", "CUIT", "CUIL",
         "CLIENTE", "ASEGURADO", "NOMBRE",
     )
-    for fila in datos[: min(len(datos), 20)]:
+    for fila in datos:
         campo = _campo_por_alias(fila, aliases)
         if campo and any(str(f.get(campo, "")).strip() for f in datos):
             return campo
@@ -317,8 +320,11 @@ def _campos_compania(datos):
     if not datos:
         return []
     candidatos = ("CIA", "COMPAÑIA", "COMPANIA", "COMPAÑÍA", "ASEGURADORA", "COMPANIA DE SEGUROS")
+    # Google Sheets puede omitir celdas vacías al final de una fila. Por eso
+    # no inferimos el esquema mirando sólo las primeras filas: una columna CIA
+    # válida puede aparecer recién más abajo.
     presentes = set()
-    for fila in datos[: min(len(datos), 3)]:
+    for fila in datos:
         presentes.update(str(k).strip().upper() for k in fila.keys())
     return [c for c in candidatos if c in presentes]
 
@@ -327,8 +333,24 @@ def _companias_mencionadas(pregunta, datos):
     q = _normalizar_texto(pregunta)
     mencionadas = set()
     for alias, canon in _ALIAS_CIAS.items():
-        if re.search(rf"\b{re.escape(_normalizar_texto(alias))}\b", q):
+        if re.search(rf"(?<![a-z0-9]){re.escape(_normalizar_texto(alias))}(?![a-z0-9])", q):
             mencionadas.add(_normalizar_texto(normalizar_compania(canon)))
+
+    # El Excel puede contener compañías que todavía no forman parte del catálogo
+    # operativo de ``companias.py`` (por ejemplo Mapfre/Zurich). Si el valor real
+    # de la columna CIA aparece explícitamente en la consulta, también es un
+    # referente válido. Así un listado/búsqueda de cartera no cae a un top-N
+    # semántico sólo porque esa aseguradora sea nueva para el catálogo local.
+    campos_cia = _campos_compania(datos)
+    valores_dataset = {
+        _normalizar_texto(fila.get(campo, ""))
+        for fila in (datos or [])
+        for campo in campos_cia
+        if str(fila.get(campo, "") or "").strip()
+    }
+    for valor in valores_dataset:
+        if valor and re.search(rf"(?<![a-z0-9]){re.escape(valor)}(?![a-z0-9])", q):
+            mencionadas.add(valor)
     return mencionadas
 
 
@@ -553,7 +575,9 @@ def _filtrar_filas(
     if compania:
         objetivo = _normalizar_texto(normalizar_compania(compania))
         campos = []
-        for f in salida[:20]:
+        # No asumir que las primeras filas materializan todas las columnas.
+        # Sheets puede devolver filas cortas si sus últimas celdas están vacías.
+        for f in salida:
             for alias in ('CIA', 'COMPAÑIA', 'COMPANIA', 'COMPAÑÍA', 'ASEGURADORA', 'COMPANIA DE SEGUROS'):
                 c = _campo_por_alias(f, (alias,))
                 if c and c not in campos:
@@ -988,21 +1012,62 @@ def _puntuar_metadato(consulta, texto):
     return puntuacion
 
 
+# Compañías que aparecen en otras áreas/configuración de OficinaIA pero no
+# necesariamente tienen un código operativo en companias.py. Sólo se usan para
+# AISLAR metadata; no alteran emisión, cotización ni normalización de cartera.
+_COMPANIAS_DOCUMENTALES_EXTRA = {
+    "allianz": "Allianz",
+    "mapfre": "Mapfre",
+    "mapfre argentina": "Mapfre",
+    "zurich": "Zurich",
+    "zurich retiro": "Zurich",
+    "experta": "Experta",
+    "sura": "Sura",
+    "nacion": "Nación Seguros",
+    "nacion seguros": "Nación Seguros",
+    "hdi": "HDI",
+    "chubb": "Chubb",
+    "smg": "SMG",
+    "smg seguros": "SMG",
+    "galeno": "Galeno",
+    "prevencion": "Prevención",
+    "prevencion art": "Prevención",
+}
+
+
 def _companias_mencionadas_en_consulta(consulta):
-    """Devuelve compañías visibles mencionadas de forma explícita en la consulta."""
+    """Devuelve compañías visibles mencionadas de forma explícita en la consulta.
+
+    Esta detección es deliberadamente más amplia que la tabla de códigos de
+    emisión: si el usuario nombra una compañía documental no operativa, la
+    búsqueda sigue quedando aislada a esa compañía en vez de caer sobre fichas
+    de otras aseguradoras.
+    """
     texto = _normalizar_texto(consulta)
     if not texto:
         return []
     encontradas = []
+    candidatos_compania = []
     for alias, (_codigo, display) in aliases_companias().items():
+        candidatos_compania.append((alias, display))
+        candidatos_compania.append((display, display))
+    candidatos_compania.extend(_COMPANIAS_DOCUMENTALES_EXTRA.items())
+
+    # Más específicos primero ("zurich retiro" antes que "zurich").
+    candidatos_compania.sort(key=lambda item: len(_normalizar_texto(item[0])), reverse=True)
+    spans_usados = []
+    for alias, display in candidatos_compania:
         alias_norm = _normalizar_texto(alias)
-        display_norm = _normalizar_texto(display)
-        if not alias_norm and not display_norm:
+        if not alias_norm:
             continue
-        candidatos = {x for x in (alias_norm, display_norm) if x}
-        if any(re.search(rf"(?<![a-z0-9]){re.escape(x)}(?![a-z0-9])", texto) for x in candidatos):
-            if display and display not in encontradas:
-                encontradas.append(display)
+        match = re.search(rf"(?<![a-z0-9]){re.escape(alias_norm)}(?![a-z0-9])", texto)
+        if not match:
+            continue
+        if any(match.start() >= a and match.end() <= b for a, b in spans_usados):
+            continue
+        spans_usados.append(match.span())
+        if display and display not in encontradas:
+            encontradas.append(display)
     return encontradas
 
 
@@ -1249,14 +1314,18 @@ def _consulta_comparativa_con_historial(pregunta, historial=None):
     if not es_followup:
         return pregunta
 
-    # Buscamos hacia atrás el último mensaje del usuario con intención de colocación
-    # o con un riesgo vehicular concreto.
-    for turno in reversed(historial[-12:]):
+    # Un follow-up breve sólo puede heredar el turno de usuario inmediatamente
+    # anterior. Buscar más atrás reactivaba riesgos viejos después de que la
+    # conversación ya había cambiado de tema (p. ej. riesgo -> "hola" ->
+    # "otras alternativas").
+    anterior = ""
+    for turno in reversed(historial):
         if turno.get("rol") != "user":
             continue
         anterior = str(turno.get("contenido") or "").strip()
-        if not anterior:
-            continue
+        if anterior:
+            break
+    if anterior:
         anterior_norm = _normalizar_texto(anterior)
         if (
             _es_consulta_comparativa_companias(anterior)
@@ -1616,27 +1685,10 @@ def buscar_en_internet(consulta):
 
 
 
-
-def resolver_cuit_por_dni(dni, nombre=None):
-    """Tool determinística ARCA: DNI -> CUIT/CUIL. No usa Gemini como base."""
-    return arca_service.resolver_cuit_por_dni(dni, nombre=nombre)
-
-
-def buscar_personas_arca(nombre, limite=10):
-    """Tool determinística ARCA: búsqueda de personas reales por nombre."""
-    return arca_service.buscar_personas_arca(nombre, limite=limite)
-
-
-def estado_padron_arca():
-    return arca_service.estado_padron()
-
 _TOOL_HANDLERS = {
     "consultar_excel": consultar_excel,
     "contar_registros": contar_registros,
     "buscar_registros_estructurados": buscar_registros_estructurados,
-    "resolver_cuit_por_dni": resolver_cuit_por_dni,
-    "buscar_personas_arca": buscar_personas_arca,
-    "estado_padron_arca": estado_padron_arca,
     "analizar_excel": analizar_excel,
     "buscar_en_manuales": buscar_en_manuales,
     "buscar_en_metadatos": buscar_en_metadatos,
@@ -1667,9 +1719,6 @@ def _ejecutar_tool(nombre, argumentos, cache=None):
         "comparar_companias",
         "consultar_excel",
         "buscar_registros_estructurados",
-        "resolver_cuit_por_dni",
-        "buscar_personas_arca",
-        "estado_padron_arca",
         "analizar_excel",
         "buscar_vehiculos",
         "buscar_en_internet",
@@ -1680,9 +1729,6 @@ def _ejecutar_tool(nombre, argumentos, cache=None):
         "comparar_companias",
         "consultar_excel",
         "buscar_registros_estructurados",
-        "resolver_cuit_por_dni",
-        "buscar_personas_arca",
-        "estado_padron_arca",
         "analizar_excel",
         "buscar_vehiculos",
     }
@@ -1836,28 +1882,29 @@ def _resolver_referente_compania(pregunta, historial=None):
         return None
 
     aliases = aliases_companias()
-    # Primero mensajes del usuario, porque suelen fijar el referente más limpio
-    # (ej.: "¿Y Federación?"). Luego asistente como fallback.
-    turnos = list((historial or [])[-10:])
-    for rol in ("user", "assistant"):
-        for turno in reversed(turnos):
-            if turno.get("rol") != rol:
+    # "Esa compañía" sólo puede referirse al contexto conversacional inmediato:
+    # el último turno y, como máximo, el turno anterior (normalmente el par
+    # asistente/usuario). No revivimos una aseguradora mencionada varios temas
+    # atrás. Dentro de cada turno gana la última mención específica.
+    turnos_relevantes = [
+        turno for turno in (historial or [])
+        if turno.get("rol") in {"user", "assistant"}
+        and str(turno.get("contenido") or "").strip()
+    ][-2:]
+    for turno in reversed(turnos_relevantes):
+        contenido = str(turno.get("contenido") or "")
+        contenido_n = _normalizar_texto(contenido)
+        mejores = []
+        for alias, info in aliases.items():
+            alias_n = _normalizar_texto(alias)
+            if not alias_n:
                 continue
-            contenido = str(turno.get("contenido") or "")
-            contenido_n = _normalizar_texto(contenido)
-            mejores = []
-            for alias, info in aliases.items():
-                alias_n = _normalizar_texto(alias)
-                if not alias_n:
-                    continue
-                m = re.search(rf"(?<![a-z0-9]){re.escape(alias_n)}(?![a-z0-9])", contenido_n)
-                if m:
-                    codigo, display = info
-                    mejores.append((m.start(), len(alias_n), display or codigo))
-            if mejores:
-                # La última mención específica dentro del turno gana.
-                mejores.sort(key=lambda x: (x[0], x[1]))
-                return mejores[-1][2]
+            for m in re.finditer(rf"(?<![a-z0-9]){re.escape(alias_n)}(?![a-z0-9])", contenido_n):
+                codigo, display = info
+                mejores.append((m.start(), len(alias_n), display or codigo))
+        if mejores:
+            mejores.sort(key=lambda x: (x[0], x[1]))
+            return mejores[-1][2]
     return None
 
 
@@ -1901,6 +1948,17 @@ def _respuesta_analitica_directa(resultado, pregunta):
         menciona_auto = bool(re.search(r"\bautos?\b|\bautomotores?\b", q))
         menciona_moto = bool(re.search(r"\bmotos?\b|\bmotocicletas?\b|\bmotovehiculos?\b", q))
         pide_comparar = any(x in q for x in ("mas", "menos", "diferencia", "mayor", "menor"))
+
+        # Conteo de una sola clase ya resuelto por Python: no gastar otra
+        # llamada a Gemini ni permitir que el modelo reinterprete la cifra.
+        if menciona_auto != menciona_moto and any(x in q for x in ("cuanto", "cuantos", "cuantas", "cantidad", "total", "tengo", "tenemos", "hay")):
+            cantidad_clase = autos if menciona_auto else motos
+            nombre_clase = "auto" if menciona_auto else "moto"
+            plural_clase = nombre_clase if cantidad_clase == 1 else nombre_clase + "s"
+            base = f"{prefijo}tenés {cantidad_clase} {plural_clase} confirmados en la cartera."
+            if indeterminados:
+                base += f" Hay {indeterminados} registro{'s' if indeterminados != 1 else ''} indeterminado{'s' if indeterminados != 1 else ''} que no cuento como {plural_clase}."
+            return base
 
         if menciona_auto and menciona_moto:
             if pide_comparar:
@@ -1992,15 +2050,19 @@ def _construir_plan_ejecucion(pregunta, historial=None):
         })
         return base
 
-    # Follow-up documental corto: heredamos sólo la consulta mínima de la última
-    # pregunta documental. No heredamos PDF, /flota, resultados ni herramientas.
+    # Follow-up documental corto: sólo el turno de usuario inmediatamente anterior
+    # puede aportar contexto. Antes se buscaba hasta ocho turnos hacia atrás y una
+    # consulta documental vieja podía reaparecer después de cambiar de tema.
     if base.get("intencion") == "general" and _es_followup_breve(pregunta):
-        for turno in reversed(historial[-8:]):
+        anterior = ""
+        for turno in reversed(historial):
             if turno.get("rol") != "user":
                 continue
-            anterior = str(turno.get("contenido") or "").strip()
-            if not anterior or anterior == str(pregunta or "").strip():
-                continue
+            candidato = str(turno.get("contenido") or "").strip()
+            if candidato and candidato != str(pregunta or "").strip():
+                anterior = candidato
+                break
+        if anterior:
             anterior_plan = construir_plan_base(anterior).to_dict()
             if anterior_plan.get("intencion") == "consulta_documental":
                 consulta = f"{anterior}\nSEGUIMIENTO DEL USUARIO: {pregunta}"
@@ -2016,7 +2078,6 @@ def _construir_plan_ejecucion(pregunta, historial=None):
                     "consulta_fuente": consulta,
                     "contexto_heredado": True,
                 })
-                break
     return base
 
 
@@ -2144,7 +2205,11 @@ def _tools_para_plan(plan):
     expone solamente las herramientas que puede necesitar.
     """
     intencion = str(plan.get("intencion") or "general")
-    ejecutadas = set(plan.get("fuentes") or [])
+    # Sólo se quitan tools realmente ejecutadas en el precontexto. Antes se
+    # confundía "fuente planificada" con "fuente ya ejecutada" y, por ejemplo,
+    # contar_registros desaparecía de la allowlist aunque todavía no se hubiera
+    # llamado.
+    ejecutadas = set(plan.get("fuentes_ejecutadas") or [])
     permitidas: set[str] = set()
 
     if intencion == "consulta_documental":
@@ -2193,11 +2258,11 @@ def _mensaje_fuente_interna_no_disponible(error: Exception) -> str | None:
     return None
 
 
-def consultar_gemini(pregunta, contexto="", historial=None, adjunto=None, adjuntos=None):
+def consultar_gemini(pregunta, contexto="", historial=None, adjunto=None, adjuntos=None, on_text_delta=None):
     historial = historial or []
     adjuntos_lista = [a for a in list(adjuntos or ([] if adjunto is None else [adjunto])) if a is not None]
     if not str(contexto or "").strip() and not adjuntos_lista and _es_charla_informal_breve(pregunta):
-        return _consultar_charla_informal(pregunta, historial)
+        return _consultar_charla_informal(pregunta, historial, on_text_delta=on_text_delta)
 
     # El chat interactivo usa timeout propio, menor que el documental. Antes una
     # sola llamada podía tener 30s de timeout dentro de un presupuesto de chat de
@@ -2234,6 +2299,7 @@ def consultar_gemini(pregunta, contexto="", historial=None, adjunto=None, adjunt
             resultado_comparativo = _ejecutar_tool(
                 "comparar_companias", {"consulta": consulta_fuente}, cache=tool_cache
             )
+            plan.setdefault("fuentes_ejecutadas", []).append("comparar_companias")
             contexto_comparativo = _formatear_contexto_comparativo(resultado_comparativo)
         except Exception as error:
             print("ERROR PRECONTEXTO COMPARATIVO:", error)
@@ -2243,6 +2309,7 @@ def consultar_gemini(pregunta, contexto="", historial=None, adjunto=None, adjunt
             resultado_estructurado = _ejecutar_tool(
                 "analizar_excel", {"consulta": consulta_fuente}, cache=tool_cache
             )
+            plan.setdefault("fuentes_ejecutadas", []).append("analizar_excel")
             respuesta_directa = _respuesta_analitica_directa(resultado_estructurado, pregunta)
             if respuesta_directa:
                 return respuesta_directa
@@ -2262,6 +2329,7 @@ def consultar_gemini(pregunta, contexto="", historial=None, adjunto=None, adjunt
                 {"compania": plan.get("referente_compania"), "tipo_conteo": tipo_conteo},
                 cache=tool_cache,
             )
+            plan.setdefault("fuentes_ejecutadas", []).append("contar_registros")
             contexto_estructurado = _formatear_contexto_estructurado({
                 "ok": True,
                 "operacion": "conteo_con_referente",
@@ -2284,6 +2352,7 @@ def consultar_gemini(pregunta, contexto="", historial=None, adjunto=None, adjunt
                 {"consulta": consulta_fuente, "alcance": alcance_busqueda},
                 cache=tool_cache,
             )
+            plan.setdefault("fuentes_ejecutadas", []).append("buscar_en_metadatos")
             contexto_documental_plan = _formatear_contexto_metadatos(resultado_metadatos)
         except Exception as error:
             print("ERROR PRECONTEXTO METADATOS:", error)
@@ -2405,13 +2474,26 @@ def consultar_gemini(pregunta, contexto="", historial=None, adjunto=None, adjunt
                 config_kwargs["thinking_config"] = thinking
             config = types.GenerateContentConfig(**config_kwargs)
             modelos_llamada = (modelo_fijado,) if modelo_fijado else DEFAULT_MODELS
-            respuesta, _modelo_usado = generate_with_fallback(
-                client=cliente,
-                models=modelos_llamada,
-                contents=contents,
-                config=config,
-                log_prefix="GEMINI",
-            )
+            # Streaming real sólo en generaciones textuales sin tools. El tool-loop
+            # conserva exactamente su contrato actual; nunca mostramos una posible
+            # function-call como texto parcial.
+            if on_text_delta is not None and not tools_turno:
+                respuesta, _modelo_usado = generate_stream_with_fallback(
+                    client=cliente,
+                    models=modelos_llamada,
+                    contents=contents,
+                    config=config,
+                    log_prefix="GEMINI",
+                    on_text_delta=on_text_delta,
+                )
+            else:
+                respuesta, _modelo_usado = generate_with_fallback(
+                    client=cliente,
+                    models=modelos_llamada,
+                    contents=contents,
+                    config=config,
+                    log_prefix="GEMINI",
+                )
             if modelo_fijado is None:
                 modelo_fijado = _modelo_usado
         except Exception as error:

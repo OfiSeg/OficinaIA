@@ -23,6 +23,9 @@ import logging
 import traceback
 import csv
 import time
+import threading
+import queue
+import contextvars
 from contextlib import closing
 from werkzeug.security import generate_password_hash, check_password_hash
 from werkzeug.utils import secure_filename
@@ -108,6 +111,7 @@ import mercantil_quote_service
 import mercantil_cotizador
 import federacion_quote_service
 import quote_normalizer
+import cotizacion_document_service
 import alta_ops
 from flota_store import FlotaStore
 from chat_store import ChatStore
@@ -459,6 +463,10 @@ def contexto_usuario():
         "chat_shortcuts_global": config_service.resolver_chat_shortcuts(config),
         "brand_icon_src": config_service.resolver_icono_marca,
         "static_asset": static_asset,
+        # La navegación vuelve a ser documental/completa. La capa parcial
+        # provocaba dobles requests al caer al fallback y dejaba módulos con
+        # ciclos de inicialización incompletos.
+        "base_template": "base.html",
     }
 
 app.context_processor(contexto_usuario)
@@ -1043,6 +1051,20 @@ def api_federacion_leer_pdf():
         return jsonify({"ok": False, "error": "No pude leer el PDF de Federación Patronal en este intento."}), 500
 
 
+@app.route("/api/cotizaciones/companias", methods=["GET"])
+@requiere_login
+def api_cotizaciones_companias():
+    """Catálogo editable de compañía basado únicamente en logos_manifest.json."""
+    catalogo = cotizacion_document_service.catalogo_companias(
+        BASE_DIR / "static" / "img" / "companias"
+    )
+    for item in catalogo:
+        item["logo_url"] = url_for(
+            "static", filename=f"img/companias/{item.pop('file')}"
+        )
+    return jsonify({"ok": True, "companias": catalogo})
+
+
 @app.route("/api/cotizaciones/leer-pdf", methods=["POST"])
 @requiere_login
 def api_cotizaciones_leer_pdf():
@@ -1115,6 +1137,85 @@ def api_cotizaciones_normalizar_texto():
     except Exception as error:
         logger.exception("Error normalizando texto de cotización: %s", error)
         return jsonify({"ok": False, "error": "No pude normalizar esa cotización en este intento."}), 500
+
+
+@app.route("/api/cotizaciones/generar-documento", methods=["POST"])
+@requiere_login
+def api_cotizaciones_generar_documento():
+    """Genera la carta institucional desde los datos ya normalizados del cotizador.
+
+    El Word es canónico. PDF deriva del DOCX y PNG/JPG derivan del PDF.
+    Este endpoint no consulta Gemini ni vuelve a interpretar archivos fuente.
+    """
+    from tempfile import TemporaryDirectory
+    import zipfile
+
+    data = request.get_json(silent=True) or {}
+    formato = str(data.get("formato") or "docx").strip().lower()
+    if formato == "word":
+        formato = "docx"
+    if formato not in cotizacion_document_service.FORMATOS_SOPORTADOS:
+        return jsonify({"ok": False, "error": "Formato inválido. Usá WORD, PDF, PNG o JPG."}), 400
+
+    propuesta = data.get("propuesta")
+    service = cotizacion_document_service.CotizacionDocumentService(
+        template_path=BASE_DIR / "plantillas" / "word final.docx",
+        logos_dir=BASE_DIR / "static" / "img" / "companias",
+    )
+    try:
+        propuesta = service.validar_datos(propuesta)
+        base_name = service.nombre_base(propuesta, office_today())
+        with TemporaryDirectory(prefix="oficinaia_cotizacion_") as tmp_raw:
+            tmp = Path(tmp_raw)
+            docx_path = service.generar_docx(propuesta, tmp / f"{base_name}.docx")
+
+            warning_fonts = tuple()
+            if formato == "docx":
+                payload = docx_path.read_bytes()
+                download_name = docx_path.name
+                mimetype = "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+            else:
+                warning_fonts = cotizacion_document_service.fuentes_requeridas_faltantes()
+                pdf_path = service.convertir_pdf(docx_path, tmp)
+                if formato == "pdf":
+                    payload = pdf_path.read_bytes()
+                    download_name = f"{base_name}.pdf"
+                    mimetype = "application/pdf"
+                else:
+                    image_paths = service.generar_imagenes(pdf_path, tmp / "imagenes", formato)
+                    if len(image_paths) == 1:
+                        image_path = image_paths[0]
+                        payload = image_path.read_bytes()
+                        download_name = f"{base_name}_01.{formato}"
+                        mimetype = "image/png" if formato == "png" else "image/jpeg"
+                    else:
+                        zip_path = tmp / f"{base_name}_{formato.upper()}.zip"
+                        with zipfile.ZipFile(zip_path, "w", compression=zipfile.ZIP_DEFLATED) as zf:
+                            for i, image_path in enumerate(image_paths, start=1):
+                                zf.write(image_path, arcname=f"{base_name}_{i:02d}.{formato}")
+                        payload = zip_path.read_bytes()
+                        download_name = zip_path.name
+                        mimetype = "application/zip"
+
+        response = send_file(
+            BytesIO(payload),
+            mimetype=mimetype,
+            as_attachment=True,
+            download_name=download_name,
+            max_age=0,
+        )
+        if warning_fonts:
+            # No ocultar una sustitución tipográfica del conversor headless.
+            response.headers["X-OficinaIA-Font-Warning"] = ",".join(warning_fonts)
+        return response
+    except cotizacion_document_service.CotizacionDocumentError as error:
+        return jsonify({"ok": False, "error": str(error)}), 400
+    except cotizacion_document_service.CotizacionConversionError as error:
+        logger.warning("Conversión documental de cotización no disponible: %s", error)
+        return jsonify({"ok": False, "error": str(error)}), 503
+    except Exception as error:
+        logger.exception("Error generando documento de cotización: %s", error)
+        return jsonify({"ok": False, "error": "No pude generar la carta de cotización en este intento."}), 500
 
 
 @app.route("/api/cotizaciones/leer-imagen", methods=["POST"])
@@ -2163,18 +2264,15 @@ def chat():
     # sea presentado como "el de hoy" por una búsqueda aproximada.
     if not adjuntos_actuales:
         try:
-            respuesta_contexto = excel_conversation_context.responder_followup_registro(
+            respuesta_contexto = excel_conversation_context.responder_consulta_directa(
                 mensaje, session_obj=session, chat_id=chat_id
             )
-            if respuesta_contexto is None:
-                respuesta_contexto = excel_conversation_context.responder_conteo_temporal(
-                    mensaje, session_obj=session, chat_id=chat_id
-                )
             if respuesta_contexto is not None:
-                _guardar_mensaje(chat_id, "assistant", str(respuesta_contexto))
+                assistant_message_id = _guardar_mensaje(chat_id, "assistant", str(respuesta_contexto))
                 return jsonify({
                     "respuesta": respuesta_contexto,
                     "chat_id": chat_id,
+                    "assistant_message_id": assistant_message_id,
                     "archivo_adjunto": nombre_adjunto or None,
                     "propuesta_excel": None,
                     "propuesta_metadato": None,
@@ -2210,7 +2308,7 @@ def chat():
     # Un adjunto nuevo invalida el alta conversacional previa. Si el nuevo
     # archivo es póliza, el handler establece inmediatamente la nueva.
     if adjunto_actual is not None:
-        chat_state.limpiar(session, "alta_activa")
+        chat_state.limpiar(session, "alta_activa", chat_id=chat_id)
 
     especial = chat_special.procesar(
         chat_id=chat_id,
@@ -2248,8 +2346,6 @@ def chat():
     # COMANDOS DETERMINÍSTICOS — /envios ya, /guardar asegurado
     # ======================================================
     arca_context_activo = chat_state.obtener(session, "arca_context", chat_id=chat_id)
-    source_choice_pending = chat_state.obtener(session, "source_choice_pending", chat_id=chat_id)
-
     comando = chat_commands.procesar(
         mensaje,
         leer_excel=leer_excel_interno,
@@ -2257,7 +2353,6 @@ def chat():
         libros_excel=LIBROS_EXCEL,
         historial=historial,
         arca_context=arca_context_activo,
-        source_choice_pending=source_choice_pending,
         adjuntos=adjuntos_actuales,
     )
     if comando.atendido:
@@ -2265,21 +2360,11 @@ def chat():
             # Compatibilidad con el endpoint de confirmación existente.
             # El destino vive sólo hasta el próximo turno.
             session["guardar_asegurado_libro_id"] = comando.libro_id
-        if isinstance(comando.payload_extra, dict) and comando.payload_extra.get("source_choice_pending"):
-            chat_state.guardar(
-                session, "source_choice_pending",
-                dict(comando.payload_extra.get("source_choice_pending") or {}),
-                chat_id=chat_id,
-            )
-        if isinstance(comando.payload_extra, dict) and comando.payload_extra.get("clear_source_choice"):
-            chat_state.limpiar(session, "source_choice_pending")
-        if isinstance(comando.payload_extra, dict) and comando.payload_extra.get("source_selected") == "CARTERA":
-            chat_state.cambiar_fuente(session, "CARTERA")
         if isinstance(comando.payload_extra, dict) and comando.payload_extra.get("arca_context"):
             # Si ARCA fue la fuente realmente usada, pasa a ser el contexto activo
             # de ESTE chat y se invalida el conjunto conversacional de cartera.
             nuevo_arca_context = dict(comando.payload_extra.get("arca_context") or {})
-            chat_state.cambiar_fuente(session, "ARCA")
+            chat_state.cambiar_fuente(session, "ARCA", chat_id=chat_id)
             chat_state.guardar(session, "arca_context", nuevo_arca_context, chat_id=chat_id)
         ui_payload = {
             "propuesta_excel": comando.propuesta_excel,
@@ -2375,6 +2460,133 @@ def chat():
 
     propuesta_excel = None
     propuesta_metadato = None
+
+    # Performance percibida: para el tramo final de chat, el navegador puede
+    # pedir NDJSON incremental. La lógica de router/tools no
+    # cambia: servicios_ia sólo usa streaming del proveedor cuando la generación
+    # textual de esa vuelta NO expone tools. Si hay tools, el mismo worker espera
+    # su resultado normal y el evento ``done`` conserva el contrato histórico.
+    quiere_stream = request.headers.get("X-Chat-Stream") == "1"
+
+    if quiere_stream:
+        eventos = queue.Queue()
+        contexto_vars = contextvars.copy_context()
+        request_id_stream = getattr(g, "chat_request_id", "-")
+
+        def _worker_chat_stream():
+            """Genera y persiste aunque el navegador abandone la vista del chat.
+
+            La navegación parcial puede cancelar el fetch del cliente. La respuesta
+            del asistente no debe quedar sin guardar por depender de que el browser
+            siga consumiendo el generador HTTP, así que la persistencia pertenece al
+            worker que termina el turno y no al iterador de la conexión.
+            """
+            try:
+                logger.info("CHAT[%s] Gemini streaming inicio", request_id_stream)
+                resultado = chat_ai.responder(
+                    mensaje, contexto, historial,
+                    adjunto=(adjuntos_para_ia[0] if adjuntos_para_ia else None),
+                    adjuntos=adjuntos_para_ia,
+                    on_text_delta=lambda delta: eventos.put(("delta", str(delta))),
+                )
+                ui_stream = {
+                    "propuesta_excel": resultado.propuesta_excel,
+                    "propuesta_metadato": resultado.propuesta_metadato,
+                }
+                message_id = _guardar_mensaje(
+                    chat_id, "assistant", str(resultado.respuesta), metadata={"ui": ui_stream}
+                )
+                logger.info(
+                    "CHAT[%s] Gemini streaming fin %.2fs; respuesta guardada chat_id=%s",
+                    request_id_stream, resultado.elapsed, chat_id,
+                )
+                eventos.put(("result", (resultado, message_id)))
+            except Exception as error:
+                system_health.registrar_evento("ia", "error", "No se pudo responder", str(error))
+                logger.exception("CHAT[%s] Gemini streaming falló: %s", request_id_stream, error)
+                respuesta_error = (
+                    "Encontré información relacionada en el archivo adjunto, pero no pude "
+                    "completar el análisis con la IA en este momento. Intentá nuevamente."
+                    if contexto else
+                    "No pude completar la consulta con la IA en este momento. "
+                    "Intentá nuevamente en unos segundos."
+                )
+                try:
+                    message_id = _guardar_mensaje(chat_id, "assistant", respuesta_error)
+                    eventos.put(("fallback", (respuesta_error, message_id)))
+                except Exception as persist_error:
+                    logger.exception(
+                        "CHAT[%s] no pudo persistir fallback streaming: %s",
+                        request_id_stream, persist_error,
+                    )
+                    eventos.put(("error", persist_error))
+
+        hilo = threading.Thread(
+            target=lambda: contexto_vars.run(_worker_chat_stream),
+            name=f"chat-stream-{chat_id}",
+            daemon=True,
+        )
+        hilo.start()
+
+        @stream_with_context
+        def _generar_chat_stream():
+            resultado_ia = None
+            respuesta_fallback = None
+            assistant_message_id = None
+            error_ia = None
+            while True:
+                tipo, valor = eventos.get()
+                if tipo == "delta":
+                    yield json.dumps(
+                        {"type": "delta", "text": valor}, ensure_ascii=False
+                    ) + "\n"
+                    continue
+                if tipo == "result":
+                    resultado_ia, assistant_message_id = valor
+                    break
+                if tipo == "fallback":
+                    respuesta_fallback, assistant_message_id = valor
+                    break
+                if tipo == "error":
+                    error_ia = valor
+                    break
+
+            propuesta_excel_stream = None
+            propuesta_metadato_stream = None
+            if resultado_ia is not None:
+                respuesta_stream = resultado_ia.respuesta
+                propuesta_excel_stream = resultado_ia.propuesta_excel
+                propuesta_metadato_stream = resultado_ia.propuesta_metadato
+            elif respuesta_fallback is not None:
+                respuesta_stream = respuesta_fallback
+            else:
+                yield json.dumps({
+                    "type": "error",
+                    "error": _mensaje_error_chat(error_ia) if error_ia else "No se pudo completar la respuesta.",
+                }, ensure_ascii=False) + "\n"
+                return
+
+            logger.info("CHAT[%s] etapa=respuesta_guardada chat_id=%s", request_id_stream, chat_id)
+            payload_final = {
+                "type": "done",
+                "respuesta": respuesta_stream,
+                "chat_id": chat_id,
+                "assistant_message_id": assistant_message_id,
+                "archivo_adjunto": nombre_adjunto or None,
+                "propuesta_excel": propuesta_excel_stream,
+                "propuesta_metadato": propuesta_metadato_stream,
+            }
+            yield json.dumps(payload_final, ensure_ascii=False) + "\n"
+
+        return Response(
+            _generar_chat_stream(),
+            content_type="application/x-ndjson; charset=utf-8",
+            headers={
+                "Cache-Control": "no-cache, no-transform",
+                "X-Accel-Buffering": "no",
+            },
+        )
+
     try:
         logger.info("CHAT[%s] Gemini inicio", getattr(g, "chat_request_id", "-"))
         resultado_ia = chat_ai.responder(
