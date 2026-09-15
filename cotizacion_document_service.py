@@ -320,6 +320,13 @@ def _contenido_canonico_por_familia(alt: dict, contenidos: list[dict]) -> list[d
 
     riesgos = {str(x or "").strip().upper() for x in (alt.get("riesgos_detectados") or []) if str(x or "").strip()}
 
+    # Las exclusiones explícitas son invariantes del modelo y dominan cualquier
+    # detección textual previa. Una fuente puede contener la palabra GRANIZO en
+    # expresiones como "S/GRANIZO"; eso nunca debe reintroducir la prestación.
+    granizo_estado = _normalizar_clave(alt.get("granizo_estado"))
+    if granizo_estado in {"no incluye", "sin granizo", "no"}:
+        riesgos.discard("GRANIZO")
+
     # Los hechos estructurados tienen prioridad sobre la familia. La familia es
     # sólo fallback cuando la fuente no entregó un núcleo de riesgos usable.
     # Esto evita que una normalización genérica vuelva a reinterpretar y pise
@@ -388,10 +395,15 @@ def _contenido_canonico_por_familia(alt: dict, contenidos: list[dict]) -> list[d
             continue
         agregar(texto)
 
-    # Granizo Allianz: atributo independiente del nombre/producto.
-    granizo_estado = _normalizar_clave(alt.get("granizo_estado"))
+    # Granizo es un atributo independiente del nombre/producto. La exclusión
+    # explícita ya dominó riesgos_detectados arriba; INCLUYE puede agregarlo.
     if granizo_estado == "incluye":
         agregar("Granizo")
+    elif granizo_estado in {"no incluye", "sin granizo", "no"}:
+        salida = [x for x in salida if not (
+            x.get("tipo") == "beneficio" and
+            _normalizar_clave(x.get("texto")) in {"granizo", "incluye granizo"}
+        )]
 
     variante_grua = _normalizar_clave(alt.get("variante_grua"))
     tiene_grua = alt.get("tiene_grua")
@@ -934,7 +946,10 @@ class CotizacionDocumentService:
         # Si no entran al final de una página, Word/LibreOffice mueve ambos a la
         # siguiente: nunca queda un logo huérfano ni se repite por tblHeader.
         first_row = table.rows[0]
-        self._fila_no_dividir(first_row)
+        # La fila exterior puede fluir entre páginas. El encabezado conserva
+        # keep_with_next y el bloque interno de cobertura sigue siendo
+        # indivisible; así evitamos tanto logos huérfanos como media página
+        # vacía por mover un bloque exterior completo.
         first_cell = first_row.cells[0]
         self._encabezado_compania_en_celda(first_cell, grupo["compania"], primera=primera)
         self._agregar_cobertura_en_celda(first_cell, alternativas[0], ultima=len(alternativas) == 1, despues_de_encabezado=True)
@@ -1073,7 +1088,9 @@ class CotizacionDocumentService:
             ppr.remove(old)
         frame = OxmlElement("w:framePr")
         frame.set(qn("w:wrap"), "notBeside")
-        frame.set(qn("w:vAnchor"), "page")
+        # Anclar al área útil (márgenes), no al borde físico de la hoja: evita
+        # que LibreOffice recorte la firma al rasterizar PDF/JPG.
+        frame.set(qn("w:vAnchor"), "margin")
         frame.set(qn("w:hAnchor"), "margin")
         frame.set(qn("w:yAlign"), "bottom")
         frame.set(qn("w:xAlign"), "center")
@@ -1095,6 +1112,8 @@ class CotizacionDocumentService:
         seguros = next((p for p in paragraphs[idx + 1 :] if p.text.strip() == "Seguros San José"), None)
         if not seguros:
             raise CotizacionDocumentError("La plantilla no contiene la firma 'Seguros San José' del cierre.")
+        # El cierre institucional queda al pie únicamente de la última página.
+        # No interviene en la paginación de las coberturas.
         self._frame_pr_cierre(gracias)
         self._frame_pr_cierre(seguros)
 
@@ -1106,6 +1125,8 @@ class CotizacionDocumentService:
         self._validar_plantilla(doc)
         marker = next(p for p in doc.paragraphs if MARCADOR in p.text)
         self._aplicar_cierre_institucional(doc, marker)
+        if datos.get("vehiculo"):
+            self._agregar_linea_meta(marker, "Vehículo", datos["vehiculo"], keep_with_next=True)
 
         # Una compañía se presenta como una sección. Agrupamos por identidad
         # canónica preservando el orden de primera aparición de cada compañía.

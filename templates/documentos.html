@@ -273,12 +273,12 @@
         <input id="notaTitulo" required maxlength="80" placeholder="Ej: Terceros Completos">
       </label>
       <label>Contenido
-        <textarea id="notaContenido" rows="5" style="width:100%;margin-top:5px;padding:9px 11px;border:1px solid var(--line);border-radius:8px;font-size:calc(13px * var(--font-scale,1));resize:vertical" placeholder="Lo que querés tener a mano…"></textarea>
+        <textarea id="notaContenido" rows="5" class="oia-modal-textarea" placeholder="Lo que querés tener a mano…"></textarea>
       </label>
       <p id="notaModalError"></p>
-      <div style="display:flex;gap:8px;margin-top:6px">
-        <button type="submit" class="primary" style="flex:1;height:40px">Guardar</button>
-        <button type="button" class="secondary danger-text" id="notaEliminar" style="height:40px;display:none">Eliminar</button>
+      <div class="oia-modal-actions">
+        <button type="submit" class="primary oia-modal-submit">Guardar</button>
+        <button type="button" class="secondary danger-text" id="notaEliminar" hidden>Eliminar</button>
       </div>
     </form>
   </div>

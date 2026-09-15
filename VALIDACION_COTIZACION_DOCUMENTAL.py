@@ -94,6 +94,7 @@ def validar_docx(path: Path, *, logos_esperados: int, baseline_shapes: int, comp
     check("undefined" not in low and "null" not in low, "Aparecieron valores vacíos inválidos.")
     check("%%" not in text, "La franquicia duplicó el signo de porcentaje.")
     check("$ " not in text, "Quedó un espacio inconsistente después del signo $.")
+    check("Vehículo" in text, "El documento no renderiza la identificación del vehículo.")
     for estilo in ESTILOS_REQUERIDOS:
         check(estilo in doc.styles, f"Se perdió el estilo Word {estilo}.")
     check(len(doc.inline_shapes) == baseline_shapes + logos_esperados, "Cantidad inesperada de logos en el Word.")
@@ -110,8 +111,11 @@ def validar_docx(path: Path, *, logos_esperados: int, baseline_shapes: int, comp
         check(len(table.rows) >= 1, "Una sección de compañía quedó vacía.")
         first_row = table.rows[0]
         first_tr_pr = first_row._tr.trPr
-        check(first_tr_pr is not None and first_tr_pr.find(qn("w:cantSplit")) is not None, "Logo + primera cobertura pueden separarse entre páginas.")
-        check(first_tr_pr.find(qn("w:tblHeader")) is None, "El logo volvió a configurarse como encabezado repetible.")
+        # La fila exterior debe poder fluir; el bloque interno de cobertura es
+        # el que permanece indivisible. Esto evita huecos gigantes de página.
+        if first_tr_pr is not None:
+            check(first_tr_pr.find(qn("w:cantSplit")) is None, "La fila exterior volvió a bloquear la paginación.")
+            check(first_tr_pr.find(qn("w:tblHeader")) is None, "El logo volvió a configurarse como encabezado repetible.")
         header_cell = first_row.cells[0]
         header_p = header_cell.paragraphs[0]
         p_pr = header_p._p.pPr
@@ -137,7 +141,7 @@ def validar_docx(path: Path, *, logos_esperados: int, baseline_shapes: int, comp
     check(cierres[-2].text.strip() == "Gracias por elegirnos" and cierres[-1].text.strip() == "Seguros San José", "Las dos líneas del cierre no forman el último bloque.")
     for p in cierres[-2:]:
         frame = p._p.pPr.find(qn("w:framePr")) if p._p.pPr is not None else None
-        check(frame is not None and frame.get(qn("w:yAlign")) == "bottom", "El cierre no quedó anclado al pie.")
+        check(frame is not None and frame.get(qn("w:yAlign")) == "bottom", "El cierre no quedó anclado al pie de la última página.")
 
 
 def paginas_pdf(path: Path) -> int:
@@ -166,6 +170,17 @@ def main():
     con_logo = [x["key"] for x in catalogo if x.get("file")]
     check(con_logo[:7] == ["atm", "federacion_patronal", "mercantil_andina", "san_cristobal", "agrosalta", "rivadavia", "allianz"], "Las compañías documentales existentes perdieron orden o identidad.")
     check(normalizar_porcentaje("2%%") == "2%", "Falló la normalización pública de porcentaje.")
+    # Invariantes semánticas: una exclusión explícita domina cualquier
+    # detección textual contradictoria. Este caso reproduce el fallo real de
+    # Allianz S/GRANIZO observado en la salida Nissan Tiida.
+    sin_granizo = normalizar_cobertura_para_carta({
+        "compania": "Allianz", "familia": "C", "nombre": "Clásica Segmentada",
+        "variante_comercial": "S/GRANIZO", "granizo_estado": "NO_INCLUYE",
+        "riesgos_detectados": ["RESPONSABILIDAD_CIVIL", "GRANIZO"],
+        "contenidos": [{"tipo": "beneficio", "texto": "Granizo"}],
+    })
+    beneficios_sg = [x["texto"].lower() for x in sin_granizo["contenidos"] if x.get("tipo") == "beneficio"]
+    check("granizo" not in beneficios_sg and "incluye granizo" not in beneficios_sg, "S/GRANIZO volvió a imprimir Granizo.")
     base_doc = Document(TEMPLATE)
     baseline_shapes = len(base_doc.inline_shapes)
 

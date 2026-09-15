@@ -2908,6 +2908,10 @@ function contenidosCanonicosCotizacion(items,familia,riesgosDetectados=[],servic
   const notas=limpios.filter(x=>x.tipo==='nota'),beneficios=limpios.filter(x=>x.tipo!=='nota');
   const out=[],vistos=new Set();const add=texto=>{const txt=String(texto||'').trim(),key=normalizarClaveMarca(txt);if(txt&&key&&!vistos.has(key)){out.push({tipo:'beneficio',texto:txt});vistos.add(key)}};
   const riesgos=new Set((riesgosDetectados||[]).map(x=>String(x||'').trim().toUpperCase()).filter(Boolean));
+  // Una exclusión explícita domina cualquier detección textual previa.
+  // Evita, por ejemplo, que "S/GRANIZO" termine generando el beneficio Granizo.
+  const granizoKey=normalizarClaveMarca(granizoEstado);
+  if(['no incluye','sin granizo','no'].includes(granizoKey))riesgos.delete('GRANIZO');
   // Hechos estructurados primero; familia sólo como fallback. Así una familia
   // común no vuelve a reinterpretar una variante que la fuente ya resolvió.
   const coreIds=['RESPONSABILIDAD_CIVIL','INCENDIO_TOTAL','INCENDIO_PARCIAL','ROBO_HURTO_TOTAL','ROBO_HURTO_PARCIAL','ROBO_PARCIAL_AMPARO_TOTAL','DESTRUCCION_TOTAL_ACCIDENTE','DANOS_PARCIALES_ACCIDENTE'];
@@ -2938,7 +2942,13 @@ function contenidosCanonicosCotizacion(items,familia,riesgosDetectados=[],servic
   });
   detalles.forEach(add);
   beneficios.filter(x=>!esBeneficioNucleoCotizacion(x.texto)).forEach(x=>{const key=normalizarClaveMarca(x.texto);const tokens=['ruedas','vidrios','granizo','cerraduras'].filter(t=>key.includes(t));if(tokens.length>=2&&tokens.every(t=>vistos.has(t)))return;add(x.texto)});
-  if(normalizarClaveMarca(granizoEstado)==='incluye')add('Granizo');
+  if(granizoKey==='incluye')add('Granizo');
+  else if(['no incluye','sin granizo','no'].includes(granizoKey)){
+    for(let i=out.length-1;i>=0;i--){
+      const k=normalizarClaveMarca(out[i]?.texto);
+      if(out[i]?.tipo!=='nota'&&['granizo','incluye granizo'].includes(k))out.splice(i,1);
+    }
+  }
   const vg=normalizarClaveMarca(varianteGrua);if(typeof servicioGrua==='boolean'&&!['con grua','sin grua'].includes(vg))add(servicioGrua?'Incluye grúa':'Sin grúa');
   notas.forEach(x=>{const key=normalizarClaveMarca(x.texto);if(key&&!vistos.has(key)){out.push(x);vistos.add(key)}});
   return out;
