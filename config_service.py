@@ -6,44 +6,48 @@ from pathlib import Path
 from typing import Callable, Iterable
 from urllib.parse import quote
 
+from companias import aliases_companias, nombre_compania, companias_sidebar_default as registro_sidebar_default
 
 
-
-# Identidad visual y aliases separados de la URL de acceso.
-# Son valores iniciales editables: la UI nunca depende de que el portal de
-# productores publique un favicon correcto.
+# Identidad visual separada de la URL de acceso, pero derivada del mismo
+# registro canónico de compañías. De esta forma favicon, aliases y color no
+# mantienen una segunda taxonomía en Configuración.
+_SIDEBAR_COMPANY_SEED = registro_sidebar_default()
 DEFAULT_COMPANY_BRANDS = {
-    "self": {
-        "icon_url": "https://www.fedpat.com.ar/",
-        "color": "#1976A8",
-        "aliases": ["Self", "Federación Patronal", "Federacion Patronal", "FedPat"],
-    },
-    "atm": {
-        "icon_url": "https://atmseguros.com.ar/",
-        "color": "#D9363E",
-        "aliases": ["ATM", "ATM Seguros"],
-    },
-    "triunfo": {
-        "icon_url": "https://triunfoseguros.com/",
-        "color": "#D9364A",
-        "aliases": ["Triunfo", "Triunfo Seguros"],
-    },
-    "mercantil-andina": {
-        "icon_url": "https://mercantilandina.com.ar/",
-        "color": "#17879A",
-        "aliases": ["Mercantil Andina", "La Mercantil Andina", "Mercantil", "MA"],
-    },
-    "rivadavia": {"aliases": ["Rivadavia", "Seguros Rivadavia"]},
-    "prof": {"aliases": ["Prof", "PROF", "Prof Seguros"]},
-    "ags": {
-        "icon_url": "https://agrosaltaseguros.net/",
-        "color": "#FF931E",
-        "aliases": ["Ags", "AGS", "AgroSalta", "Agrosalta", "Agro Salta"],
-    },
-    "san-cristobal": {"aliases": ["San Cristobal", "San Cristóbal", "San Cristobal Seguros", "San Cristóbal Seguros"]},
-    "euroamerica": {"aliases": ["EuroAmerica", "Euro America"]},
-    "allianz": {"aliases": ["Allianz"]},
+    str(item.get("id") or ""): {
+        "icon_url": str(item.get("icon_url") or ""),
+        "color": str(item.get("color") or ""),
+        "aliases": list(item.get("aliases") or []),
+    }
+    for item in _SIDEBAR_COMPANY_SEED
+    if str(item.get("id") or "").strip()
 }
+
+_COMPANY_BRAND_CANONICAL = {
+    str(item.get("id") or ""): nombre_compania(item.get("nombre") or "")
+    for item in _SIDEBAR_COMPANY_SEED
+    if str(item.get("id") or "").strip()
+}
+
+
+def _aplicar_aliases_canonicos_marcas():
+    aliases = aliases_companias()
+    for brand_id, referencia in _COMPANY_BRAND_CANONICAL.items():
+        meta = DEFAULT_COMPANY_BRANDS.get(brand_id)
+        if not isinstance(meta, dict):
+            continue
+        display = nombre_compania(referencia)
+        canonicos = [alias for alias, (_codigo, nombre) in aliases.items() if nombre == display]
+        actuales = list(meta.get("aliases") or [])
+        vistos = {str(x).casefold() for x in actuales}
+        for alias in [display, *canonicos]:
+            if alias and alias.casefold() not in vistos:
+                actuales.append(alias)
+                vistos.add(alias.casefold())
+        meta["aliases"] = actuales
+
+
+_aplicar_aliases_canonicos_marcas()
 
 DEFAULT_TOOL_BRANDS = {
     "gmail": {"icon_url": "/static/img/herramientas/gmail.png", "aliases": ["Gmail", "Google Mail"]},
@@ -126,18 +130,7 @@ def resolver_icono_marca(item: dict | None):
     return ""
 
 
-DEFAULT_CIAS_LINKS = [
-    ("Self", "https://online.fedpat.com.ar/self/index.jsp"),
-    ("ATM", "https://extranet.atmseguros.com.ar/ATM_COM_PROD/servlet/ar.com.glmsa.seguros.comercial.hlogin"),
-    ("Rivadavia", "https://www.sistemas.segurosrivadavia.com/sistemas/login/login_intra_pas.php?u=P"),
-    ("Triunfo", "https://www.triunfonet.com.ar/gauswebtriunfo/servlet/hlogon"),
-    ("Prof", "https://pasnet.profseguros.seg.ar/Default.aspx"),
-    ("Ags", "https://www.agsnet.com.ar/ingreprod.php"),
-    ("San Cristobal", "https://productores.sancristobal.com.ar/"),
-    ("Mercantil Andina", "https://servicios.mercantilandina.com.ar/sigmav3/"),
-    ("EuroAmerica", "https://pas.euroamericaseguros.seg.ar/login"),
-    ("Allianz", "https://auth.allianz.com.ar/login"),
-]
+DEFAULT_CIAS_LINKS = [(item["nombre"], item["url"]) for item in registro_sidebar_default()]
 
 
 SIDEBAR_ORDER_DEFAULT = [
@@ -227,11 +220,9 @@ def _normalizar_sidebar_order(value):
 
 
 def companias_sidebar_default():
-    salida = []
-    for i, (nombre, url) in enumerate(DEFAULT_CIAS_LINKS):
-        ident = re.sub(r"[^a-z0-9_-]+", "-", str(nombre).lower()).strip("-") or f"compania-{i+1}"
-        salida.append(_enriquecer_item_marca({"id": ident, "nombre": nombre, "url": url, "visible": True}, "compania"))
-    return salida
+    # Los accesos iniciales salen del registro canónico de compañías; acá sólo
+    # se aplica la forma visual/configurable que espera la UI.
+    return [_enriquecer_item_marca(dict(item), "compania") for item in registro_sidebar_default()]
 
 
 def herramientas_legacy_a_lista(visibles=None, urls=None):

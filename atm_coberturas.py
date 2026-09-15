@@ -35,6 +35,9 @@ def _entry(
     tipo_vehiculo: str = "auto",
     tooltip: str | None = None,
     franquicia_visible: str = "",
+    riesgos_detectados=(),
+    beneficios_adicionales=(),
+    detalle_tecnico=(),
 ):
     return {
         "codigo": codigo,
@@ -54,14 +57,26 @@ def _entry(
         "orden": int(orden),
         "tipo_vehiculo": tipo_vehiculo,
         "tooltip": tooltip or titulo_atm,
+        "riesgos_detectados": list(riesgos_detectados),
+        "beneficios_adicionales": list(beneficios_adicionales),
+        "detalle_tecnico": list(detalle_tecnico),
     }
 
 
-_C_DESC = (
-    "Te cubre responsabilidad civil, incendio total y parcial, robo total y parcial "
-    "y destrucción total por accidente. Además incluye ruedas, vidrios, granizo y "
-    "cerraduras. Incluye grúa."
-)
+# Riesgos canónicos compartidos con el normalizador universal. Se conservan como
+# strings para que este catálogo siga siendo determinístico y desacoplado.
+RC = "RESPONSABILIDAD_CIVIL"
+DT_ACC = "DESTRUCCION_TOTAL_ACCIDENTE"
+DP_ACC = "DANOS_PARCIALES_ACCIDENTE"
+INC_T = "INCENDIO_TOTAL"
+INC_P = "INCENDIO_PARCIAL"
+ROB_T = "ROBO_HURTO_TOTAL"
+ROB_P = "ROBO_HURTO_PARCIAL"
+RUEDAS = "RUEDAS"
+VIDRIOS = "VIDRIOS"
+GRANIZO = "GRANIZO"
+CERRADURAS = "CERRADURAS"
+GRUA = "GRUA"
 
 # Orden VISUAL fijo AUTOS. La familia B contiene exactamente seis coberturas: B + B1..B5.
 CATALOGO_CODIGOS_ATM = OrderedDict([
@@ -74,6 +89,7 @@ CATALOGO_CODIGOS_ATM = OrderedDict([
             "Incluye grúa."
         ),
         grua=True,
+        riesgos_detectados=(RC, GRUA),
         orden=10,
     )),
     ("A1", _entry(
@@ -85,6 +101,7 @@ CATALOGO_CODIGOS_ATM = OrderedDict([
             "Sin grúa."
         ),
         grua=False,
+        riesgos_detectados=(RC,),
         orden=20,
     )),
     ("B", _entry(
@@ -96,10 +113,12 @@ CATALOGO_CODIGOS_ATM = OrderedDict([
         ),
         nombre_cliente="Robo e Incendio Total y/o Parcial + Accidente Total",
         descripcion_cliente=(
-            "Cubre robo e incendio total y parcial, más destrucción total por accidente. "
-            "Incluye grúa."
+            "Responsabilidad Civil\nIncendio Total y Parcial\nRobo/Hurto Total y Parcial\n"
+            "Destrucción Total por Accidente\nReposición de 1 rueda por año con depreciación\nIncluye grúa"
         ),
         grua=True,
+        riesgos_detectados=(RC, INC_T, INC_P, ROB_T, ROB_P, DT_ACC, RUEDAS, GRUA),
+        beneficios_adicionales=("Reposición de 1 rueda por año con depreciación",),
         orden=30,
     )),
     ("B1", _entry(
@@ -109,8 +128,13 @@ CATALOGO_CODIGOS_ATM = OrderedDict([
             "ROBO E INCENDIO TOTAL O PARCIAL",
         ),
         nombre_cliente="Robo e Incendio Total y/o Parcial",
-        descripcion_cliente="Cubre robo e incendio total y parcial. Incluye grúa.",
+        descripcion_cliente=(
+            "Responsabilidad Civil\nIncendio Total y Parcial\nRobo/Hurto Total y Parcial\n"
+            "Reposición de 1 rueda por año con depreciación\nIncluye grúa"
+        ),
         grua=True,
+        riesgos_detectados=(RC, INC_T, INC_P, ROB_T, ROB_P, RUEDAS, GRUA),
+        beneficios_adicionales=("Reposición de 1 rueda por año con depreciación",),
         orden=40,
     )),
     ("B2", _entry(
@@ -119,6 +143,7 @@ CATALOGO_CODIGOS_ATM = OrderedDict([
         nombre_cliente="Robo, Incendio y Accidente Total",
         descripcion_cliente="Cubre robo, incendio y destrucción total por accidente. Incluye grúa.",
         grua=True,
+        riesgos_detectados=(RC, INC_T, ROB_T, DT_ACC, GRUA),
         orden=50,
     )),
     ("B3", _entry(
@@ -127,6 +152,7 @@ CATALOGO_CODIGOS_ATM = OrderedDict([
         nombre_cliente="Robo e Incendio Total",
         descripcion_cliente="Cubre robo total e incendio total. Incluye grúa.",
         grua=True,
+        riesgos_detectados=(RC, INC_T, ROB_T, GRUA),
         orden=60,
     )),
     ("B4", _entry(
@@ -135,6 +161,7 @@ CATALOGO_CODIGOS_ATM = OrderedDict([
         nombre_cliente="Robo, Incendio y Accidente Total",
         descripcion_cliente="Cubre robo, incendio y destrucción total por accidente. Sin grúa.",
         grua=False,
+        riesgos_detectados=(RC, INC_T, ROB_T, DT_ACC),
         orden=70,
     )),
     ("B5", _entry(
@@ -143,33 +170,79 @@ CATALOGO_CODIGOS_ATM = OrderedDict([
         nombre_cliente="Robo e Incendio Total",
         descripcion_cliente="Cubre robo total e incendio total. Sin grúa.",
         grua=False,
+        riesgos_detectados=(RC, INC_T, ROB_T),
         orden=80,
     )),
     ("C", _entry(
         "C", "TERCEROS COMPLETOS PLUS",
         aliases=("TERCEROS COMPLETOS PLUS", "TERCERO COMPLETO PLUS"),
-        nombre_cliente="Terceros Completos Plus",
-        descripcion_cliente=_C_DESC,
+        nombre_cliente="Terceros Completo Plus",
+        descripcion_cliente=(
+            "Responsabilidad Civil\nIncendio Total y Parcial\nRobo/Hurto Total y Parcial\n"
+            "Destrucción Total por Accidente"
+        ),
         grua=True,
         adicionales=("ruedas", "vidrios", "granizo", "cerraduras"),
+        riesgos_detectados=(RC, INC_T, INC_P, ROB_T, ROB_P, DT_ACC, RUEDAS, VIDRIOS, GRANIZO, CERRADURAS, GRUA),
+        detalle_tecnico=(
+            "Cristales y cerraduras hasta 5% de la suma asegurada · 1 evento por año",
+            "Parabrisas y lunetas hasta 5% de la suma asegurada · 1 evento por año",
+            "Granizo hasta 10% de la suma asegurada · 1 evento por año",
+            "Terremoto hasta la suma asegurada, excepto Mendoza, San Juan y San Luis",
+            "Daños parciales por robo/hurto aparecido hasta 10% de la suma asegurada",
+            "Reposición 0 km durante el primer año, según condiciones de cobertura",
+            "Reposición de 1 rueda por año con depreciación",
+            "Reposición de llave física o electrónica por Robo Total aparecido",
+        ),
         orden=90,
     )),
     ("CPr", _entry(
         "CPr", "TERCEROS COMPLETOS PREMIUM",
         aliases=("TERCEROS COMPLETOS PREMIUM", "TERCERO COMPLETO PREMIUM"),
-        nombre_cliente="Terceros Completos Premium",
-        descripcion_cliente=_C_DESC,
+        nombre_cliente="Terceros Completo Premium",
+        descripcion_cliente=(
+            "Responsabilidad Civil\nIncendio Total y Parcial\nRobo/Hurto Total y Parcial\n"
+            "Destrucción Total por Accidente"
+        ),
         grua=True,
         adicionales=("ruedas", "vidrios", "granizo", "cerraduras"),
+        riesgos_detectados=(RC, INC_T, INC_P, ROB_T, ROB_P, DT_ACC, RUEDAS, VIDRIOS, GRANIZO, CERRADURAS, GRUA),
+        detalle_tecnico=(
+            "Cristales y cerraduras hasta 2 eventos acumulados por año",
+            "Parabrisas y lunetas hasta 2 eventos por año",
+            "Granizo hasta la suma asegurada · 2 eventos por año",
+            "Inundación hasta $500.000",
+            "Terremoto hasta la suma asegurada, excepto Mendoza, San Juan y San Luis",
+            "Daños parciales por robo/hurto aparecido hasta 10% de la suma asegurada",
+            "Reposición 0 km durante el primer año, según condiciones de cobertura",
+            "Ruedas: hasta 10 años, 4 por año sin depreciación; más de 10 años, 2 por año con depreciación",
+            "Reposición de llave física o electrónica por Robo Total aparecido",
+        ),
         orden=100,
     )),
     ("CB", _entry(
         "CB", "TERCEROS COMPLETOS BLACK",
         aliases=("TERCEROS COMPLETOS BLACK", "TERCERO COMPLETO BLACK"),
-        nombre_cliente="Terceros Completos Black",
-        descripcion_cliente=_C_DESC,
+        nombre_cliente="Terceros Completo Black",
+        descripcion_cliente=(
+            "Responsabilidad Civil\nIncendio Total y Parcial\nRobo/Hurto Total y Parcial\n"
+            "Destrucción Total por Accidente"
+        ),
         grua=True,
         adicionales=("ruedas", "vidrios", "granizo", "cerraduras"),
+        riesgos_detectados=(RC, INC_T, INC_P, ROB_T, ROB_P, DT_ACC, RUEDAS, VIDRIOS, GRANIZO, CERRADURAS, GRUA),
+        detalle_tecnico=(
+            "Parabrisas y luneta sin límite de eventos anuales",
+            "Cerraduras hasta la suma asegurada, sin límite de eventos",
+            "Cristales laterales hasta la suma asegurada, sin límite de eventos",
+            "Granizo hasta la suma asegurada",
+            "Inundación hasta la suma asegurada",
+            "Terremoto hasta la suma asegurada, excepto Mendoza, San Juan y San Luis",
+            "Daños parciales por robo/hurto aparecido hasta la suma asegurada",
+            "Reposición 0 km durante el primer año, según condiciones de cobertura",
+            "Reposición ilimitada de cubiertas, sin depreciación",
+            "Reposición de llave física o electrónica por Robo Total aparecido",
+        ),
         orden=110,
     )),
     ("TR", _entry(
@@ -182,12 +255,23 @@ CATALOGO_CODIGOS_ATM = OrderedDict([
         ),
         nombre_cliente="Todo Riesgo",
         descripcion_cliente=(
-            "Incluye responsabilidad civil, incendio total y parcial, robo total y parcial, "
-            "destrucción total y daños parciales por accidente. Además incluye ruedas, vidrios, "
-            "granizo, cerraduras y grúa."
+            "Responsabilidad Civil\nIncendio Total y Parcial\nRobo/Hurto Total y Parcial\n"
+            "Destrucción Total por Accidente\nDaños Parciales por Accidente"
         ),
         grua=True,
         adicionales=("ruedas", "vidrios", "granizo", "cerraduras"),
+        riesgos_detectados=(RC, INC_T, INC_P, ROB_T, ROB_P, DT_ACC, DP_ACC, RUEDAS, VIDRIOS, GRANIZO, CERRADURAS, GRUA),
+        detalle_tecnico=(
+            "Parabrisas y luneta sin límite de eventos anuales",
+            "Cerraduras hasta la suma asegurada, sin límite de eventos",
+            "Cristales laterales hasta la suma asegurada, sin límite de eventos",
+            "Granizo hasta la suma asegurada",
+            "Inundación hasta la suma asegurada",
+            "Terremoto hasta la suma asegurada, excepto Mendoza, San Juan y San Luis",
+            "Reposición 0 km durante el primer año, según condiciones de cobertura",
+            "Reposición ilimitada de cubiertas, sin depreciación",
+            "Reposición de llave física o electrónica por Robo Total aparecido",
+        ),
         franquicia=True,
         orden=120,
     )),
@@ -409,6 +493,9 @@ def _catalogo_publico(catalogo: OrderedDict) -> list[dict]:
             "remolque": entry.get("remolque"),
             "grua": entry.get("grua"),
             "adicionales": list(entry.get("adicionales") or []),
+            "riesgos_detectados": list(entry.get("riesgos_detectados") or []),
+            "beneficios_adicionales": list(entry.get("beneficios_adicionales") or []),
+            "detalle_tecnico": list(entry.get("detalle_tecnico") or []),
             "franquicia": bool(entry.get("franquicia")),
             "franquicia_visible": entry.get("franquicia_visible") or "",
             "detectable": True,

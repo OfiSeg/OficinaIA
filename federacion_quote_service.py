@@ -15,6 +15,8 @@ import unicodedata
 
 import fitz
 
+from quote_normalizer import normalizar_cobertura, normalizar_porcentaje
+
 
 def _norm(texto: str) -> str:
     valor = unicodedata.normalize("NFKD", str(texto or ""))
@@ -303,6 +305,19 @@ def extraer_cotizacion_federacion(pdf_bytes: bytes) -> dict:
         franquicia_pct, franquicia_importe, franquicia_descripcion = _franquicia(tabla)
         grua, grua_raw = _grua(tabla)
         nombre_cliente, descripcion_cliente = _cobertura(codigo, plan_nombre)
+        # El parser específico sólo traduce la estructura del PDF. La familia y
+        # representación comercial se consolidan con el normalizador común.
+        normal = normalizar_cobertura(
+            descripcion_cliente or plan_nombre,
+            compania="Federación Patronal",
+            codigo=codigo,
+            nombre=nombre_cliente or plan_nombre,
+        )
+        nombre_comercial = normal["nombre_cliente"]
+        variantes = []
+        pct_visual = normalizar_porcentaje(franquicia_pct)
+        if normal["perfil_normalizado"] == "TODO_RIESGO" and pct_visual:
+            variantes.append(f"FRANQUICIA {pct_visual}")
 
         marca = str(tabla.get("MARCA") or "").strip()
         modelo = str(tabla.get("MODELO") or "").strip()
@@ -328,9 +343,19 @@ def extraer_cotizacion_federacion(pdf_bytes: bytes) -> dict:
             "suma_asegurada_formateada": _fmt_decimal(suma, False),
             "codigo": codigo,
             "codigo_visual": codigo,
+            "codigo_original": codigo,
             "nombre_plan": plan_nombre,
-            "nombre_cliente": nombre_cliente,
-            "descripcion_cliente": descripcion_cliente,
+            "nombre_original": plan_nombre or nombre_cliente,
+            "nombre_cliente": nombre_comercial,
+            "descripcion_cliente": normal["descripcion_cliente"] or descripcion_cliente,
+            "perfil_normalizado": normal["perfil_normalizado"],
+            "familia": normal["perfil_normalizado"],
+            "riesgos_detectados": normal["riesgos_detectados"],
+            "evidencias": normal["evidencias"],
+            "nombre_comercial": nombre_comercial,
+            "variante_comercial": " · ".join(variantes),
+            "titulo_comercial": " · ".join([nombre_comercial, *variantes]),
+            "tiene_grua": grua if isinstance(grua, bool) else None,
             "limite_rc": str(limite_rc) if limite_rc is not None else None,
             "limite_rc_formateado": _fmt_decimal(limite_rc, False),
             "servicio_grua": grua,

@@ -191,6 +191,16 @@ _prompt_caps = capabilities.capabilities_for_prompt()
 check("Resolver CUIT/CUIL" not in _prompt_caps and "Buscar personas en ARCA" not in _prompt_caps,
       "El prompt general todavía expone capacidades ARCA fuera de /cuit o /cuil")
 
+# /patente, /asegurado e /info son aliases del MISMO buscador de cartera.
+for comando, query in (("/patente ABC123", "ABC123"), ("/asegurado Jorge Carrizo", "Jorge Carrizo"), ("/info 1141492756", "1141492756")):
+    parsed = chat_commands.parsear_ficha_operativa(comando)
+    check(parsed and parsed.get("query") == query, f"{comando} no cayó al buscador universal de cartera")
+for comando in ("/patente", "/asegurado", "/info"):
+    parsed = chat_commands.parsear_ficha_operativa(comando)
+    check(parsed and parsed.get("error"), f"{comando} vacío no devolvió ayuda del buscador común")
+check(chat_commands.parsear_cuit_arca("/info 20433848567") is None, "/info activó ARCA por un CUIT numérico")
+check(chat_commands.parsear_cuit_arca("/asegurado Juan Perez") is None, "/asegurado activó ARCA por nombre")
+
 
 # ---------------------------------------------------------------------------
 # 3) ESTADO: cada chat conserva su contexto independientemente.
@@ -387,7 +397,7 @@ for consulta, clase, cantidad in (
 # ---------------------------------------------------------------------------
 check('fuentes_ejecutadas' in handlers_src, "La allowlist vuelve a confundir fuente planificada con ejecutada")
 check('SIN_FICHAS_DE_LA_COMPANIA' in handlers_src, "Falta aislamiento estricto de metadata")
-check('_COMPANIAS_DOCUMENTALES_EXTRA' in handlers_src, "Metadata no cubre compañías conocidas fuera del catálogo operativo")
+check('_COMPANIAS_DOCUMENTALES_EXTRA' not in handlers_src and 'aliases_companias()' in handlers_src, "Metadata volvió a mantener una lista paralela de compañías")
 check('permitir_internet' in handlers_src and 'permitidas.add("buscar_en_internet")' in handlers_src, "Internet no está controlado por intención explícita")
 check('modelo_fijado = None' in handlers_src and 'models=modelos_llamada' in handlers_src, "Gemini puede cambiar de modelo dentro del mismo turno")
 check('types.Content(role="user", parts=respuestas_tools)' in handlers_src, "Function responses no conservan rol user")

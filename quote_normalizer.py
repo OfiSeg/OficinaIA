@@ -21,7 +21,7 @@ from typing import Iterable
 
 import fitz
 
-from companias import nombre_compania, normalizar_compania, aliases_companias
+from companias import nombre_compania, normalizar_compania, aliases_companias, detectar_compania_en_texto
 
 
 # Riesgos canónicos. Estos IDs son internos: los textos comerciales se generan
@@ -207,7 +207,7 @@ def detectar_riesgos(texto: str) -> dict:
 
     hit(r"\bRUEDAS?\b|\bNEUMATICOS?\b", RUEDAS, evidencia="Ruedas")
     hit(r"\bBATERI(?:A|AS)\b", BATERIA, evidencia="Batería")
-    hit(r"\bVIDRIOS?\b|\bCRISTALES?\b|\bPARABRISAS\b|\bLUNETA\b", VIDRIOS, evidencia="Vidrios")
+    hit(r"\bVIDRIOS?\b|\bCRISTALES?\b|\bCRIST\.?\b|\bPARABRIS(?:AS)?\b|\bLUNETAS?\b", VIDRIOS, evidencia="Vidrios")
     hit(r"\bGRANIZO\b", GRANIZO, evidencia="Granizo")
     hit(r"\bCERRADURAS?\b|\bCERRAJERIA\b", CERRADURAS, evidencia="Cerraduras")
     hit(r"\b(?:SERVICIO\s+DE\s+)?GRUA\b|\bREMOLQUE\b|\bASISTENCIA\s+(?:MECANICA|VEHICULAR)\b", GRUA, evidencia="Grúa/Asistencia")
@@ -245,8 +245,25 @@ def clasificar_perfil(riesgos: Iterable[str], texto: str = "", compania: str = "
     cia = _texto_compacto(compania)
     cod = _texto_compacto(codigo).replace(" ", "")
 
+    # Códigos ATM del catálogo confirmado tienen identidad comercial propia.
+    # Se resuelven antes del perfil por contenido para que B/B1 con prestaciones
+    # parciales no sean aplastadas como Terceros Completo.
+    if re.search(r"(?:^|\b)ATM(?:\b|$)", cia):
+        if cod in {"A", "A1"}: return PERFIL_RC
+        if cod == "B": return PERFIL_B
+        if cod == "B1": return PERFIL_B1
+        if cod in {"C", "CPR", "CB"}: return PERFIL_C_PLUS
+        if cod.startswith("TR"): return PERFIL_TR
+
     if DP_ACC in r or re.search(r"\bTODO\s+RIESGO\b", t):
         return PERFIL_TR
+
+    # Una denominación comercial explícita también es evidencia de familia.
+    # Se usa únicamente cuando la frase está visible; no se deduce por código.
+    if re.search(r"\bTERCEROS?\s+COMPLET(?:O|OS)\b", t):
+        if re.search(r"\b(?:PLUS|PREMIUM|FULL|BLACK)\b", t):
+            return PERFIL_C_PLUS
+        return PERFIL_C
 
     # LB/LB1 son perfiles distintos de C1: robo parcial sólo al amparo del total.
     if {RC, INC_T, INC_P, ROB_T, ROB_P_AMP}.issubset(r):
@@ -256,8 +273,12 @@ def clasificar_perfil(riesgos: Iterable[str], texto: str = "", compania: str = "
 
     core_c = {RC, INC_T, INC_P, ROB_T, ROB_P}
     if core_c.issubset(r):
-        extras_visibles = {VIDRIOS, GRANIZO, CERRADURAS}
-        if extras_visibles.issubset(r) or len(extras_visibles.intersection(r)) >= 2:
+        extras_visibles = {RUEDAS, VIDRIOS, GRANIZO, CERRADURAS}
+        # Una prestación adicional explícita ya diferencia a la alternativa
+        # del núcleo C. No exigimos dos extras porque distintas compañías
+        # pueden ofrecer un C mejorado con un solo adicional visible.
+        # La descripción final enumera únicamente lo realmente confirmado.
+        if extras_visibles.intersection(r):
             return PERFIL_C_PLUS
         if DT_ACC in r:
             return PERFIL_C
@@ -309,6 +330,16 @@ def clasificar_perfil(riesgos: Iterable[str], texto: str = "", compania: str = "
             if cod.startswith("D2") or cod in {"D3", "D4", "D5"}:
                 return PERFIL_TR
 
+        es_allianz = "ALLIANZ" in cia
+        if es_allianz:
+            # Allianz D4 Alta Gama VIP: códigos 90/91/92 son el mismo producto
+            # Todo Riesgo con distinta franquicia. Granizo es un adicional, no
+            # una familia/nombre de cobertura.
+            if cod in {"90", "91", "92"} and ("ALTA GAMA VIP" in t or "D4" in t):
+                return PERFIL_TR
+            if "ALTA GAMA VIP" in t and re.search(r"\b\d{1,2}(?:[.,]\d+)?\s*%", t):
+                return PERFIL_TR
+
         es_atm = re.search(r"(?:^|\b)ATM(?:\b|$)", cia) is not None
         if es_atm:
             if cod in {"A", "A1"}:
@@ -332,59 +363,95 @@ def nombre_perfil(perfil: str, nombre_original: str = "", codigo_original: str =
     return str(nombre_original or codigo_original or "Cobertura").strip()
 
 
-def descripcion_comercial(perfil: str, riesgos: Iterable[str], texto_fuente: str = "") -> str:
-    """Devuelve speech determinístico y conservador.
+def _nombre_comercial_explicito(texto: str, codigo: str = "") -> str:
+    """Extrae un nombre comercial visible sin dejar que una segmentación lo tape.
 
-    Para C normal se omiten ruedas/batería aunque estén conocidas internamente.
-    Los adicionales se exponen para C_PLUS/equivalentes confirmados o cuando la
-    evidencia explícita los ubica claramente en ese perfil superior.
+    Regla universal: cuando la fuente trae una denominación inequívoca de
+    cobertura (p. ej. ``TERCEROS COMPLETOS C2``), esa denominación tiene
+    prioridad de presentación sobre rótulos de segmentación como ``CLÁSICO
+    SEGMENTADO``. No depende de una compañía concreta.
+    """
+    t = _texto_compacto(texto)
+    if not t:
+        return ""
+
+    # Código al final: ``TERCEROS COMPLETOS C2``. Se conserva porque forma
+    # parte de la denominación visible de la cobertura, no porque el código
+    # tenga un significado inferido por OficinaIA.
+    m = re.search(r"\bTERCEROS?\s+COMPLET(?:O|OS)\s+([A-Z]{1,4}\d+(?:[.,]\d+)?)\b", t)
+    if m:
+        return f"Terceros Completo {m.group(1).replace(',', '.')}"
+
+    if re.search(r"\bTERCEROS?\s+COMPLET(?:O|OS)\b", t):
+        if re.search(r"\b(?:PLUS|PREMIUM|FULL|BLACK)\b", t):
+            variante = re.search(r"\b(PLUS|PREMIUM|FULL|BLACK)\b", t).group(1).title()
+            return f"Terceros Completo {variante}"
+        return "Terceros Completo"
+    if re.search(r"\b(?:D4\s+)?ALTA\s+GAMA\s+VIP\b", t):
+        return "Alta Gama VIP"
+    if re.search(r"\bTODO\s+RIESGO\b", t):
+        return "Todo Riesgo"
+    if re.search(r"\bRESP(?:ONSABILIDAD)?\.?\s*CIVIL\b", t) and not re.search(r"\b(?:ROBO|INCENDIO|TODO\s+RIESGO|TERCEROS?)\b", t):
+        return "Responsabilidad Civil"
+    return ""
+
+
+def prestaciones_comerciales(perfil: str, riesgos: Iterable[str]) -> list[str]:
+    """Prestaciones canónicas, una por línea, para cualquier renderer.
+
+    La familia aporta el núcleo mínimo ya confirmado. Los riesgos estructurados
+    agregan únicamente prestaciones explícitas. Nunca vuelve a una frase legacy.
     """
     p = str(perfil or PERFIL_SIN_CLASIFICAR).upper()
     r = set(riesgos or [])
+    base_por_perfil = {
+        PERFIL_RC: [RC],
+        PERFIL_B: [RC, INC_T, ROB_T, DT_ACC],
+        PERFIL_B1: [RC, INC_T, ROB_T],
+        PERFIL_C: [RC, INC_T, INC_P, ROB_T, ROB_P, DT_ACC],
+        PERFIL_C1: [RC, INC_T, INC_P, ROB_T, ROB_P],
+        PERFIL_C_PLUS: [RC, INC_T, INC_P, ROB_T, ROB_P, DT_ACC],
+        PERFIL_LB: [RC, INC_T, INC_P, ROB_T, ROB_P_AMP, DT_ACC],
+        PERFIL_LB1: [RC, INC_T, INC_P, ROB_T, ROB_P_AMP],
+        PERFIL_TR: [RC, INC_T, INC_P, ROB_T, ROB_P, DT_ACC, DP_ACC],
+    }
+    efectivos = []
+    vistos = set()
+    for risk in [*base_por_perfil.get(p, []), *list(r or [])]:
+        if risk not in vistos:
+            vistos.add(risk); efectivos.append(risk)
 
-    if p == PERFIL_RC:
-        return "Responsabilidad civil."
-    if p == PERFIL_B:
-        return "Responsabilidad civil, incendio total, robo/hurto total y destrucción total por accidente."
-    if p == PERFIL_B1:
-        return "Responsabilidad civil, incendio total y robo/hurto total."
-    if p == PERFIL_C:
-        return "Responsabilidad civil, incendio total y parcial, robo/hurto total y parcial y destrucción total por accidente."
-    if p == PERFIL_C1:
-        return "Responsabilidad civil, incendio total y parcial y robo/hurto total y parcial."
-    if p == PERFIL_C_PLUS:
-        base = "Responsabilidad civil, incendio total y parcial, robo/hurto total y parcial y destrucción total por accidente."
-        extras = []
-        for risk, label in ((RUEDAS, "ruedas"), (VIDRIOS, "vidrios"), (GRANIZO, "granizo"), (CERRADURAS, "cerraduras")):
-            if risk in r:
-                extras.append(label)
-        # En perfiles C_PLUS conocidos, el set clásico puede venir normalizado por
-        # código aun si el PDF no repite cada palabra. Si no hay extras explícitos,
-        # no inventar para compañía desconocida: queda sólo el núcleo.
-        if extras:
-            return base + " Cubre " + ", ".join(extras[:-1]) + (" y " + extras[-1] if len(extras) > 1 else extras[0]) + "."
-        return base
-    if p == PERFIL_LB:
-        return "Responsabilidad civil, incendio total y parcial, robo/hurto total, robo parcial al amparo del robo total y destrucción total por accidente."
-    if p == PERFIL_LB1:
-        return "Responsabilidad civil, incendio total y parcial, robo/hurto total y robo parcial al amparo del robo total."
-    if p == PERFIL_TR:
-        return "Responsabilidad civil, incendio total y parcial, robo/hurto total y parcial, destrucción total y daños parciales por accidente."
+    # Combinar total/parcial en una sola prestación visual cuando ambos están.
+    salida: list[str] = []
+    if RC in efectivos: salida.append("Responsabilidad Civil")
+    if INC_T in efectivos and INC_P in efectivos: salida.append("Incendio Total y Parcial")
+    elif INC_T in efectivos: salida.append("Incendio Total")
+    elif INC_P in efectivos: salida.append("Incendio Parcial")
+    if ROB_T in efectivos and ROB_P in efectivos: salida.append("Robo/Hurto Total y Parcial")
+    elif ROB_T in efectivos: salida.append("Robo/Hurto Total")
+    elif ROB_P in efectivos: salida.append("Robo/Hurto Parcial")
+    if ROB_P_AMP in efectivos: salida.append("Robo Parcial al amparo del Robo Total")
+    if DT_ACC in efectivos: salida.append("Destrucción Total por Accidente")
+    if DP_ACC in efectivos: salida.append("Daños Parciales por Accidente")
+    for risk in (RUEDAS, BATERIA, VIDRIOS, GRANIZO, CERRADURAS):
+        if risk in efectivos:
+            salida.append(RISK_LABELS[risk])
+    return salida
 
-    # Sin perfil seguro: explayar sólo riesgos explícitos en un orden comercial.
-    orden = [RC, ROB_T, ROB_P, ROB_P_AMP, INC_T, INC_P, DT_ACC, DP_ACC, RUEDAS, BATERIA, VIDRIOS, GRANIZO, CERRADURAS]
-    labels = [RISK_LABELS[x] for x in orden if x in r]
-    if not labels:
-        return ""
-    return ", ".join(labels) + "."
+
+def descripcion_comercial(perfil: str, riesgos: Iterable[str], texto_fuente: str = "") -> str:
+    """Descripción determinística estructurada: una prestación por línea."""
+    return "\n".join(prestaciones_comerciales(perfil, riesgos))
 
 
 def normalizar_cobertura(texto: str, *, compania: str = "", codigo: str = "", nombre: str = "") -> dict:
-    deteccion = detectar_riesgos(" ".join(x for x in [nombre, texto] if x))
-    perfil = clasificar_perfil(deteccion["riesgos"], texto=" ".join([nombre, texto]), compania=compania, codigo=codigo)
+    fuente = " ".join(x for x in [nombre, texto] if x)
+    deteccion = detectar_riesgos(fuente)
+    perfil = clasificar_perfil(deteccion["riesgos"], texto=fuente, compania=compania, codigo=codigo)
+    nombre_explicito = _nombre_comercial_explicito(nombre or texto, codigo)
     return {
         "perfil_normalizado": perfil,
-        "nombre_cliente": nombre_perfil(perfil, nombre, codigo),
+        "nombre_cliente": nombre_explicito or nombre_perfil(perfil, nombre, codigo),
         "descripcion_cliente": descripcion_comercial(perfil, deteccion["riesgos"], texto),
         "riesgos_detectados": deteccion["riesgos"],
         "evidencias": deteccion["evidencias"],
@@ -449,9 +516,10 @@ def _pct_visual(valor: str) -> str:
 
 
 def normalizar_porcentaje(valor) -> str:
-    """Devuelve un porcentaje comercial estable con un único signo final."""
+    """Devuelve un porcentaje comercial estable con formato visual es-AR."""
     limpio = _pct_visual(valor)
-    return f"{limpio}%" if limpio else ""
+    visual = limpio.replace(".", ",") if limpio else ""
+    return f"{visual}%" if visual else ""
 
 
 def _aplicar_modelo_comercial(opciones: list[dict]) -> list[dict]:
@@ -514,25 +582,25 @@ def _ordenar_coberturas(opciones: list[dict]) -> list[dict]:
 
 
 def _detectar_compania(texto: str) -> str:
+    # Identidad de compañía centralizada: los parsers no mantienen su propia
+    # lista de marcas/aliases. Primero usamos el registro canónico.
+    detectada = detectar_compania_en_texto(texto)
+    if detectada:
+        return _canonicalizar_compania(detectada)
+
     t = normalizar_texto(texto)
-    conocidas = [
-        (r"\bFEDERACION\s+PATRONAL\b", "Federación Patronal"),
-        (r"\bLA\s+MERCANTIL\s+ANDINA\b|\bMERCANTIL\s+ANDINA\b", "Mercantil Andina"),
-        (r"\bATM\s+SEGUROS\b|\bATM\b", "ATM"),
-        (r"\bSANCOR\s+SEGUROS\b", "Sancor Seguros"),
-        (r"\bSAN\s+CRISTOBAL\b", "San Cristóbal"),
-        (r"\b(?:COMPANIA\s+DE\s+SEGUROS\s+)?AGRO\s*SALTA\b|\bAGS\s+SEGUROS\b", "AgroSalta"),
-        (r"\bRIVADAVIA\s+SEGUROS\b|\bSEGUROS\s+RIVADAVIA\b", "Rivadavia"),
-        (r"\bALLIANZ\b", "Allianz"),
-        (r"\bMAPFRE\b", "MAPFRE"),
-        (r"\bPROVINCIA\s+SEGUROS\b", "Provincia Seguros"),
-        (r"\bRIO\s+URUGUAY\s+SEGUROS\b", "Río Uruguay Seguros"),
-        (r"\bTRIUNFO\s+SEGUROS\b", "Triunfo Seguros"),
-        (r"\bPARANA\s+SEGUROS\b", "Paraná Seguros"),
-    ]
-    for patron, nombre in conocidas:
-        if re.search(patron, t):
-            return _canonicalizar_compania(nombre)
+    # Firma de plantilla AgroSalta: algunas cotizaciones no imprimen el nombre
+    # de la compañía. Exigimos varios rasgos simultáneos para evitar falsos
+    # positivos y dejamos el selector manual del frontend como respaldo.
+    firma_agrosalta = (
+        "COTIZACION DE AUTOMOTORES" in t
+        and "VEHICULO COTIZADO" in t
+        and "PREMIO C/IVA" in t
+        and re.search(r"\bA\s*-\s*RESPONSABILIDAD\s+CIVIL\b", t)
+        and re.search(r"\b(?:B1?|C1?|CF)\s*-", t)
+    )
+    if firma_agrosalta:
+        return "AgroSalta"
 
     # Heurística conservadora para una compañía no registrada: usar una línea
     # corporativa sólo si contiene una palabra inequívoca de aseguradora.
@@ -544,30 +612,55 @@ def _detectar_compania(texto: str) -> str:
 
 
 def _extraer_suma_asegurada(texto: str) -> Decimal | None:
+    raw = str(texto or "")
+    t = normalizar_texto(raw)
+
+    # Primero, etiquetas inequívocas de valor del vehículo. [ \t] evita que
+    # una etiqueta al final de una línea capture por error el premio de la
+    # línea siguiente (caso real de PDFs ATM).
     patrones = [
-        r"SUMA\s+ASEGURADA\s*[:\-]?\s*\$?\s*([\d.,]+)",
-        r"MONTO\s+ASEGURADO\s*[:\-]?\s*\$?\s*([\d.,]+)",
-        r"\bS\.?\s*A\.?\s*[:\-]\s*\$?\s*([\d.,]+)",
-        r"\bVALOR\s*[:\-]\s*\$\s*([\d.,]+)",
+        r"VALOR\s+A\s+ASEGURAR[ \t]*[:\-]?[ \t]*\$?[ \t]*([\d.,]+)",
+        r"SUMA\s+ASEGURADA[ \t]*[:\-]?[ \t]*\$?[ \t]*([\d.,]+)",
+        r"MONTO\s+ASEGURADO[ \t]*[:\-]?[ \t]*\$?[ \t]*([\d.,]+)",
+        r"\bS\.?[ \t]*A\.?[ \t]*[:\-][ \t]*\$?[ \t]*([\d.,]+)",
+        r"\bVALOR[ \t]*:[ \t]*\$[ \t]*([\d.,]+)",
     ]
-    t = normalizar_texto(texto)
     for patron in patrones:
         m = re.search(patron, t, flags=re.I)
         if m:
             n = _money_decimal(m.group(1))
             if n is not None:
                 return n
+
+    # Algunos PDFs tabulares (ATM) extraen primero el valor y después el rótulo
+    # ``Valor a Asegurar`` por el orden de cajas de texto. En ese caso miramos
+    # sólo una ventana corta anterior y elegimos un importe grande aislado.
+    lineas = [re.sub(r"\s+", " ", x).strip() for x in raw.splitlines()]
+    for idx, linea in enumerate(lineas):
+        if "VALOR A ASEGURAR" not in normalizar_texto(linea):
+            continue
+        candidatos = []
+        for previa in lineas[max(0, idx - 12):idx]:
+            if re.fullmatch(r"\$?[ \t]*\d[\d.]*[,]\d{2}", previa):
+                n = _money_decimal(previa)
+                if n is not None and n >= Decimal("100000"):
+                    candidatos.append(n)
+        if candidatos:
+            return max(candidatos)
     return None
 
-
 def _extraer_anio(texto: str) -> str:
-    t = normalizar_texto(texto)
-    for patron in (r"ANO\s+(?:DE\s+FABRICACION\s*)?[:\-]?\s*((?:19|20)\d{2})", r"MODELO\s*[:\-]?\s*((?:19|20)\d{2})"):
+    raw = str(texto or "")
+    t = normalizar_texto(raw)
+    for patron in (r"ANO[ \t]*(?:DE[ \t]+FABRICACION[ \t]*)?[:\-]?[ \t]*((?:19|20)\d{2})", r"MODELO[ \t]*[:\-]?[ \t]*((?:19|20)\d{2})"):
         m = re.search(patron, t)
         if m:
             return m.group(1)
-    return ""
-
+    # Layouts donde el año es una caja separada: priorizar un año aislado cerca
+    # del bloque de vehículo y antes de la tabla de coberturas.
+    pre = raw.split("Cobertura", 1)[0]
+    aislados = re.findall(r"(?m)^\s*((?:19|20)\d{2})\s*$", pre)
+    return aislados[-1] if aislados else ""
 
 def _extraer_vehiculo(texto: str) -> str:
     raw = str(texto or "")
@@ -583,8 +676,22 @@ def _extraer_vehiculo(texto: str) -> str:
             val = re.sub(r"\s+", " ", m.group(1)).strip()
             if len(val) > 2:
                 return val[:160]
-    return ""
 
+    # PDFs ATM: la descripción suele aparecer como caja independiente justo
+    # antes de ``Valor a Asegurar``. Evitamos rótulos y valores numéricos.
+    lineas = [re.sub(r"\s+", " ", x).strip() for x in raw.splitlines()]
+    for idx, linea in enumerate(lineas):
+        if "VALOR A ASEGURAR" not in normalizar_texto(linea):
+            continue
+        for previa in reversed(lineas[max(0, idx - 6):idx]):
+            key = normalizar_texto(previa)
+            if not previa or re.fullmatch(r"[\d.,$ ]+", previa):
+                continue
+            if key in {"NO POSEE", "AUTOMOTORES", "COTIZACION"} or re.fullmatch(r"(?:19|20)\d{2}", previa):
+                continue
+            if re.search(r"[A-Z]{2,}", key):
+                return previa[:160]
+    return ""
 
 def _extraer_codigo(linea: str) -> str:
     raw = str(linea or "").strip()
@@ -599,8 +706,14 @@ def _extraer_codigo(linea: str) -> str:
         m = re.search(patron, t, flags=re.I)
         if m:
             return re.sub(r"\s+", " ", m.group(1)).strip().upper().replace(",", ".")
+    # Algunas compañías imprimen primero la familia y luego el código, p. ej.
+    # ``TERCEROS COMPLETOS C2``. Sólo aceptamos el sufijo si la familia es
+    # inequívoca; así no convertimos cualquier palabra final en un código.
+    suffix_code = r"[A-Z]{1,4}\d+(?:[.,]\d+)?"
+    m = re.search(rf"\b(?:TERCEROS?\s+COMPLET(?:O|OS)|TODO\s+RIESGO|RESPONSABILIDAD\s+CIVIL)\s+({suffix_code})\b", t)
+    if m:
+        return re.sub(r"\s+", " ", m.group(1)).strip().upper().replace(",", ".")
     return ""
-
 
 def _precio_en_bloque(bloque: str) -> Decimal | None:
     t = normalizar_texto(bloque)
@@ -617,33 +730,55 @@ def _precio_en_bloque(bloque: str) -> Decimal | None:
     return None
 
 
-def _precio_fila_tabular(linea: str, texto_documento: str) -> Decimal | None:
-    """En tablas con columna Cuota/s, el último importe de la fila es la cuota."""
-    doc = normalizar_texto(texto_documento)
-    if not re.search(r"\b(?:CUOTA|CUOTAS|PRIMERA\s+CUOTA)\b", doc):
-        return None
-    valores = re.findall(r"\$\s*([\d.]+(?:,[0-9]{1,2})?)", str(linea or ""))
-    if not valores:
-        return None
-    return _money_decimal(valores[-1])
+def _precio_fila_tabular(bloque: str, texto_documento: str) -> Decimal | None:
+    """En tablas con columna Cuota/s, usa el último importe económico de la fila.
 
+    Admite tanto tablas con ``$`` (AgroSalta y similares) como PDFs donde el
+    motor extrae Premio/Cuota como cajas numéricas sin símbolo (ATM).
+    """
+    doc = normalizar_texto(texto_documento)
+    if not re.search(r"\b(?:CUOTA|CUOTAS|1.?\s*CUOTA|PRIMERA\s+CUOTA)\b", doc):
+        return None
+    lineas = [re.sub(r"\s+", " ", x).strip() for x in str(bloque or "").splitlines() if x.strip()]
+    valores: list[Decimal] = []
+    for linea in lineas[1:8]:
+        key = normalizar_texto(linea)
+        if re.search(r"\b(?:AJUS\.?\s*AUT|RESPONSABILIDAD|INCENDIO|ROBO|HURTO|DANO|DAÑOS?|GRANIZO|CRISTALES?|PARABRISAS)\b", key):
+            break
+        # La línea debe ser esencialmente un importe; un simple ``1`` es la
+        # cantidad de cuotas, no dinero.
+        m = re.fullmatch(r"\$?[ \t]*([\d.]+(?:,[0-9]{1,2})?)\s*", linea)
+        if not m:
+            continue
+        n = _money_decimal(m.group(1))
+        if n is not None and ("," in m.group(1) or "." in m.group(1)):
+            valores.append(n)
+    return valores[-1] if valores else None
 
 def _franquicia_en_bloque(bloque: str) -> tuple[str, Decimal | None, str]:
     t = normalizar_texto(bloque)
     pct = ""
     imp = None
     desc = ""
-    m = re.search(r"FRANQUICIA[^\n]{0,100}?(\d{1,2}(?:[.,]\d+)?)\s*%", t, flags=re.I)
+    etiqueta = r"(?:FRANQUICIA|FCIA\.?|DEDUCIBLE)"
+    m = re.search(rf"{etiqueta}[^\n]{{0,100}}?(\d{{1,2}}(?:[.,]\d+)?)\s*%", t, flags=re.I)
     if m:
         pct = m.group(1).replace(",", ".")
         desc = m.group(0).strip()
-    m2 = re.search(r"FRANQUICIA[^\n]{0,120}?\$\s*([\d.,]+)", t, flags=re.I)
+    m2 = re.search(rf"{etiqueta}[^\n]{{0,120}}?\$\s*([\d.,]+)", t, flags=re.I)
     if m2:
         imp = _money_decimal(m2.group(1))
         if not desc:
             desc = m2.group(0).strip()
+    # Allianz puede mostrar el porcentaje junto a D4/Alta Gama VIP sin escribir
+    # la palabra franquicia en el mismo renglón. Sólo activamos este fallback
+    # sobre esa cabecera inequívoca.
+    if not pct and re.search(r"\b(?:D4\s+)?ALTA\s+GAMA\s+VIP\b", t, flags=re.I):
+        ma = re.search(r"\b(1|2|3)(?:[.,]0+)?\s*%", t)
+        if ma:
+            pct = ma.group(1)
+            desc = f"Franquicia {pct}%"
     return pct, imp, desc
-
 
 def _grua_en_bloque(bloque: str) -> bool | None:
     t = normalizar_texto(bloque)
@@ -654,46 +789,100 @@ def _grua_en_bloque(bloque: str) -> bool | None:
     return None
 
 
+def _granizo_allianz_en_bloque(bloque: str, compania: str) -> str:
+    """Estado de granizo como adicional, exclusivamente para Allianz por ahora."""
+    if "ALLIANZ" not in _texto_compacto(compania):
+        return "DESCONOCIDO"
+    t = normalizar_texto(bloque)
+    if re.search(r"\b(?:SIN|S/)\s*GRANIZO\b|\bNO\s+INCLUYE\s+GRANIZO\b", t):
+        return "NO_INCLUYE"
+    if re.search(r"\bC/\s*GRANIZO\b|\bCON\s+GRANIZO\b|\bINCLUYE\s+GRANIZO\b", t):
+        return "INCLUYE"
+    return "DESCONOCIDO"
+
+
 def _es_linea_cobertura(linea: str) -> bool:
-    t = _texto_compacto(linea)
+    """Detecta cabeceras fuertes de PLAN, no prestaciones internas.
+
+    Se consideran fuertes los códigos/etiquetas de plan y denominaciones
+    comerciales inequívocas como Todo Riesgo o Terceros Completo. Esto permite
+    que, cuando existe una cabecera real, líneas internas como ``INCENDIO TOTAL
+    O PARCIAL`` no se conviertan en coberturas independientes.
+    """
+    raw = str(linea or "").strip()
+    t = _texto_compacto(raw)
     if not t or len(t) < 3:
         return False
-    if t.startswith(("-", "•", "*")) or re.search(r"\bPLANES?\s+(?:CF|TD|TODO RIESGO)\b", t) or t.startswith("ASEGURADO POR"):
+    if t.startswith(("-", "•", "*")) or t.startswith("ASEGURADO POR"):
+        return False
+
+    codigo = _extraer_codigo(raw)
+    if codigo and re.search(r"\b(?:RESPONSABILIDAD|TOTALES?|PARCIALES?|TODO\s+RIESGO|TERCEROS?\s+COMPLET(?:O|OS)|ROBO|HURTO|INCENDIO|DESTRUCCION|GRANIZO|CRIST|PARABRIS|FRANQUICIA|FCIA)\b", t):
+        return True
+    if re.search(r"\b(?:TODO\s+RIESGO|TERCEROS?\s+COMPLET(?:O|OS))\b", t):
+        return True
+    if re.search(r"^\s*(?:COBERTURA|PLAN)\s+", t) and (codigo or detectar_riesgos(t)["riesgos"]):
+        return True
+    return False
+
+
+def _es_linea_cobertura_debil(linea: str) -> bool:
+    """Compatibilidad para fuentes sin cabeceras fuertes.
+
+    Reproduce el criterio histórico (varios riesgos visibles en una misma
+    línea) sólo cuando el documento completo no contiene una cabecera fuerte.
+    Así se conservan speeches/cotizaciones simples sin volver a partir ATM,
+    Allianz u otros PDFs tabulares por cada prestación.
+    """
+    t = _texto_compacto(linea)
+    if not t or len(t) < 3 or t.startswith(("-", "•", "*")) or t.startswith("ASEGURADO POR"):
         return False
     d = detectar_riesgos(t)["riesgos"]
     if len(d) >= 2:
         return True
     if re.search(r"\b(?:COBERTURA|PLAN)\s+[A-Z0-9]+\b", t) and d:
         return True
-    # Fila tabular de cotizador: código + descripción aseguradora + importes.
     codigo = _extraer_codigo(linea)
     if codigo and re.search(r"\b(?:RESPONSABILIDAD|TOTAL(?:ES)?|PARCIAL(?:ES)?|TODO\s+RIESGO|ROBO|HURTO|INCENDIO|DESTRUCCION|GRANIZO|CRIST|PARABRIS|FRANQUICIA)\b", t):
         return True
     return False
 
-
 def _candidatos_cobertura(texto: str) -> list[dict]:
     lineas = [re.sub(r"\s+", " ", x).strip() for x in str(texto or "").splitlines() if x.strip()]
+    indices = [i for i, linea in enumerate(lineas) if _es_linea_cobertura(linea)]
+    if not indices:
+        # Si no existe ninguna cabecera fuerte, mantener compatibilidad con el
+        # normalizador anterior para speeches/cotizaciones sin código.
+        indices = [i for i, linea in enumerate(lineas) if _es_linea_cobertura_debil(linea)]
+    # Último fallback: una cotización que sólo ofrece RC puede venir sin código
+    # ni palabra PLAN. Se acepta sólo si tampoco hubo candidatos débiles.
+    if not indices:
+        for i, linea in enumerate(lineas):
+            if re.fullmatch(r"(?:A\s*-\s*)?RESPONSABILIDAD\s+CIVIL(?:\s+SIN\s+GRUA)?", _texto_compacto(linea)):
+                indices = [i]
+                break
     candidatos: list[dict] = []
     vistos: set[str] = set()
-    for i, linea in enumerate(lineas):
-        if not _es_linea_cobertura(linea):
-            continue
-        # Incluimos líneas cercanas para capturar precio/franquicia/asistencia sin
-        # extender tanto el bloque como para mezclar la cobertura siguiente.
-        vecinas = [linea]
-        for j in range(i + 1, min(i + 5, len(lineas))):
-            if j > i + 1 and _es_linea_cobertura(lineas[j]):
+    for pos, i in enumerate(indices):
+        linea = lineas[i]
+        fin = indices[pos + 1] if pos + 1 < len(indices) else len(lineas)
+        # Una cabecera posee todo lo que sigue hasta la próxima cabecera. Para
+        # evitar arrastrar pies administrativos, cortamos en marcadores fuertes.
+        bloque_lineas = [linea]
+        for siguiente in lineas[i + 1:fin]:
+            key = normalizar_texto(siguiente)
+            if re.match(r"^(?:SEGURO DE AUTO/MOTO COMBINADO|USUARIO:|COTIZACION NRO:|FECHA:|HORA:)$", key):
                 break
-            vecinas.append(lineas[j])
-        bloque = "\n".join(vecinas)
+            if key.startswith("GRUPO ABRA OF."):
+                break
+            bloque_lineas.append(siguiente)
+        bloque = "\n".join(bloque_lineas)
         clave = _texto_compacto(linea)
         if clave in vistos:
             continue
         vistos.add(clave)
         candidatos.append({"linea": linea, "bloque": bloque, "codigo": _extraer_codigo(linea)})
     return candidatos
-
 
 def normalizar_texto_cotizacion(texto: str, *, compania: str = "") -> dict:
     raw = str(texto or "").strip()
@@ -707,7 +896,7 @@ def normalizar_texto_cotizacion(texto: str, *, compania: str = "") -> dict:
 
     for idx, cand in enumerate(_candidatos_cobertura(raw), start=1):
         codigo = cand["codigo"]
-        normal = normalizar_cobertura(cand["linea"], compania=cia if cia != "Compañía no identificada" else "", codigo=codigo, nombre=cand["linea"])
+        normal = normalizar_cobertura(cand["bloque"], compania=cia if cia != "Compañía no identificada" else "", codigo=codigo, nombre=cand["linea"])
         if normal["perfil_normalizado"] == PERFIL_SIN_CLASIFICAR and not normal["riesgos_detectados"]:
             continue
         precio = _precio_en_bloque(cand["bloque"]) or _precio_fila_tabular(cand["bloque"], raw)
@@ -731,6 +920,7 @@ def normalizar_texto_cotizacion(texto: str, *, compania: str = "") -> dict:
             "franquicia_importe_formateado": _fmt_money(franquicia_importe),
             "franquicia_descripcion": franquicia_desc,
             "servicio_grua": grua,
+            "granizo_estado": _granizo_allianz_en_bloque(cand["bloque"], cia),
         })
 
     # Si no encontramos una fila/plan pero el texto completo describe claramente
@@ -759,6 +949,7 @@ def normalizar_texto_cotizacion(texto: str, *, compania: str = "") -> dict:
                 "franquicia_importe_formateado": _fmt_money(franquicia_importe),
                 "franquicia_descripcion": franquicia_desc,
                 "servicio_grua": _grua_en_bloque(raw),
+                "granizo_estado": _granizo_allianz_en_bloque(raw, cia),
             })
 
     opciones = _aplicar_modelo_comercial(_ordenar_coberturas(opciones))
@@ -777,6 +968,87 @@ def normalizar_texto_cotizacion(texto: str, *, compania: str = "") -> dict:
     }
 
 
+
+def evaluar_calidad_lectura(resultado: dict) -> dict:
+    """Valida coherencia estructural antes de aceptar una lectura automática.
+
+    No reinterpreta una compañía: detecta señales universales de parseo roto,
+    como prestaciones convertidas en planes o precios perdidos pese a existir
+    una tabla de cuotas. Sirve para decidir si conviene activar el fallback
+    visual y, si no está disponible, marcar la lectura para revisión humana.
+    """
+    resultado = resultado if isinstance(resultado, dict) else {}
+    opciones = list(resultado.get("coberturas") or [])
+    fuente = str(resultado.get("texto_fuente") or "")
+    t = normalizar_texto(fuente)
+    advertencias: list[str] = []
+    score = 100
+
+    if not opciones:
+        return {"confiable": False, "score": 0, "advertencias": ["No se extrajeron coberturas."]}
+
+    beneficio_suelto = re.compile(
+        r"^(?:RESPONSABILIDAD\s+CIVIL(?:\s+HASTA)?|INCENDIO\s+(?:TOTAL|PARCIAL)|"
+        r"ROBO(?:/HURTO)?\s+(?:TOTAL|PARCIAL)|DANOS?\s+(?:TOTAL|PARCIAL)|"
+        r"CRISTALES?|PARABRISAS|GRANIZO|CERRADURAS?)\b",
+        re.I,
+    )
+    for op in opciones:
+        titulo = str(op.get("nombre_original") or op.get("nombre_cliente") or "").strip()
+        if titulo and beneficio_suelto.search(normalizar_texto(titulo)):
+            score -= 35
+            advertencias.append(
+                f"Una prestación parece haber sido interpretada como cobertura: {titulo[:80]}."
+            )
+            break
+
+    if re.search(r"\b(?:PREMIO|CUOTA|CUOTAS|1.?\s*CUOTA|PRIMERA\s+CUOTA)\b", t):
+        con_precio = sum(bool(str(op.get("precio_cuota") or "").strip()) for op in opciones)
+        ratio = con_precio / max(1, len(opciones))
+        if ratio < 0.5:
+            score -= 30
+            advertencias.append(
+                "La tabla muestra precios/cuotas pero la lectura recuperó muy pocos importes."
+            )
+
+    if "VALOR A ASEGURAR" in t or "SUMA ASEGURADA" in t:
+        if not str(resultado.get("suma_asegurada") or "").strip():
+            score -= 15
+            advertencias.append(
+                "El documento muestra suma/valor a asegurar pero no se pudo recuperar."
+            )
+
+    if re.search(r"\bTODO\s+RIESGO\b", t) and not any(
+        str(op.get("perfil_normalizado")) == PERFIL_TR for op in opciones
+    ):
+        score -= 35
+        advertencias.append(
+            "El documento dice Todo Riesgo pero ninguna alternativa quedó clasificada como tal."
+        )
+
+    if re.search(r"\bTERCEROS?\s+COMPLET(?:O|OS)\b", t) and not any(
+        str(op.get("perfil_normalizado")) in {PERFIL_C, PERFIL_C1, PERFIL_C_PLUS}
+        for op in opciones
+    ):
+        score -= 35
+        advertencias.append(
+            "El documento dice Terceros Completo pero esa familia no sobrevivió a la lectura."
+        )
+
+    sin_clasificar = sum(
+        str(op.get("perfil_normalizado")) == PERFIL_SIN_CLASIFICAR for op in opciones
+    )
+    if sin_clasificar == len(opciones):
+        score -= 35
+        advertencias.append("Todas las alternativas quedaron sin clasificar.")
+
+    score = max(0, min(100, score))
+    return {
+        "confiable": score >= 65,
+        "score": score,
+        "advertencias": list(dict.fromkeys(advertencias)),
+    }
+
 def extraer_cotizacion_generica_pdf(pdf_bytes: bytes) -> dict:
     if not pdf_bytes:
         raise ValueError("El PDF está vacío.")
@@ -793,7 +1065,11 @@ def extraer_cotizacion_generica_pdf(pdf_bytes: bytes) -> dict:
     texto = "\n".join(paginas).strip()
     if not texto:
         return {"es_cotizacion_generica": False, "motivo": "El PDF no contiene texto extraíble."}
-    return normalizar_texto_cotizacion(texto)
+    resultado = normalizar_texto_cotizacion(texto)
+    calidad = evaluar_calidad_lectura(resultado)
+    resultado["calidad_lectura"] = calidad
+    resultado["requiere_revision"] = not bool(calidad.get("confiable"))
+    return resultado
 
 
 # -------------------------
@@ -895,6 +1171,7 @@ def _normalizar_dato_vision(dato: dict) -> dict:
             "franquicia_importe": str(franquicia_importe) if franquicia_importe is not None else None,
             "franquicia_importe_formateado": _fmt_money(franquicia_importe),
             "servicio_grua": grua,
+            "granizo_estado": _granizo_allianz_en_bloque(fuente, cia),
         })
 
     opciones = _aplicar_modelo_comercial(_ordenar_coberturas(opciones))

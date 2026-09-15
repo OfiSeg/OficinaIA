@@ -83,7 +83,7 @@ from storage_r2 import (
     eliminar_pdf as r2_eliminar_pdf,
     obtener_objeto_stream,
 )
-from companias import normalizar_compania, nombre_compania as _nombre_compania_canonico
+from companias import normalizar_compania, nombre_compania as _nombre_compania_canonico, aliases_companias
 from local_db import conectar_db
 from metadata_store import (
     listar_metadatos as metadata_listar,
@@ -112,6 +112,9 @@ import mercantil_cotizador
 import federacion_quote_service
 import quote_normalizer
 import cotizacion_document_service
+import insurance_document_service
+import insured_profile
+import insured_profile_store
 import alta_ops
 from flota_store import FlotaStore
 from chat_store import ChatStore
@@ -258,19 +261,9 @@ DB_FILE = BASE_DIR / "oficina.db"
 ROLES_VALIDOS = {"admin", "usuario"}
 USUARIO_ADMIN_PRINCIPAL = "admin"
 
-# Accesos directos a plataformas de compañías. Se muestran solo los nombres.
-CIAS_LINKS = [
-    ("Self", "https://online.fedpat.com.ar/self/index.jsp"),
-    ("ATM", "https://extranet.atmseguros.com.ar/ATM_COM_PROD/servlet/ar.com.glmsa.seguros.comercial.hlogin"),
-    ("Rivadavia", "https://www.sistemas.segurosrivadavia.com/sistemas/login/login_intra_pas.php?u=P"),
-    ("Triunfo", "https://www.triunfonet.com.ar/gauswebtriunfo/servlet/hlogon"),
-    ("Prof", "https://pasnet.profseguros.seg.ar/Default.aspx"),
-    ("Ags", "https://www.agsnet.com.ar/ingreprod.php"),
-    ("San Cristobal", "https://productores.sancristobal.com.ar/"),
-    ("Mercantil Andina", "https://servicios.mercantilandina.com.ar/sigmav3/"),
-    ("EuroAmerica", "https://pas.euroamericaseguros.seg.ar/login"),
-    ("Allianz", "https://auth.allianz.com.ar/login"),
-]
+# Compatibilidad histórica: los accesos ya no mantienen otra lista de compañías.
+# La fuente única vive en companias.py/config_service.py.
+CIAS_LINKS = list(config_service.DEFAULT_CIAS_LINKS)
 
 def _companias_sidebar_default():
     return config_service.companias_sidebar_default()
@@ -514,17 +507,7 @@ def obtener_companias():
     """Devuelve únicamente las compañías que forman parte de la biblioteca de Manuales."""
     DOCUMENTOS_DIR.mkdir(parents=True, exist_ok=True)
 
-    companias = [
-        "atm",
-        "mercantil_andina",
-        "federacion_patronal",
-        "san_cristobal",
-        "rivadavia",
-        "euroamerica",
-        "agrosalta",
-        "triunfo",
-        "prof",
-    ]
+    companias = list(dict.fromkeys(slug_manual_compania(nombre) for nombre in MANUALES_COMPANIAS))
 
     for compania in companias:
         (DOCUMENTOS_DIR / compania).mkdir(parents=True, exist_ok=True)
@@ -1054,13 +1037,16 @@ def api_federacion_leer_pdf():
 @app.route("/api/cotizaciones/companias", methods=["GET"])
 @requiere_login
 def api_cotizaciones_companias():
-    """Catálogo editable de compañía basado únicamente en logos_manifest.json."""
+    """Catálogo universal: identidad canónica + compañías configuradas + logo opcional."""
+    config = cargar_configuracion()
     catalogo = cotizacion_document_service.catalogo_companias(
-        BASE_DIR / "static" / "img" / "companias"
+        BASE_DIR / "static" / "img" / "companias",
+        config.get("companias") if isinstance(config, dict) else None,
     )
     for item in catalogo:
-        item["logo_url"] = url_for(
-            "static", filename=f"img/companias/{item.pop('file')}"
+        filename = str(item.pop("file", "") or "").strip()
+        item["logo_url"] = (
+            url_for("static", filename=f"img/companias/{filename}") if filename else ""
         )
     return jsonify({"ok": True, "companias": catalogo})
 
@@ -1095,12 +1081,15 @@ def api_cotizaciones_leer_pdf():
             return jsonify({"ok": True, "tipo": "federacion", **federacion})
 
         generica = quote_normalizer.extraer_cotizacion_generica_pdf(contenido)
-        if generica.get("es_cotizacion_generica") and generica.get("coberturas"):
+        tiene_texto_util = bool(generica.get("es_cotizacion_generica") and generica.get("coberturas"))
+        calidad_texto = generica.get("calidad_lectura") if isinstance(generica.get("calidad_lectura"), dict) else {}
+        if tiene_texto_util and calidad_texto.get("confiable", True):
             return jsonify({"ok": True, "tipo": "generica", **generica})
 
-        # Último recurso: si el PDF es escaneado o su maquetación no permite
-        # reconstruir las coberturas por texto, leer visualmente hasta 2 páginas.
-        # La IA sólo transcribe; la clasificación final sigue siendo determinística.
+        # Si el parser obtuvo algo pero la estructura no cierra, NO lo damos por
+        # bueno en silencio. Intentamos la lectura visual y comparamos. Esto evita
+        # que una prestación interna (Incendio/Robo/Cristales) termine presentada
+        # como si fuera una cobertura independiente.
         try:
             begin_request(
                 runtime_config.get_float("GEMINI_GENERIC_QUOTE_BUDGET_SECONDS", 45.0),
@@ -1108,9 +1097,21 @@ def api_cotizaciones_leer_pdf():
             )
             visual = quote_normalizer.extraer_cotizacion_generica_pdf_vision(contenido)
             if visual.get("es_cotizacion_generica") and visual.get("coberturas"):
-                return jsonify({"ok": True, "tipo": "generica", **visual})
+                calidad_visual = quote_normalizer.evaluar_calidad_lectura(visual)
+                visual["calidad_lectura"] = calidad_visual
+                visual["requiere_revision"] = not bool(calidad_visual.get("confiable"))
+                if calidad_visual.get("score", 0) >= calidad_texto.get("score", 0):
+                    return jsonify({"ok": True, "tipo": "generica", **visual})
         except Exception as visual_error:
             logger.info("Fallback visual de cotización PDF no disponible: %s", visual_error)
+
+        # Si Gemini no está disponible pero el parser determinístico recuperó una
+        # estructura útil, la mostramos marcada para revisión en vez de perderla
+        # o presentarla como lectura segura. La corrección manual sigue teniendo
+        # prioridad sobre cualquier detección automática.
+        if tiene_texto_util:
+            generica["requiere_revision"] = True
+            return jsonify({"ok": True, "tipo": "generica", **generica})
 
         return jsonify({"ok": False, "error": "No pude identificar coberturas suficientes en este PDF. Si el documento usa códigos sin descripción, necesito que también incluya el detalle de riesgos."}), 422
     except ValueError as error:
@@ -1163,7 +1164,9 @@ def api_cotizaciones_generar_documento():
         logos_dir=BASE_DIR / "static" / "img" / "companias",
     )
     try:
-        propuesta = service.validar_datos(propuesta)
+        # generar_docx() es el único dueño de la validación/normalización
+        # documental. Evitamos validar dos veces el mismo payload porque una
+        # normalización debe ser idempotente y nunca acumular contenido.
         base_name = service.nombre_base(propuesta, office_today())
         with TemporaryDirectory(prefix="oficinaia_cotizacion_") as tmp_raw:
             tmp = Path(tmp_raw)
@@ -1589,18 +1592,20 @@ def _generar_titulo_chat(mensaje):
     if not t:
         t = texto
 
-    # Si aparece una compañía conocida, priorizarla al frente
-    companias = (
-        "ATM", "Sancor", "San Cor", "Mercantil Andina", "Mercantil", "Rivadavia",
-        "Federación Patronal", "Federacion Patronal", "La Segunda", "Sura", "Allianz",
-        "Mapfre", "Zurich", "Experta", "Provincia", "Triunfo", "Nación", "Nacion",
-        "HDI", "Chubb", "SMG", "Galeno", "Prevención", "Prevencion",
-    )
+    # Si aparece una compañía conocida, priorizarla al frente. Los aliases salen
+    # del registro único; evitamos mantener otra enumeración en app.py.
     encontrada = None
-    lower = t.lower()
-    for cia in sorted(companias, key=len, reverse=True):
-        if cia.lower() in lower:
-            encontrada = cia
+    encontrada_display = None
+    candidatos = []
+    for alias, (_codigo, display) in aliases_companias().items():
+        alias_text = str(alias or "").strip()
+        if not alias_text or alias_text in {"ma", "self"}:
+            continue
+        candidatos.append((alias_text, display))
+    for alias, display in sorted(candidatos, key=lambda item: len(item[0]), reverse=True):
+        if re.search(rf"(?<![A-Za-z0-9]){re.escape(alias)}(?![A-Za-z0-9])", t, flags=re.IGNORECASE):
+            encontrada = alias
+            encontrada_display = display
             break
     if encontrada:
         resto = re.sub(re.escape(encontrada), " ", t, count=1, flags=re.IGNORECASE)
@@ -1618,9 +1623,9 @@ def _generar_titulo_chat(mensaje):
             if len(resto) > 40:
                 corte = resto[:40].rsplit(" ", 1)[0] or resto[:40]
                 resto = corte + "…"
-            t = f"{encontrada} — {resto}"
+            t = f"{encontrada_display or encontrada} — {resto}"
         else:
-            t = encontrada
+            t = encontrada_display or encontrada
     else:
         if t and t[0].islower():
             t = t[0].upper() + t[1:]
@@ -1865,6 +1870,26 @@ def api_excel_agregar_fila():
                 envios_telefono_valido = preparado.telefono_valido
             except Exception as error:
                 print("ERROR ARMANDO TEXTO ENVIOS YA:", error)
+            # El Excel conserva su esquema histórico, pero los datos ricos del
+            # Alta viven en la ficha interna. Los fallbacks de fecha se guardan
+            # como CALCULADOS, nunca con la misma autoridad que el Alta.
+            try:
+                canon_alta = insurance_document_service.normalizar_campos(campos)
+                fechas_alta, fuentes_fechas = insurance_document_service.completar_fechas(canon_alta, {})
+                payload_perfil = dict(campos)
+                payload_perfil.update({k: v for k, v in fechas_alta.items() if v})
+                perfil = insured_profile_store.upsert(
+                    payload_perfil, fuente="alta_confirmada", usuario=session.get("usuario", ""),
+                    fuentes_por_campo={k: v for k, v in fuentes_fechas.items() if v},
+                )
+                if perfil.get("ok") and perfil.get("ficha"):
+                    insured_profile_store.registrar_evento(
+                        perfil["ficha"].get("id"), "alta_guardada",
+                        {"libro_id": resultado["libro_id"], "conflictos": perfil.get("conflictos") or []},
+                        usuario=session.get("usuario", ""),
+                    )
+            except Exception as error:
+                logger.exception("No pude actualizar la ficha interna después del Alta: %s", error)
         return jsonify({
             "ok": True,
             "libro_id": resultado["libro_id"],
@@ -1880,6 +1905,86 @@ def api_excel_agregar_fila():
         system_health.registrar_evento("excel", "error", "No se pudo agregar una fila desde el chat", str(error))
         print("ERROR AGREGANDO FILA DESDE CHAT:", error)
         return jsonify({"ok": False, "error": "No se pudo agregar el registro a la planilla."}), 500
+
+
+@app.route("/api/documentos-seguro/preparar", methods=["POST"])
+@requiere_login
+def api_documentos_seguro_preparar():
+    """Cruza cartera + flujo actual y devuelve una ficha editable, sin inventar datos."""
+    data = request.get_json(silent=True) or {}
+    tipo = str(data.get("tipo") or "").strip().lower()
+    campos = data.get("campos") if isinstance(data.get("campos"), dict) else {}
+    extras = data.get("extras") if isinstance(data.get("extras"), dict) else {}
+    query = str(data.get("query") or "").strip()
+    patente = str(data.get("patente") or campos.get("PATENTE") or "").strip()
+    poliza = str(data.get("poliza") or campos.get("POLIZA") or "").strip()
+    try:
+        if not query:
+            canon = insurance_document_service.normalizar_campos(campos)
+            query = canon.get("PATENTE") or canon.get("NOMBRE") or ""
+        ficha = insured_profile.construir_ficha(query, leer_excel_interno, buscar_persistente=insured_profile_store.buscar) if query else None
+        preparado = insurance_document_service.preparar(
+            tipo, ficha=ficha, campos=campos, extras=extras, patente=patente, poliza=poliza
+        )
+        return jsonify({"ok": True, **preparado})
+    except ValueError as error:
+        return jsonify({"ok": False, "error": str(error)}), 400
+    except Exception as error:
+        logger.exception("Error preparando documento institucional: %s", error)
+        return jsonify({"ok": False, "error": "No pude preparar el documento en este intento."}), 500
+
+
+@app.route("/api/documentos-seguro/generar", methods=["POST"])
+@requiere_login
+def api_documentos_seguro_generar():
+    """Genera un DOCX desde plantilla fija y campos ya confirmados por el usuario."""
+    data = request.get_json(silent=True) or {}
+    tipo = str(data.get("tipo") or "").strip().lower()
+    campos = data.get("campos") if isinstance(data.get("campos"), dict) else {}
+    fuentes = data.get("fuentes") if isinstance(data.get("fuentes"), dict) else {}
+    formato = str(data.get("formato") or "docx").strip().lower()
+    try:
+        buffer, filename, mimetype = insurance_document_service.generar_documento(
+            tipo, campos, templates_dir=BASE_DIR / "plantillas" / "seguros", formato=formato
+        )
+        # Persistimos con autoridad POR CAMPO. Un dato editado/confirmado en el
+        # panel queda manual_confirmado; una fecha de fallback conserva origen
+        # calculado y una lectura documental no se promociona artificialmente.
+        try:
+            canon = insurance_document_service.normalizar_campos(campos)
+            canon, fuentes_resueltas = insurance_document_service.completar_fechas(canon, fuentes)
+            payload_perfil = dict(campos)
+            payload_perfil.update({k: v for k, v in canon.items() if v})
+            perfil = insured_profile_store.upsert(
+                payload_perfil, fuente="documento", usuario=session.get("usuario", ""),
+                fuentes_por_campo=fuentes_resueltas,
+            )
+            if perfil.get("ok") and perfil.get("ficha"):
+                detalle_evento = {"archivo": filename}
+                for key in ("FECHA_BAJA", "MOTIVO_BAJA", "IMPORTE_PENDIENTE", "VENCIMIENTO"):
+                    if canon.get(key):
+                        detalle_evento[key] = canon[key]
+                if perfil.get("conflictos"):
+                    detalle_evento["conflictos"] = perfil.get("conflictos")
+                insured_profile_store.registrar_evento(
+                    perfil["ficha"].get("id"), f"documento_{tipo}_generado",
+                    detalle_evento, usuario=session.get("usuario", "")
+                )
+        except Exception as error:
+            logger.exception("No pude persistir la ficha del documento generado: %s", error)
+        return send_file(
+            buffer,
+            as_attachment=True,
+            download_name=filename,
+            mimetype=mimetype,
+        )
+    except (ValueError, FileNotFoundError) as error:
+        return jsonify({"ok": False, "error": str(error)}), 400
+    except RuntimeError as error:
+        return jsonify({"ok": False, "error": str(error)}), 503
+    except Exception as error:
+        logger.exception("Error generando documento institucional: %s", error)
+        return jsonify({"ok": False, "error": "No pude generar el documento en este intento."}), 500
 
 
 @app.route("/api/alta/preparar-salidas", methods=["POST"])
@@ -2354,6 +2459,7 @@ def chat():
         historial=historial,
         arca_context=arca_context_activo,
         adjuntos=adjuntos_actuales,
+        buscar_perfil=insured_profile_store.buscar,
     )
     if comando.atendido:
         if comando.libro_id:
@@ -2926,19 +3032,8 @@ def crear_estructura():
     except Exception as error:
         print('NEON POSTGRESQL: no se pudo verificar la tabla manuales:', error)
     POLIZAS_DIR.mkdir(parents=True, exist_ok=True)
-    # Las compañías de documentos deben coincidir exactamente con las 9
-    # compañías habilitadas en la sección Manuales.
-    companias = [
-        "atm",
-        "mercantil_andina",
-        "federacion_patronal",
-        "san_cristobal",
-        "rivadavia",
-        "euroamerica",
-        "agrosalta",
-        "triunfo",
-        "prof",
-    ]
+    # Manuales/documentos consumen el mismo registro canónico completo.
+    companias = list(dict.fromkeys(slug_manual_compania(nombre) for nombre in MANUALES_COMPANIAS))
 
     for compania in companias:
         (DOCUMENTOS_DIR / compania).mkdir(parents=True, exist_ok=True)

@@ -53,6 +53,9 @@ MERCANTIL_COBERTURAS = {
         "codigo_visual": "MP",
         "nombre_cliente": "Terceros Completo M Plus",
         "descripcion_cliente": "Responsabilidad civil, incendio total y parcial, robo total y parcial, destrucción total por accidente. Cubre ruedas, vidrios, granizo y cerraduras.",
+        # Dato confirmado para la presentación comercial: la asistencia/grúa
+        # forma parte de esta alternativa aunque el PDF resumido no la enumere.
+        "servicio_grua": True,
         "max_descuento": 35,
         "tipo": "terceros_completo_plus",
     },

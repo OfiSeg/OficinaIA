@@ -19,6 +19,8 @@ from docx import Document
 from docx.oxml import OxmlElement
 from docx.oxml.ns import qn
 from docx.shared import Cm, Pt, RGBColor
+from PIL import Image
+from companias import catalogo_companias as catalogo_companias_canonico, nombre_compania, normalizar_compania
 
 
 MARCADOR = "{{COTIZACION}}"
@@ -34,16 +36,6 @@ ESTILOS_REQUERIDOS = (
 FORMATOS_SOPORTADOS = {"docx", "pdf", "png", "jpg"}
 VALORES_VACIOS = {"", "undefined", "null", "none", "n/a", "na", "—"}
 AZUL_INSTITUCIONAL = "102A56"
-
-COMPANIA_DISPLAY = {
-    "atm": "ATM",
-    "federacion_patronal": "Federación Patronal",
-    "mercantil_andina": "Mercantil Andina",
-    "san_cristobal": "San Cristóbal",
-    "agrosalta": "Agrosalta",
-    "rivadavia": "Rivadavia",
-    "allianz": "Allianz",
-}
 
 
 PERFIL_NOMBRE_COMERCIAL = {
@@ -71,6 +63,8 @@ ORDEN_COMERCIAL = {
     "ROBO E INCENDIO + ROBO PARCIAL AL AMPARO + ACCIDENTE TOTAL": 62,
     "TERCEROS COMPLETO PLUS": 70,
     "TERCEROS COMPLETO PREMIUM": 75,
+    "TERCEROS COMPLETO BLACK": 78,
+    "ALTA GAMA VIP": 80,
     "TODO RIESGO": 80,
 }
 
@@ -117,17 +111,42 @@ def _normalizar_moneda_visual(valor: str) -> str:
 
 
 def _normalizar_porcentaje(valor: str) -> str:
-    """Devuelve el porcentaje sin signo final para evitar duplicados como 2%%."""
+    """Porcentaje visual sin signo, estable y con decimal es-AR."""
     texto = _texto(valor, max_len=30).strip()
     if not texto:
         return ""
-    return re.sub(r"(?:\s*%)+\s*$", "", texto).strip()
+    limpio = re.sub(r"(?:\s*%)+\s*$", "", texto).strip().replace(" ", "")
+    candidato = limpio.replace(",", ".")
+    try:
+        numero = float(candidato)
+    except Exception:
+        return limpio
+    if not (numero > 0):
+        return limpio
+    visual = str(int(numero)) if numero.is_integer() else (f"{numero:g}").replace(".", ",")
+    return visual
 
 
 def normalizar_porcentaje(valor: str) -> str:
     """Normaliza 2, ``2%`` o ``2%%`` a la presentación comercial ``2%``."""
     limpio = _normalizar_porcentaje(valor)
     return f"{limpio}%" if limpio else ""
+
+
+def _nota_franquicia_estandar(pct: str = "", importe: str = "") -> str:
+    porcentaje = normalizar_porcentaje(pct)
+    if porcentaje:
+        return (
+            "En caso de daño parcial, queda a cargo del asegurado una franquicia equivalente al "
+            f"{porcentaje} de la suma asegurada. Todo gasto que supere ese importe queda a cargo de la compañía."
+        )
+    monto = _normalizar_moneda_visual(importe)
+    if monto:
+        return (
+            f"En caso de daño parcial, queda a cargo del asegurado una franquicia de {monto}. "
+            "Todo gasto que supere ese importe queda a cargo de la compañía."
+        )
+    return ""
 
 
 def _normalizar_beneficio_para_carta(texto: str) -> list[str]:
@@ -197,7 +216,8 @@ def _limpiar_nombre_tecnico(nombre: str) -> str:
     if m and re.search(r"[A-Za-zÁÉÍÓÚÑáéíóúñ]", m.group(1)):
         limpio = m.group(1).strip()
     limpio = re.sub(r"\s*-\s*\d+(?:[.,]\d+)?\s*%+", "", limpio).strip(" -·")
-    limpio = re.sub(r"\bC/\s*GRANIZO\b", "CON GRANIZO", limpio, flags=re.I)
+    # Granizo (Allianz) es un atributo de la alternativa, no parte de su nombre.
+    limpio = re.sub(r"\b(?:C/|CON)\s*GRANIZO\b", "", limpio, flags=re.I).strip(" -·")
     limpio = re.sub(r"\s*-\s*", " · ", limpio)
     limpio = re.sub(r"\s+", " ", limpio).strip(" ·-")
     return limpio or original
@@ -219,23 +239,191 @@ def _flags_riesgo(contenidos: list[dict], nombre: str) -> dict[str, bool]:
     }
 
 
-def normalizar_cobertura_para_carta(alternativa: dict) -> dict:
-    """Uniforma una alternativa sin contradecir al cotizador.
+# El contenido canónico se construye desde hechos estructurados. Los renderers
+# no deben depender de que una frase previa coincida carácter por carácter.
+PERFIL_BENEFICIO_BASE = {
+    "RC": ["Responsabilidad Civil"],
+    "B": ["Responsabilidad Civil", "Incendio Total", "Robo/Hurto Total", "Destrucción Total por Accidente"],
+    "B1": ["Responsabilidad Civil", "Incendio Total", "Robo/Hurto Total"],
+    "C": ["Responsabilidad Civil", "Incendio Total y Parcial", "Robo/Hurto Total y Parcial", "Destrucción Total por Accidente"],
+    "C1": ["Responsabilidad Civil", "Incendio Total y Parcial", "Robo/Hurto Total y Parcial"],
+    "C_PLUS": ["Responsabilidad Civil", "Incendio Total y Parcial", "Robo/Hurto Total y Parcial", "Destrucción Total por Accidente"],
+    "LB": ["Responsabilidad Civil", "Incendio Total y Parcial", "Robo/Hurto Total", "Robo Parcial al amparo del Robo Total", "Destrucción Total por Accidente"],
+    "LB1": ["Responsabilidad Civil", "Incendio Total y Parcial", "Robo/Hurto Total", "Robo Parcial al amparo del Robo Total"],
+    "TODO_RIESGO": ["Responsabilidad Civil", "Incendio Total y Parcial", "Robo/Hurto Total y Parcial", "Destrucción Total por Accidente", "Daños Parciales por Accidente"],
+    "TR": ["Responsabilidad Civil", "Incendio Total y Parcial", "Robo/Hurto Total y Parcial", "Destrucción Total por Accidente", "Daños Parciales por Accidente"],
+}
 
-    Regla de autoridad: si el frontend ya envía ``nombre_comercial`` y/o
-    ``variante_comercial``, esos campos son canónicos. El renderer documental
-    sólo normaliza tipografía y beneficios. La inferencia por riesgos queda como
-    fallback para fuentes antiguas o incompletas.
+RIESGO_EXTRA_LABEL = {
+    "RUEDAS": "Ruedas",
+    "BATERIA": "Batería",
+    "VIDRIOS": "Vidrios",
+    "GRANIZO": "Granizo",
+    "CERRADURAS": "Cerraduras",
+}
+
+
+def _es_nota_franquicia(texto: str) -> bool:
+    """Reconoce la explicación semántica de franquicia, sin depender de una frase exacta."""
+    clave = _normalizar_clave(texto)
+    if not clave or "franquicia" not in clave:
+        return False
+    return (
+        "queda a cargo del asegurado" in clave
+        or clave.startswith("en caso de dano parcial")
+        or clave.startswith("en caso de un dano parcial")
+    )
+
+
+def _es_beneficio_nucleo(texto: str) -> bool:
+    clave = _normalizar_clave(texto)
+    return any(token in clave for token in (
+        "responsabilidad civil", "incendio", "robo", "hurto",
+        "destruccion total", "danos parciales por accidente",
+        "robo parcial al amparo",
+    ))
+
+
+def _frase_lista(items: list[str]) -> str:
+    items = [str(x).strip() for x in items if str(x).strip()]
+    if not items:
+        return ""
+    if len(items) == 1:
+        return items[0]
+    if len(items) == 2:
+        return f"{items[0]} y {items[1]}"
+    return ", ".join(items[:-1]) + " y " + items[-1]
+
+
+def _contenido_canonico_por_familia(alt: dict, contenidos: list[dict]) -> list[dict]:
+    """Presentación universal: una prestación canónica por bullet.
+
+    La familia aporta su núcleo confirmado; riesgos/adicionales agregan sólo
+    información estructurada. Los textos legacy no vuelven a gobernar la carta.
+    """
+    familia = str(alt.get("familia") or "").strip().upper()
+    base_familia = list(PERFIL_BENEFICIO_BASE.get(familia) or [])
+    if not base_familia:
+        return contenidos
+
+    notas = [x for x in contenidos if x.get("tipo") == "nota"]
+    beneficios = [x for x in contenidos if x.get("tipo") == "beneficio"]
+    salida: list[dict] = []
+    vistos: set[str] = set()
+
+    def agregar(texto):
+        texto = _texto(texto, max_len=650)
+        key = _normalizar_clave(texto)
+        if texto and key and key not in vistos:
+            salida.append({"tipo": "beneficio", "texto": texto})
+            vistos.add(key)
+
+    riesgos = {str(x or "").strip().upper() for x in (alt.get("riesgos_detectados") or []) if str(x or "").strip()}
+
+    # Los hechos estructurados tienen prioridad sobre la familia. La familia es
+    # sólo fallback cuando la fuente no entregó un núcleo de riesgos usable.
+    # Esto evita que una normalización genérica vuelva a reinterpretar y pise
+    # variantes ya resueltas por el catálogo de origen (ATM, u otra compañía).
+    core_ids = {
+        "RESPONSABILIDAD_CIVIL", "INCENDIO_TOTAL", "INCENDIO_PARCIAL",
+        "ROBO_HURTO_TOTAL", "ROBO_HURTO_PARCIAL", "ROBO_PARCIAL_AMPARO_TOTAL",
+        "DESTRUCCION_TOTAL_ACCIDENTE", "DANOS_PARCIALES_ACCIDENTE",
+    }
+    if riesgos.intersection(core_ids):
+        base = []
+        if "RESPONSABILIDAD_CIVIL" in riesgos:
+            base.append("Responsabilidad Civil")
+        if "INCENDIO_TOTAL" in riesgos and "INCENDIO_PARCIAL" in riesgos:
+            base.append("Incendio Total y Parcial")
+        elif "INCENDIO_TOTAL" in riesgos:
+            base.append("Incendio Total")
+        elif "INCENDIO_PARCIAL" in riesgos:
+            base.append("Incendio Parcial")
+        if "ROBO_HURTO_TOTAL" in riesgos and "ROBO_HURTO_PARCIAL" in riesgos:
+            base.append("Robo/Hurto Total y Parcial")
+        elif "ROBO_HURTO_TOTAL" in riesgos:
+            base.append("Robo/Hurto Total")
+        elif "ROBO_HURTO_PARCIAL" in riesgos:
+            base.append("Robo/Hurto Parcial")
+        if "ROBO_PARCIAL_AMPARO_TOTAL" in riesgos:
+            base.append("Robo Parcial al amparo del Robo Total")
+        if "DESTRUCCION_TOTAL_ACCIDENTE" in riesgos:
+            base.append("Destrucción Total por Accidente")
+        if "DANOS_PARCIALES_ACCIDENTE" in riesgos:
+            base.append("Daños Parciales por Accidente")
+    else:
+        base = base_familia
+
+    for texto in base:
+        agregar(texto)
+
+    # Evitar bullets genéricos si existe una prestación detallada del mismo tema.
+    adicionales_detalle = [_texto(x, max_len=650) for x in (alt.get("beneficios_adicionales") or []) if _texto(x, max_len=650)]
+    detalle_key = " ".join(_normalizar_clave(x) for x in adicionales_detalle)
+    for risk, label in RIESGO_EXTRA_LABEL.items():
+        if risk not in riesgos:
+            continue
+        if risk == "RUEDAS" and any(k in detalle_key for k in ("rueda", "cubierta")):
+            continue
+        if risk == "VIDRIOS" and any(k in detalle_key for k in ("cristal", "parabris", "luneta")):
+            continue
+        if risk == "GRANIZO" and "granizo" in detalle_key:
+            continue
+        if risk == "CERRADURAS" and "cerradura" in detalle_key:
+            continue
+        agregar(label)
+
+    for texto in adicionales_detalle:
+        agregar(texto)
+
+    # Preservar extras explícitos no nucleares que vinieron de una fuente, sin
+    # volver a incorporar frases legacy del núcleo.
+    for item in beneficios:
+        texto = _texto(item.get("texto"), max_len=650)
+        if not texto or _es_beneficio_nucleo(texto):
+            continue
+        key = _normalizar_clave(texto)
+        extras_legacy = [token for token in ("ruedas", "vidrios", "granizo", "cerraduras") if token in key]
+        if len(extras_legacy) >= 2 and all(token in vistos for token in extras_legacy):
+            continue
+        agregar(texto)
+
+    # Granizo Allianz: atributo independiente del nombre/producto.
+    granizo_estado = _normalizar_clave(alt.get("granizo_estado"))
+    if granizo_estado == "incluye":
+        agregar("Granizo")
+
+    variante_grua = _normalizar_clave(alt.get("variante_grua"))
+    tiene_grua = alt.get("tiene_grua")
+    if isinstance(tiene_grua, bool) and variante_grua not in {"con grua", "sin grua"}:
+        agregar("Incluye grúa" if tiene_grua else "Sin grúa")
+
+    return salida + notas
+
+
+def normalizar_cobertura_para_carta(alternativa: dict) -> dict:
+    """Uniforma una alternativa y converge siempre al mismo estado canónico.
+
+    La función es deliberadamente idempotente: aplicarla dos veces no agrega
+    notas, beneficios ni variantes adicionales. El cotizador aporta hechos
+    estructurados y este paso sólo asegura una presentación común.
     """
     alt = dict(alternativa or {})
     contenidos: list[dict] = []
     vistos_beneficios: set[str] = set()
+    vistos_notas: set[str] = set()
     for item in alt.get("contenidos") or []:
         tipo = str(item.get("tipo") or "beneficio").lower() if isinstance(item, dict) else "beneficio"
         raw = item.get("texto") if isinstance(item, dict) else item
         if tipo == "nota":
             texto = _texto(raw, max_len=650)
-            if texto:
+            # Las notas de franquicia nunca se heredan como texto libre: se
+            # reconstruyen una sola vez desde franquicia_pct/importe.
+            if not texto or _es_nota_franquicia(texto):
+                continue
+            key = _normalizar_clave(texto)
+            if key and key not in vistos_notas:
+                vistos_notas.add(key)
                 contenidos.append({"tipo": "nota", "texto": texto})
             continue
         for texto in _normalizar_beneficio_para_carta(raw):
@@ -243,14 +431,25 @@ def normalizar_cobertura_para_carta(alternativa: dict) -> dict:
             if key and key not in vistos_beneficios:
                 vistos_beneficios.add(key)
                 contenidos.append({"tipo": "beneficio", "texto": texto})
+
+    # Cuando la familia ya fue resuelta, usamos su núcleo como contrato común
+    # y preservamos únicamente adicionales realmente confirmados.
+    contenidos = _contenido_canonico_por_familia(alt, contenidos)
     alt["contenidos"] = contenidos
+
+    # La explicación de franquicia es una regla universal y tiene un único
+    # dueño en la normalización documental. Al eliminarla arriba y recrearla
+    # aquí, validar_datos(validar_datos(x)) produce el mismo resultado.
+    nota_franquicia = _nota_franquicia_estandar(alt.get("franquicia_pct"), alt.get("franquicia_importe"))
+    if nota_franquicia:
+        alt["contenidos"].append({"tipo": "nota", "texto": nota_franquicia})
 
     original = _texto(alt.get("nombre"), max_len=180) or "Cobertura"
     comercial_explicit = _texto(alt.get("nombre_comercial"), max_len=180)
     variante_explicit = _texto(alt.get("variante_comercial"), max_len=120)
     familia = _texto(alt.get("familia"), max_len=80).upper()
     key = _normalizar_clave(original)
-    flags = _flags_riesgo(contenidos, original)
+    flags = _flags_riesgo(alt["contenidos"], original)
 
     if comercial_explicit and not _normalizar_clave(comercial_explicit).startswith("cobertura "):
         nombre_base = _limpiar_nombre_tecnico(comercial_explicit).upper()
@@ -313,32 +512,87 @@ def normalizar_cobertura_para_carta(alternativa: dict) -> dict:
     return alt
 
 
-def catalogo_companias(logos_dir: Path) -> list[dict]:
-    """Expone el catálogo del manifiesto sin duplicar nombres ni assets."""
+def catalogo_companias(logos_dir: Path, companias_config: list[dict] | None = None) -> list[dict]:
+    """Catálogo universal para selectores de cotización.
+
+    La identidad (código/nombre/aliases) sale de ``companias.py``. El manifiesto
+    aporta únicamente el asset documental y la configuración puede agregar
+    accesos/compañías visibles sin crear otra semántica paralela. Una compañía
+    sin logo sigue siendo seleccionable; el Word usa su nombre como fallback.
+    """
     logos_dir = Path(logos_dir)
     manifest_path = logos_dir / "logos_manifest.json"
-    if not manifest_path.exists():
-        return []
     try:
-        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+        manifest = json.loads(manifest_path.read_text(encoding="utf-8")) if manifest_path.exists() else {}
     except Exception:
-        return []
-    aliases_por_key: dict[str, list[str]] = {}
-    for alias, key in (manifest.get("aliases") or {}).items():
-        if isinstance(key, str):
-            aliases_por_key.setdefault(key, []).append(str(alias))
-    preferidas = ["atm", "federacion_patronal", "mercantil_andina", "san_cristobal", "agrosalta", "rivadavia", "allianz"]
-    salida = []
-    for key in preferidas:
-        info = manifest.get(key)
-        if not isinstance(info, dict):
-            continue
-        filename = Path(str(info.get("file") or "")).name
-        if not filename or not (logos_dir / filename).is_file():
-            continue
-        nombre = COMPANIA_DISPLAY.get(key, key.replace("_", " ").title())
-        aliases = list(dict.fromkeys([nombre, key.replace("_", " "), *aliases_por_key.get(key, [])]))
-        salida.append({"key": key, "nombre": nombre, "file": filename, "aliases": aliases})
+        manifest = {}
+
+    aliases_manifest = manifest.get("aliases") if isinstance(manifest.get("aliases"), dict) else {}
+    alias_to_asset = {_normalizar_clave(alias): str(key) for alias, key in aliases_manifest.items() if str(key).strip()}
+
+    items: dict[str, dict] = {}
+
+    def agregar(nombre: str, *, codigo: str = "", key_hint: str = "", aliases=None, asistencia=None):
+        nombre = str(nombre or "").strip()
+        if not nombre:
+            return
+        codigo = str(codigo or normalizar_compania(nombre) or nombre).strip()
+        display = nombre_compania(nombre) or nombre
+        identity_key = _normalizar_clave(codigo) or _normalizar_clave(display)
+        if not identity_key:
+            return
+        item = items.setdefault(identity_key, {
+            "key": key_hint or re.sub(r"[^a-z0-9]+", "_", _normalizar_clave(display)).strip("_") or identity_key,
+            "codigo": codigo,
+            "nombre": display,
+            "aliases": [],
+            "file": "",
+            "asistencia": dict(asistencia or {}) if isinstance(asistencia, dict) else {},
+        })
+        if isinstance(asistencia, dict) and asistencia and not item.get("asistencia"):
+            item["asistencia"] = dict(asistencia)
+        for alias in [display, nombre, *(aliases or [])]:
+            alias = str(alias or "").strip()
+            if alias and alias.casefold() not in {x.casefold() for x in item["aliases"]}:
+                item["aliases"].append(alias)
+        if key_hint and not item.get("key"):
+            item["key"] = key_hint
+
+    for base in catalogo_companias_canonico():
+        agregar(
+            base.get("nombre"),
+            codigo=base.get("codigo"),
+            aliases=base.get("aliases"),
+            asistencia=base.get("asistencia"),
+        )
+
+    for cfg in companias_config or []:
+        if isinstance(cfg, dict):
+            agregar(cfg.get("nombre"), key_hint=str(cfg.get("id") or ""), aliases=cfg.get("aliases") or [])
+
+    # Asociar asset por aliases/nombre, sin eliminar del catálogo las compañías
+    # que todavía no tengan logo documental cargado.
+    for item in items.values():
+        asset_key = ""
+        for alias in [item.get("nombre"), item.get("codigo"), *(item.get("aliases") or [])]:
+            norm = _normalizar_clave(alias)
+            if norm in alias_to_asset:
+                asset_key = alias_to_asset[norm]
+                break
+        if not asset_key:
+            candidate = str(item.get("key") or "").replace("-", "_")
+            if isinstance(manifest.get(candidate), dict):
+                asset_key = candidate
+        info = manifest.get(asset_key) if asset_key else None
+        if isinstance(info, dict):
+            filename = Path(str(info.get("file") or "")).name
+            if filename and (logos_dir / filename).is_file():
+                item["file"] = filename
+                item["key"] = asset_key
+
+    preferidas = ["ATM", "FEDERACION", "MERCANTIL", "SAN CRISTOBAL", "AGS", "RIVADAVIA", "ALLIANZ"]
+    orden = {codigo: idx for idx, codigo in enumerate(preferidas)}
+    salida = sorted(items.values(), key=lambda x: (orden.get(str(x.get("codigo") or ""), 999), str(x.get("nombre") or "").casefold()))
     return salida
 
 
@@ -407,10 +661,13 @@ class CotizacionDocumentService:
         return f"texto:{_normalizar_clave(compania) or 'compania'}"
 
     def _nombre_visible_compania(self, compania: str) -> str:
-        key = self._resolver_clave_compania(compania)
-        if key and key in COMPANIA_DISPLAY:
-            return COMPANIA_DISPLAY[key]
-        return _texto(compania, max_len=120) or "Compañía"
+        # El logo/manifiesto resuelve assets; la identidad visible sale del
+        # registro canónico de compañías. Para una marca aún desconocida se
+        # conserva el texto recibido, sin inventar una canonicalización.
+        original = _texto(compania, max_len=120) or "Compañía"
+        codigo = normalizar_compania(original)
+        conocidos = {item["codigo"] for item in catalogo_companias_canonico()}
+        return nombre_compania(original) if codigo in conocidos else original
 
     @staticmethod
     def _fila_repetible(row):
@@ -486,6 +743,28 @@ class CotizacionDocumentService:
         bottom.set(qn("w:color"), color)
 
     @staticmethod
+    def _borde_inferior_parrafo(paragraph, *, color=AZUL_INSTITUCIONAL, size=5):
+        """Dibuja la regla de compañía justo debajo del logo/nombre.
+
+        La fila exterior también contiene la primera cobertura para evitar que
+        el logo quede huérfano al final de una página; por eso el borde no puede
+        vivir en la celda exterior (quedaría después de toda la cobertura).
+        """
+        p_pr = paragraph._p.get_or_add_pPr()
+        p_bdr = p_pr.find(qn("w:pBdr"))
+        if p_bdr is None:
+            p_bdr = OxmlElement("w:pBdr")
+            p_pr.append(p_bdr)
+        bottom = p_bdr.find(qn("w:bottom"))
+        if bottom is None:
+            bottom = OxmlElement("w:bottom")
+            p_bdr.append(bottom)
+        bottom.set(qn("w:val"), "single")
+        bottom.set(qn("w:sz"), str(int(size)))
+        bottom.set(qn("w:space"), "1")
+        bottom.set(qn("w:color"), color)
+
+    @staticmethod
     def _fuente_run(run, *, name="Georgia", size=10.5, bold=False, color=AZUL_INSTITUCIONAL):
         run.font.name = name
         run.font.size = Pt(size)
@@ -499,29 +778,51 @@ class CotizacionDocumentService:
         for attr in ("ascii", "hAnsi", "eastAsia", "cs"):
             r_fonts.set(qn(f"w:{attr}"), name)
 
-    def _encabezado_compania_en_tabla(self, table, compania: str, *, primera=False):
-        row = table.rows[0]
-        self._fila_repetible(row)
-        self._fila_no_dividir(row)
-        cell = row.cells[0]
-        self._margenes_celda(cell, top=70 if primera else 100, bottom=65)
-        self._borde_inferior_celda(cell, size=5)  # 0,625 pt
+    def _dimensiones_logo_cm(self, compania: str, logo: Path) -> tuple[float, float]:
+        key = self._resolver_clave_compania(compania)
+        info = self._manifest.get(key or "") if key else None
+        info = info if isinstance(info, dict) else {}
+        try:
+            alto_cm = float(info.get("recommended_word_height_cm") or 0.65)
+        except Exception:
+            alto_cm = 0.65
+        try:
+            ancho_max_cm = float(info.get("recommended_word_max_width_cm") or 4.30)
+        except Exception:
+            ancho_max_cm = 4.30
+        alto_cm = max(0.35, min(0.75, alto_cm))
+        ancho_max_cm = max(1.6, min(5.0, ancho_max_cm))
+        try:
+            with Image.open(logo) as im:
+                w, h = im.size
+            proporcion = (float(w) / float(h)) if h else 1.0
+        except Exception:
+            proporcion = 1.0
+        ancho_cm = alto_cm * proporcion
+        if ancho_cm > ancho_max_cm:
+            escala = ancho_max_cm / ancho_cm
+            ancho_cm = ancho_max_cm
+            alto_cm *= escala
+        return ancho_cm, alto_cm
 
+    def _encabezado_compania_en_celda(self, cell, compania: str, *, primera=False):
+        self._margenes_celda(cell, top=70 if primera else 100, bottom=0)
         p = cell.paragraphs[0]
         p.style = "Cotizacion Meta"
         p.paragraph_format.space_before = Pt(0)
-        p.paragraph_format.space_after = Pt(0)
+        p.paragraph_format.space_after = Pt(4)
         p.paragraph_format.keep_with_next = True
+        self._borde_inferior_parrafo(p, size=5)
         logo = self.resolver_logo(compania)
         if logo:
-            # El logo ya identifica visualmente a la compañía. No repetimos su
-            # nombre como texto en Word/PDF; evita encabezados redundantes y
-            # deja más aire para las coberturas.
-            p.add_run().add_picture(str(logo), height=Cm(0.65))
+            # Cada asset vive dentro de un slot óptico común. El manifiesto puede
+            # ajustar únicamente el tamaño del asset, sin cambiar la plantilla.
+            ancho_cm, alto_cm = self._dimensiones_logo_cm(compania, logo)
+            p.add_run().add_picture(str(logo), width=Cm(ancho_cm), height=Cm(alto_cm))
         else:
-            # Fallback accesible para compañías sin asset conocido.
             run = p.add_run(self._nombre_visible_compania(compania).upper())
             self._fuente_run(run, size=10.5, bold=True)
+
 
     @staticmethod
     def _agregar_linea_meta_celda(cell, etiqueta: str, valor: str):
@@ -531,15 +832,12 @@ class CotizacionDocumentService:
         p.add_run(f" · {valor}")
         return p
 
-    def _agregar_cobertura_a_tabla(self, table, alt: dict, *, ultima=False):
-        row = table.add_row()
-        outer = row.cells[0]
+    def _agregar_cobertura_en_celda(self, outer, alt: dict, *, ultima=False, despues_de_encabezado=False):
         self._margenes_celda(outer, top=0, bottom=0)
-        # La tabla exterior necesita poder paginar normalmente para que una
-        # compañía extensa pueda empezar en la primera página. Cada cobertura
-        # vive dentro de una tabla anidada de una sola fila no divisible: así
-        # LibreOffice puede cortar ENTRE alternativas, pero no dentro de una.
-        anchor = outer.paragraphs[0]
+        if despues_de_encabezado:
+            anchor = outer.add_paragraph()
+        else:
+            anchor = outer.paragraphs[0]
         anchor.paragraph_format.space_before = Pt(0)
         anchor.paragraph_format.space_after = Pt(0)
         anchor.paragraph_format.line_spacing = Pt(1)
@@ -601,14 +899,13 @@ class CotizacionDocumentService:
             if idx == len(precios) - 1:
                 p.paragraph_format.space_after = Pt(4)
 
-        # Si no hubo precio, el último párrafo sigue cerrando el bloque con aire.
         if not precios and cell.paragraphs:
             cell.paragraphs[-1].paragraph_format.keep_with_next = False
             cell.paragraphs[-1].paragraph_format.space_after = Pt(4)
 
-        # python-docx mantiene un párrafo final obligatorio después de una
-        # tabla anidada. Reducirlo evita introducir aire visual artificial.
         if outer.paragraphs:
+            # python-docx conserva un párrafo final obligatorio después de una
+            # tabla anidada. Reducirlo evita aire artificial entre bloques.
             tail = outer.paragraphs[-1]
             tail.paragraph_format.space_before = Pt(0)
             tail.paragraph_format.space_after = Pt(0)
@@ -618,18 +915,34 @@ class CotizacionDocumentService:
             for run in tail.runs:
                 run.font.size = Pt(1)
 
+    def _agregar_cobertura_a_tabla(self, table, alt: dict, *, ultima=False):
+        row = table.add_row()
+        self._fila_no_dividir(row)
+        self._agregar_cobertura_en_celda(row.cells[0], alt, ultima=ultima, despues_de_encabezado=False)
+
+
     def _crear_tabla_compania(self, doc: Document, marker, grupo: dict, *, primera=False):
         table = doc.add_table(rows=1, cols=1)
         self._tabla_sin_bordes(table)
         table.autofit = True
-        # Mover la tabla al marcador: la plantilla sigue siendo la dueña del
-        # resto del documento y no se reconstruye ninguna parte fija.
         marker._p.addprevious(table._tbl)
-        self._encabezado_compania_en_tabla(table, grupo["compania"], primera=primera)
         alternativas = grupo["alternativas"]
-        for indice, alt in enumerate(alternativas):
+        if not alternativas:
+            return table
+
+        # Encabezado + primera cobertura comparten una única fila indivisible.
+        # Si no entran al final de una página, Word/LibreOffice mueve ambos a la
+        # siguiente: nunca queda un logo huérfano ni se repite por tblHeader.
+        first_row = table.rows[0]
+        self._fila_no_dividir(first_row)
+        first_cell = first_row.cells[0]
+        self._encabezado_compania_en_celda(first_cell, grupo["compania"], primera=primera)
+        self._agregar_cobertura_en_celda(first_cell, alternativas[0], ultima=len(alternativas) == 1, despues_de_encabezado=True)
+
+        for indice, alt in enumerate(alternativas[1:], start=1):
             self._agregar_cobertura_a_tabla(table, alt, ultima=indice == len(alternativas) - 1)
         return table
+
 
     @staticmethod
     def _insertar_separador_estructural(marker):
@@ -694,6 +1007,23 @@ class CotizacionDocumentService:
                 "nombre_comercial": _texto(alt.get("nombre_comercial"), max_len=180),
                 "variante_comercial": _texto(alt.get("variante_comercial"), max_len=120),
                 "variante_grua": _texto(alt.get("variante_grua"), max_len=40),
+                "tiene_grua": alt.get("tiene_grua") if isinstance(alt.get("tiene_grua"), bool) else None,
+                "granizo_estado": _texto(alt.get("granizo_estado"), max_len=24).upper(),
+                "riesgos_detectados": [
+                    str(x or "").strip().upper() for x in (alt.get("riesgos_detectados") or [])
+                    if str(x or "").strip()
+                ][:40],
+                "beneficios_adicionales": [
+                    _texto(x, max_len=650) for x in (alt.get("beneficios_adicionales") or [])
+                    if _texto(x, max_len=650)
+                ][:30],
+                # Preservamos las condiciones técnicas originales como metadata.
+                # No se imprimen automáticamente en la carta comercial, pero no
+                # se pierden al pasar por el renderer documental.
+                "detalle_tecnico": [
+                    _texto(x, max_len=900) for x in (alt.get("detalle_tecnico") or [])
+                    if _texto(x, max_len=900)
+                ][:40],
                 "suma": _normalizar_moneda_visual(alt.get("suma")),
                 "franquicia_pct": _normalizar_porcentaje(alt.get("franquicia_pct")),
                 "franquicia_importe": _normalizar_moneda_visual(alt.get("franquicia_importe")),
@@ -819,7 +1149,20 @@ class CotizacionDocumentService:
             path = shutil.which(configurado) or (configurado if Path(configurado).exists() else None)
             if path:
                 return str(path)
-        return shutil.which("libreoffice") or shutil.which("soffice")
+        encontrado = shutil.which("libreoffice") or shutil.which("soffice")
+        if encontrado:
+            return encontrado
+        # En Windows LibreOffice suele instalar soffice.exe sin agregarlo al
+        # PATH. Cotizaciones usa la misma detección robusta que Documentos.
+        if os.name == "nt":
+            candidatos = [
+                Path(os.environ.get("PROGRAMFILES", r"C:\Program Files")) / "LibreOffice" / "program" / "soffice.exe",
+                Path(os.environ.get("PROGRAMFILES(X86)", r"C:\Program Files (x86)")) / "LibreOffice" / "program" / "soffice.exe",
+            ]
+            for candidato in candidatos:
+                if candidato.exists():
+                    return str(candidato)
+        return None
 
     def convertir_pdf(self, docx_path: Path, output_dir: Path, *, timeout=75) -> Path:
         executable = self._libreoffice_bin()

@@ -56,7 +56,7 @@ def alternativa(compania: str, idx: int, *, larga=False):
         contenidos += [
             {"tipo": "beneficio", "texto": "Cristales laterales y cerraduras según condiciones de póliza"},
             {"tipo": "beneficio", "texto": "Daños parciales por accidente según la alternativa seleccionada"},
-            {"tipo": "nota", "texto": "En caso de un daño parcial se aplican los límites y condiciones informados en la cotización."},
+            {"tipo": "nota", "texto": "En caso de daño parcial se aplican los límites y condiciones informados en la cotización."},
         ]
     data = {
         "compania": compania,
@@ -97,33 +97,41 @@ def validar_docx(path: Path, *, logos_esperados: int, baseline_shapes: int, comp
     for estilo in ESTILOS_REQUERIDOS:
         check(estilo in doc.styles, f"Se perdió el estilo Word {estilo}.")
     check(len(doc.inline_shapes) == baseline_shapes + logos_esperados, "Cantidad inesperada de logos en el Word.")
-    altura = int(Cm(0.65))
+    # Los logos comparten un slot óptico, pero cada asset puede tener una altura
+    # recomendada propia para igualar peso visual sin estirarlo (p. ej. Allianz
+    # y San Cristóbal). Nunca deben salirse de los límites del sistema.
+    min_h, max_h = int(Cm(0.35)), int(Cm(0.75))
     for shape in list(doc.inline_shapes)[baseline_shapes:]:
-        check(abs(int(shape.height) - altura) <= 2, "Un logo no tiene 0,65 cm de altura.")
+        check(min_h <= int(shape.height) <= max_h, "Un logo quedó fuera del slot óptico permitido.")
 
     if companias_esperadas is not None:
         check(len(doc.tables) == companias_esperadas, "Cantidad inesperada de secciones/tablas de compañía.")
     for table in doc.tables:
-        check(len(table.rows) >= 2, "Una sección de compañía quedó sin cobertura.")
-        header_tr_pr = table.rows[0]._tr.trPr
-        check(header_tr_pr is not None and header_tr_pr.find(qn("w:tblHeader")) is not None, "El encabezado de compañía no quedó marcado para repetirse.")
-        header_cell = table.rows[0].cells[0]
-        tc_pr = header_cell._tc.tcPr
-        borders = tc_pr.find(qn("w:tcBorders")) if tc_pr is not None else None
-        bottom = borders.find(qn("w:bottom")) if borders is not None else None
-        check(bottom is not None and bottom.get(qn("w:color")) == AZUL_INSTITUCIONAL, "Falta la línea azul institucional de compañía.")
+        check(len(table.rows) >= 1, "Una sección de compañía quedó vacía.")
+        first_row = table.rows[0]
+        first_tr_pr = first_row._tr.trPr
+        check(first_tr_pr is not None and first_tr_pr.find(qn("w:cantSplit")) is not None, "Logo + primera cobertura pueden separarse entre páginas.")
+        check(first_tr_pr.find(qn("w:tblHeader")) is None, "El logo volvió a configurarse como encabezado repetible.")
+        header_cell = first_row.cells[0]
+        header_p = header_cell.paragraphs[0]
+        p_pr = header_p._p.pPr
+        p_bdr = p_pr.find(qn("w:pBdr")) if p_pr is not None else None
+        bottom = p_bdr.find(qn("w:bottom")) if p_bdr is not None else None
+        check(bottom is not None and bottom.get(qn("w:color")) == AZUL_INSTITUCIONAL, "Falta la línea azul institucional debajo del logo.")
         check(bottom.get(qn("w:sz")) in {"4", "5", "6"}, "La línea de compañía no es fina.")
-        coverage_rows = table.rows[1:]
-        for row_index, row in enumerate(coverage_rows):
+
+        # La primera cobertura comparte la fila con el logo para que ambos se
+        # muevan juntos; las siguientes tienen su propia fila indivisible.
+        for row_index, row in enumerate(table.rows):
             nested = row.cells[0].tables
             check(len(nested) == 1, "Cada cobertura debe vivir en un único bloque documental interno.")
             tr_pr = nested[0].rows[0]._tr.trPr
             check(tr_pr is not None and tr_pr.find(qn("w:cantSplit")) is not None, "Una cobertura normal puede dividirse entre páginas.")
-            if row_index < len(coverage_rows) - 1:
-                tc_pr = nested[0].rows[0].cells[0]._tc.tcPr
-                borders = tc_pr.find(qn("w:tcBorders")) if tc_pr is not None else None
-                bottom = borders.find(qn("w:bottom")) if borders is not None else None
-                check(bottom is not None and bottom.get(qn("w:color")) == "DCE4EC", "Falta el separador suave entre coberturas.")
+            if row_index < len(table.rows) - 1:
+                tc_pr_nested = nested[0].rows[0].cells[0]._tc.tcPr
+                borders_nested = tc_pr_nested.find(qn("w:tcBorders")) if tc_pr_nested is not None else None
+                bottom_nested = borders_nested.find(qn("w:bottom")) if borders_nested is not None else None
+                check(bottom_nested is not None and bottom_nested.get(qn("w:color")) == "DCE4EC", "Falta el separador suave entre coberturas.")
     cierres = [p for p in doc.paragraphs if p.text.strip() in {"Gracias por elegirnos", "Seguros San José"}]
     check(sum(p.text.strip() == "Gracias por elegirnos" for p in cierres) == 1, "El cierre institucional falta o está duplicado.")
     check(cierres[-2].text.strip() == "Gracias por elegirnos" and cierres[-1].text.strip() == "Seguros San José", "Las dos líneas del cierre no forman el último bloque.")
@@ -152,7 +160,11 @@ def main():
     check((LOGOS / "logos_manifest.json").exists(), "Falta logos_manifest.json")
     service = CotizacionDocumentService(template_path=TEMPLATE, logos_dir=LOGOS)
     catalogo = catalogo_companias(LOGOS)
-    check([x["key"] for x in catalogo] == ["atm", "federacion_patronal", "mercantil_andina", "san_cristobal", "agrosalta", "rivadavia", "allianz"], "El catálogo UI no sigue logos_manifest.json.")
+    # Las siete compañías con asset histórico conservan orden/identidad. El
+    # catálogo universal puede sumar compañías sin logo para los selectores;
+    # esa ampliación no debe invalidar la generación documental.
+    con_logo = [x["key"] for x in catalogo if x.get("file")]
+    check(con_logo[:7] == ["atm", "federacion_patronal", "mercantil_andina", "san_cristobal", "agrosalta", "rivadavia", "allianz"], "Las compañías documentales existentes perdieron orden o identidad.")
     check(normalizar_porcentaje("2%%") == "2%", "Falló la normalización pública de porcentaje.")
     base_doc = Document(TEMPLATE)
     baseline_shapes = len(base_doc.inline_shapes)
@@ -161,6 +173,10 @@ def main():
         check(service.resolver_logo(cia) is not None, f"No se resolvió el logo de {cia}.")
     for alias in ("Federacion Patronal", "FEDERACION", "MERCANTIL", "San Cristobal", "GRUPO SAN CRISTOBAL", "Seguros Rivadavia", "Allianz Seguros"):
         check(service.resolver_logo(alias) is not None, f"No se resolvió el alias {alias}.")
+    _, alto_sc = service._dimensiones_logo_cm("San Cristóbal", service.resolver_logo("San Cristóbal"))
+    _, alto_allianz = service._dimensiones_logo_cm("Allianz", service.resolver_logo("Allianz"))
+    _, alto_atm = service._dimensiones_logo_cm("ATM", service.resolver_logo("ATM"))
+    check(alto_sc < alto_atm and alto_allianz < alto_atm, "Allianz/San Cristóbal no redujeron su peso visual respecto del slot estándar.")
 
     with TemporaryDirectory(prefix="oficinaia_validacion_cotizacion_") as raw:
         tmp = Path(raw)
@@ -209,6 +225,95 @@ def main():
         check("ATM" not in repetidas_text and "MERCANTIL ANDINA" not in repetidas_text, "El documento repite nombres de compañía aunque ya muestra sus logos.")
         check("Suma asegurada · $69.000.000" in repetidas_text, "No se normalizó el espacio monetario.")
         check("Franquicia · 2%" in repetidas_text and "2%%" not in repetidas_text, "No se normalizó la franquicia porcentual.")
+        nota_2 = "En caso de daño parcial, queda a cargo del asegurado una franquicia equivalente al 2% de la suma asegurada. Todo gasto que supere ese importe queda a cargo de la compañía."
+        check(nota_2 in repetidas_text, "La explicación universal de franquicia no llegó al documento.")
+        check(repetidas_text.count(nota_2) == 1, "La explicación de franquicia quedó duplicada en el documento.")
+
+        # Idempotencia: validar un payload ya normalizado no puede volver a
+        # agregar una nota, variante o beneficio.
+        tr_payload = {"vehiculo": "Idempotencia", "alternativas": [{
+            "compania": "ATM", "familia": "TODO_RIESGO", "nombre": "Todo Riesgo",
+            "nombre_comercial": "Todo Riesgo", "franquicia_pct": "3",
+            "contenidos": [
+                {"tipo": "beneficio", "texto": "Responsabilidad civil, incendio total y parcial, robo/hurto total y parcial, destrucción total y daños parciales por accidente"},
+                {"tipo": "nota", "texto": "En caso de daño parcial, queda a cargo del asegurado una franquicia equivalente al 3% de la suma asegurada. Todo gasto que supere ese importe queda a cargo de la compañía."},
+            ],
+        }]}
+        una = service.validar_datos(tr_payload)
+        dos = service.validar_datos(una)
+        check(una == dos, "La normalización documental no es idempotente.")
+        check(sum(1 for x in dos["alternativas"][0]["contenidos"] if x.get("tipo") == "nota") == 1, "Una segunda validación duplicó la franquicia.")
+
+        # C_PLUS/Full hereda siempre el núcleo de Terceros Completo y suma sólo
+        # adicionales confirmados.
+        plus = service.validar_datos({"vehiculo": "Plus", "alternativas": [{
+            "compania": "Mercantil Andina", "familia": "C_PLUS",
+            "nombre": "Terceros Completo M Plus", "nombre_comercial": "Terceros Completo Plus",
+            "tiene_grua": True,
+            "riesgos_detectados": ["RESPONSABILIDAD_CIVIL", "INCENDIO_TOTAL", "INCENDIO_PARCIAL", "ROBO_HURTO_TOTAL", "ROBO_HURTO_PARCIAL", "DESTRUCCION_TOTAL_ACCIDENTE", "RUEDAS", "VIDRIOS", "GRANIZO", "CERRADURAS", "GRUA"],
+            "contenidos": [
+                {"tipo": "beneficio", "texto": "Ruedas, vidrios, granizo y cerraduras"},
+                {"tipo": "beneficio", "texto": "Incluye grúa"},
+            ],
+        }]})["alternativas"][0]
+        plus_items = [x["texto"] for x in plus["contenidos"] if x.get("tipo") != "nota"]
+        for esperado in ["Responsabilidad Civil", "Incendio Total y Parcial", "Robo/Hurto Total y Parcial", "Destrucción Total por Accidente"]:
+            check(esperado in plus_items, f"C_PLUS perdió la prestación canónica: {esperado}.")
+        for esperado in ["Ruedas", "Vidrios", "Granizo", "Cerraduras", "Incluye grúa"]:
+            check(esperado in plus_items, f"C_PLUS perdió el adicional confirmado: {esperado}.")
+        check(not any(", incendio" in x.lower() and ", robo" in x.lower() for x in plus_items), "C_PLUS volvió a usar una frase legacy en lugar de una prestación por bullet.")
+
+
+        # Toda cobertura usa prestaciones canónicas, una por bullet. C1 sin DT
+        # no vuelve al speech legacy; C con DT agrega sólo el bullet correspondiente.
+        c1 = service.validar_datos({"vehiculo":"AgroSalta", "alternativas":[{
+            "compania":"AgroSalta", "codigo":"C1", "familia":"C1",
+            "nombre":"Terceros Completo", "nombre_comercial":"Terceros Completo",
+            "suma":"$8.999.999", "precio":"$72.000",
+            "riesgos_detectados":["RESPONSABILIDAD_CIVIL","INCENDIO_TOTAL","INCENDIO_PARCIAL","ROBO_HURTO_TOTAL","ROBO_HURTO_PARCIAL"],
+            "contenidos":[{"tipo":"beneficio","texto":"Responsabilidad civil, incendio total y parcial y robo/hurto total y parcial"}],
+        }]})["alternativas"][0]
+        check([x["texto"] for x in c1["contenidos"] if x["tipo"] == "beneficio"] == [
+            "Responsabilidad Civil", "Incendio Total y Parcial", "Robo/Hurto Total y Parcial"
+        ], "C1 no quedó expresado con prestaciones canónicas por bullet.")
+        c = service.validar_datos({"vehiculo":"AgroSalta", "alternativas":[{
+            "compania":"AgroSalta", "codigo":"C", "familia":"C",
+            "nombre":"Terceros Completo", "nombre_comercial":"Terceros Completo",
+            "suma":"$8.999.999", "precio":"$73.000",
+            "riesgos_detectados":["RESPONSABILIDAD_CIVIL","INCENDIO_TOTAL","INCENDIO_PARCIAL","ROBO_HURTO_TOTAL","ROBO_HURTO_PARCIAL","DESTRUCCION_TOTAL_ACCIDENTE"],
+            "contenidos":[],
+        }]})["alternativas"][0]
+        check([x["texto"] for x in c["contenidos"] if x["tipo"] == "beneficio"] == [
+            "Responsabilidad Civil", "Incendio Total y Parcial", "Robo/Hurto Total y Parcial", "Destrucción Total por Accidente"
+        ], "C con DT no quedó expresado con prestaciones canónicas por bullet.")
+
+        tech = service.validar_datos({"vehiculo":"ATM", "alternativas":[{
+            "compania":"ATM", "codigo":"CPr", "familia":"C_PLUS",
+            "nombre":"Terceros Completo Premium", "nombre_comercial":"Terceros Completo Premium",
+            "riesgos_detectados":["RESPONSABILIDAD_CIVIL","INCENDIO_TOTAL","INCENDIO_PARCIAL","ROBO_HURTO_TOTAL","ROBO_HURTO_PARCIAL","DESTRUCCION_TOTAL_ACCIDENTE"],
+            "detalle_tecnico":["Granizo hasta la suma asegurada · 2 eventos por año"],
+            "contenidos":[],
+        }]})["alternativas"][0]
+        check(tech.get("detalle_tecnico") == ["Granizo hasta la suma asegurada · 2 eventos por año"], "Se perdió la metadata técnica de una variante ATM.")
+
+        for codigo, nombre in (("C", "Terceros Completo Plus"), ("CPr", "Terceros Completo Premium"), ("CB", "Terceros Completo Black")):
+            variante_atm = normalizar_cobertura_para_carta({
+                "compania": "ATM", "codigo": codigo, "familia": "C_PLUS",
+                "nombre": nombre, "nombre_comercial": nombre,
+                "riesgos_detectados": ["RESPONSABILIDAD_CIVIL", "INCENDIO_TOTAL", "INCENDIO_PARCIAL", "ROBO_HURTO_TOTAL", "ROBO_HURTO_PARCIAL", "DESTRUCCION_TOTAL_ACCIDENTE"],
+                "contenidos": [],
+            })
+            check(variante_atm["nombre"].upper() == nombre.upper(), f"ATM {codigo} perdió su variante comercial y fue aplastada por C_PLUS.")
+
+        atm_b_estructurado = normalizar_cobertura_para_carta({
+            "compania": "ATM", "codigo": "B", "familia": "B",
+            "nombre": "Robo e Incendio Total y/o Parcial + Accidente Total",
+            "nombre_comercial": "Robo e Incendio Total y/o Parcial + Accidente Total",
+            "riesgos_detectados": ["RESPONSABILIDAD_CIVIL", "INCENDIO_TOTAL", "INCENDIO_PARCIAL", "ROBO_HURTO_TOTAL", "ROBO_HURTO_PARCIAL", "DESTRUCCION_TOTAL_ACCIDENTE"],
+            "contenidos": [],
+        })
+        atm_b_items = [x["texto"] for x in atm_b_estructurado["contenidos"] if x["tipo"] == "beneficio"]
+        check("Incendio Total y Parcial" in atm_b_items and "Robo/Hurto Total y Parcial" in atm_b_items, "La familia B volvió a pisar los riesgos estructurados ATM.")
 
         # Compañía desconocida: fallback textual y generación no bloqueada.
         unknown = {"vehiculo": "Prueba", "alternativas": [alternativa("Compañía Sin Logo", 1)]}
@@ -298,14 +403,14 @@ def main():
         ]
         check(posiciones == sorted(posiciones), "Las coberturas no quedaron ordenadas de básica a completa.")
 
-        # Si no hay evidencia suficiente, limpiar el código sin inventar otro
-        # riesgo: D4 conserva el nombre comercial útil y elimina % duplicados.
+        # Allianz: D4 conserva el producto base; Granizo es una prestación/
+        # estado separado y nunca parte de la identidad visible de la cobertura.
         d4 = normalizar_cobertura_para_carta({
             "nombre": "D4 ALTA GAMA VIP - 2% - C/GRANIZO",
             "franquicia_pct": "2%%",
             "contenidos": [{"tipo": "beneficio", "texto": "Granizo"}],
         })
-        check(d4["nombre"] == "ALTA GAMA VIP · CON GRANIZO", "D4 no quedó como nombre comercial limpio.")
+        check(d4["nombre"] == "ALTA GAMA VIP", "D4 no quedó como producto base limpio; Granizo no debe formar parte del título.")
 
         # La autoridad comercial del cotizador debe sobrevivir intacta al DOCX/PDF.
         explicita = normalizar_cobertura_para_carta({
@@ -327,8 +432,8 @@ def main():
         })
         check(lb["nombre_comercial"] == "ROBO E INCENDIO + ROBO PARCIAL AL AMPARO + ACCIDENTE TOTAL", "LB volvió a salir como código técnico en documentos.")
 
-        # Compañía extensa: debe empezar en la primera página, repetir el
-        # encabezado compacto en cada continuación y nunca partir una cobertura.
+        # Compañía extensa: logo único, primera cobertura unida al encabezado
+        # y ninguna cobertura puede quedar partida entre páginas.
         misma_cia = []
         for idx in range(1, 9):
             item = alternativa("ATM", idx)

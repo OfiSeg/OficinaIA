@@ -296,14 +296,21 @@ def parsear_cuit_arca(mensaje, *, historial=None, arca_context=None, source_choi
 
 
 def parsear_ficha_operativa(mensaje):
-    """Detecta sólo pedidos explícitos de ficha/expediente de cartera."""
+    """Busca cartera por una única vía determinística con varios aliases.
+
+    /patente, /asegurado e /info son sólo puertas de entrada al mismo motor
+    (igual que /m y /mail). /ficha y /expediente se conservan por compatibilidad.
+    Ninguno de estos comandos consulta ARCA ni Gemini.
+    """
     texto = str(mensaje or "").strip()
     if not texto:
         return None
-    m = re.match(r"^/(?:ficha|expediente)\b\s*(.*)$", texto, re.I)
+    m = re.match(r"^/(?:ficha|expediente|patente|asegurado|info)\b\s*(.*)$", texto, re.I)
     if m:
         objetivo = m.group(1).strip(" :;,.()")
-        return {"query": objetivo} if objetivo else {"error": "Usá `/ficha Nombre Apellido` o `/ficha PATENTE`."}
+        return {"query": objetivo} if objetivo else {
+            "error": "Indicá nombre, patente, teléfono, DNI/CUIT o póliza para buscar en la cartera."
+        }
     # Un comando slash ajeno nunca debe ser reinterpretado por la heurística
     # de lenguaje natural de ficha. Esto mantiene /cuit, /cuil, /envios, etc.
     # en el handler explícito que les corresponde.
@@ -337,25 +344,12 @@ def _formatear_ficha_operativa(ficha):
     veh = len(ficha.get("vehiculos") or [])
     return f"Ficha de {nombre}: {total} registro{'s' if total != 1 else ''} y {veh} vehículo{'s' if veh != 1 else ''} relacionado{'s' if veh != 1 else ''}."
 
-def procesar(mensaje, *, leer_excel, normalizar_encabezado, libros_excel, historial=None, arca_context=None, source_choice_pending=None, adjuntos=None):
-    texto_inicial = str(mensaje or "").strip()
-    m_patente = re.match(r"^/patente\b\s*(.*)$", texto_inicial, re.I)
-    if m_patente:
-        patente = normalizar_patente(m_patente.group(1))
-        if not patente:
-            return CommandResult(True, "Usá `/patente ABC123` para consultar el vehículo en tu cartera.")
-        ficha = insured_profile.construir_ficha(patente, leer_excel)
-        return CommandResult(
-            True,
-            _formatear_ficha_operativa(ficha),
-            payload_extra={"ficha_operativa_asegurado": ficha},
-        )
-
+def procesar(mensaje, *, leer_excel, normalizar_encabezado, libros_excel, historial=None, arca_context=None, source_choice_pending=None, adjuntos=None, buscar_perfil=None):
     ficha_req = parsear_ficha_operativa(mensaje)
     if ficha_req is not None:
         if ficha_req.get("error"):
             return CommandResult(True, ficha_req["error"])
-        ficha = insured_profile.construir_ficha(ficha_req.get("query"), leer_excel)
+        ficha = insured_profile.construir_ficha(ficha_req.get("query"), leer_excel, buscar_persistente=buscar_perfil)
         return CommandResult(
             True,
             _formatear_ficha_operativa(ficha),

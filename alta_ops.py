@@ -132,6 +132,49 @@ def _detectar_premio_poliza(texto):
             return m.group(1)
     return ""
 
+
+def _detectar_cobertura_poliza(texto):
+    """Dato documental opcional para la bienvenida; nunca se infiere por código."""
+    fuente = str(texto or "")
+    patrones = (
+        r"(?im)^\s*COBERTURA(?:\s+CONTRATADA)?\s*[:\-]\s*([^\n\r]{3,140})$",
+        r"(?im)^\s*PLAN(?:\s+DE\s+COBERTURA)?\s*[:\-]\s*([^\n\r]{3,140})$",
+    )
+    for patron in patrones:
+        m = re.search(patron, fuente)
+        if m:
+            valor = re.sub(r"\s+", " ", m.group(1)).strip(" .;:-")
+            if valor:
+                return valor
+    return ""
+
+
+def _detectar_vencimiento_cuota_poliza(texto):
+    """Sólo toma vencimientos explícitamente asociados a cuota/pago."""
+    fuente = str(texto or "")
+    patrones = (
+        r"(?i)PR[ÓO]XIMO\s+VENCIMIENTO\s*[:\-]?\s*(\d{1,2}[\/\-.]\d{1,2}[\/\-.]\d{2,4})",
+        r"(?i)VENCIMIENTO\s+(?:DE\s+)?CUOTA\s*[:\-]?\s*(\d{1,2}[\/\-.]\d{1,2}[\/\-.]\d{2,4})",
+        r"(?i)CUOTA\s*(?:N[°º]?\s*\d+)?[^\n\r]{0,80}?VENC(?:IMIENTO)?\s*[:\-]?\s*(\d{1,2}[\/\-.]\d{1,2}[\/\-.]\d{2,4})",
+    )
+    for patron in patrones:
+        m = re.search(patron, fuente)
+        if m:
+            return _normalizar_fecha_emision(m.group(1))
+    return ""
+
+
+def _detectar_asistencia_grua_poliza(texto):
+    """Conserva lo explícito; no supone asistencia por nombre de cobertura."""
+    fuente = str(texto or "")
+    m = re.search(r"(?im)^\s*([^\n\r]{0,40}(?:GR[ÚU]A|ASISTENCIA\s+(?:MEC[ÁA]NICA|VEHICULAR))[^\n\r]{0,120})$", fuente)
+    if not m:
+        return ""
+    linea = re.sub(r"\s+", " ", m.group(1)).strip(" .;:-")
+    if re.search(r"\bSIN\s+(?:SERVICIO\s+DE\s+)?GR[ÚU]A\b|\bSIN\s+ASISTENCIA\b", linea, re.I):
+        return "Sin grúa"
+    return linea[:180]
+
 def _normalizar_fecha_emision(valor):
     texto = re.sub(r"\s+", " ", str(valor or "")).strip()
     if not texto:
@@ -214,6 +257,9 @@ def interpretar_poliza_a_json(texto):
             "codigo_postal": limpio("codigo_postal"),
             "emitido": emitido,
             "premio": premio,
+            "cobertura": _detectar_cobertura_poliza(texto),
+            "vencimiento": _detectar_vencimiento_cuota_poliza(texto),
+            "asistencia_grua": _detectar_asistencia_grua_poliza(texto),
         }
     except Exception as error:
         print("ERROR GEMINI /ALTA:", error)
@@ -263,6 +309,9 @@ def interpretar_poliza_adjunto(adjunto):
         "codigo_postal": limpio("codigo_postal"),
         "emitido": _normalizar_fecha_emision(limpio("emitido")),
         "premio": _normalizar_importe(limpio("premio")),
+        "cobertura": "",
+        "vencimiento": "",
+        "asistencia_grua": "",
     }
 
 
@@ -282,6 +331,11 @@ def propuesta_a_columnas(propuesta):
         "CODIGO POSTAL": propuesta.get("codigo_postal", ""),
         "EMITIDO DÍA:": propuesta.get("emitido", ""),
         "IMPORTE APROX": propuesta.get("premio", ""),
+        # Datos documentales efímeros: alimentan Bienvenida pero no crean
+        # columnas nuevas ni alteran la planilla histórica.
+        "COBERTURA": propuesta.get("cobertura", ""),
+        "VENCIMIENTO": propuesta.get("vencimiento", ""),
+        "ASISTENCIA_GRUA": propuesta.get("asistencia_grua", ""),
         "DE DONDE ": "",
         "MAIL": "",
         # Campo legado/alternativo: también queda manual y no se extrae del PDF.
@@ -356,6 +410,9 @@ def campos_alta_desde_cedula(datos: dict) -> dict:
         "CP": "",
         "EMITIDO DÍA:": "",
         "IMPORTE APROX": "",
+        "COBERTURA": "",
+        "VENCIMIENTO": "",
+        "ASISTENCIA_GRUA": "",
         "MAIL": "",
         "TELEFONO": "",
     }
@@ -430,6 +487,9 @@ def a_campos_guardar_asegurado(columnas):
         "CP": columnas.get("CODIGO POSTAL", ""),
         "EMITIDO DÍA:": columnas.get("EMITIDO DÍA:", ""),
         "IMPORTE APROX": columnas.get("IMPORTE APROX", ""),
+        "COBERTURA": columnas.get("COBERTURA", ""),
+        "VENCIMIENTO": columnas.get("VENCIMIENTO", ""),
+        "ASISTENCIA_GRUA": columnas.get("ASISTENCIA_GRUA", ""),
         "MAIL": "",
         "TELEFONO": "",
     }

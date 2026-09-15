@@ -16,8 +16,9 @@
       180
     ],
     "visible_height_px": 180,
-    "recommended_word_height_cm": 0.65,
-    "preserve_aspect_ratio": true
+    "recommended_word_height_cm": 0.5,
+    "preserve_aspect_ratio": true,
+    "recommended_word_max_width_cm": 4.2
   },
   "atm": {
     "file": "atm.png",
@@ -85,7 +86,8 @@
       180
     ],
     "visible_height_px": 180,
-    "recommended_word_height_cm": 0.65,
-    "preserve_aspect_ratio": true
+    "recommended_word_height_cm": 0.55,
+    "preserve_aspect_ratio": true,
+    "recommended_word_max_width_cm": 4.2
   }
 }

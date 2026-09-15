@@ -12,21 +12,33 @@ import re
 import unicodedata
 from typing import Optional
 
+from companias import catalogo_companias
 
-# Catálogo inicial. Para agregar compañías en el futuro, modificar solamente
-# este diccionario. No hace falta tocar procesar_comando_coti().
-COMPANIAS_COTI = {
-    "allianz": "Allianz",
-    "ags": "AGS",
-    "federacion patronal": "Federación Patronal",
-    "atm": "ATM",
-    "mercantil andina": "Mercantil Andina",
-    "san cristobal": "San Cristóbal",
-    "prof": "Prof",
-    "euroamerica": "Euroamerica",
-    "triunfo": "Triunfo",
-    "rivadavia": "Rivadavia",
-}
+
+# /coti no mantiene una taxonomía paralela: consume TODAS las compañías
+# registradas por OficinaIA y sus aliases. Que una compañía esté registrada no
+# implica que inventemos una cobertura; sólo permite identificarla de forma
+# consistente en este comando determinístico.
+def _companias_coti_desde_registro():
+    out = {}
+    for item in catalogo_companias():
+        if not item.get("coti_enabled"):
+            continue
+        nombre = str(item.get("coti_nombre") or item.get("nombre") or "").strip()
+        if not nombre:
+            continue
+        candidatos = [
+            item.get("key"), item.get("codigo"), nombre, item.get("portal_nombre"),
+            *(item.get("aliases") or []),
+        ]
+        for alias in candidatos:
+            alias = str(alias or "").strip()
+            if alias:
+                out.setdefault(alias, nombre)
+    return out
+
+
+COMPANIAS_COTI = _companias_coti_desde_registro()
 
 
 # Los códigos alternativos se normalizan al código canónico antes de buscar
@@ -230,7 +242,7 @@ def procesar_comando_coti(texto: str):
 
     if compania is None:
         primer_token = re.split(r"\s+", argumentos, maxsplit=1)[0]
-        disponibles = ", ".join(COMPANIAS_COTI.values())
+        disponibles = ", ".join(dict.fromkeys(COMPANIAS_COTI.values()))
         return (
             f'La compañía "{primer_token}" no está registrada para /coti.\n\n'
             f"Compañías disponibles: {disponibles}."

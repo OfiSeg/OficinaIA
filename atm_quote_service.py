@@ -16,6 +16,7 @@ from ai_gateway import DEFAULT_MODELS, generate_with_fallback, obtener_cliente_g
 from attachment_vision import renderizar_para_vision
 from atm_coberturas import enriquecer_cobertura, enriquecer_cobertura_moto
 from resilience import RecoverablePayloadError
+from quote_normalizer import normalizar_cobertura
 
 
 SYSTEM_INSTRUCTION = r"""
@@ -137,12 +138,24 @@ def _normalizar_salida(dato: dict) -> dict:
         if confianza not in {"alta", "media", "baja"}:
             confianza = "media"
         franquicia = _franquicia(item.get("franquicia_pct"), titulo)
+        normal = normalizar_cobertura(
+            catalogo.get("descripcion_cliente") or titulo,
+            compania="ATM",
+            codigo=catalogo.get("codigo") or "",
+            nombre=catalogo.get("nombre_cliente") or titulo,
+        )
         coberturas.append({
             "uid": f"atm-{tipo_cotizacion}-{idx+1}",
             "titulo_leido": titulo,
             "precio_base": precio,
             "franquicia_pct": franquicia,
             "tipo_vehiculo": tipo_cotizacion,
+            "perfil_normalizado": normal.get("perfil_normalizado"),
+            "familia": normal.get("perfil_normalizado"),
+            "riesgos_detectados": catalogo.get("riesgos_detectados") or normal.get("riesgos_detectados") or [],
+            "beneficios_adicionales": catalogo.get("beneficios_adicionales") or [],
+            "detalle_tecnico": catalogo.get("detalle_tecnico") or [],
+            "evidencias": normal.get("evidencias") or [],
             "confianza": confianza,
             "requiere_revision": confianza == "baja" or not catalogo.get("catalogada"),
             **catalogo,

@@ -4482,9 +4482,11 @@ html[data-theme="dark"] body.chat-layout .file-attached-item.wa-composer-attachm
 .chat-action-icon{width:31px;height:31px;flex:0 0 31px;border-radius:9px;display:grid;place-items:center;background:color-mix(in srgb,var(--tealbg,#eef3f6) 80%,transparent)}
 .chat-action-icon img{width:17px;height:17px;display:block;object-fit:contain}
 .chat-action-item>span:last-child{min-width:0;display:grid;gap:1px}.chat-action-item b{font-size:13px;font-weight:650;line-height:1.2}.chat-action-item small{font-size:11px;color:var(--soft,#7b8794);line-height:1.2}
-.chat-command-menu{left:auto!important;right:58px!important;bottom:68px!important;width:min(390px,calc(100% - 84px))!important;max-height:min(310px,55vh)!important;overflow-y:auto!important;padding:6px!important;border-radius:14px!important;background:var(--surface,#fff)!important;box-shadow:0 12px 34px rgba(18,32,51,.16)!important}
-.chat-command-menu[hidden]{display:none!important}.chat-command-item{display:flex!important;align-items:center!important;justify-content:space-between!important;gap:16px!important;min-height:38px!important;padding:7px 9px!important;border-radius:9px!important}
-.chat-command-item strong{font-size:12.5px!important;font-weight:700!important;white-space:nowrap}.chat-command-item small{font-size:11px!important;opacity:.68!important;text-align:right;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.chat-command-menu{left:16px;right:auto;bottom:68px;width:min(390px,calc(100% - 32px));max-height:min(410px,calc(100vh - 110px));overflow-y:auto;overscroll-behavior:contain;padding:7px;border:1px solid var(--oi-border-tool,#c9e1f4);border-radius:14px;background:var(--oi-surface-tool,#eff8ff);box-shadow:0 12px 34px rgba(18,62,96,.16)}
+.chat-command-group{padding:8px 9px 4px;font-size:10px;font-weight:800;letter-spacing:.08em;text-transform:uppercase;color:#4f7696}
+.chat-command-group:not(:first-child){margin-top:4px;border-top:1px solid rgba(79,118,150,.16)}
+.chat-command-menu[hidden]{display:none!important}.chat-command-item{display:flex!important;align-items:center!important;justify-content:flex-start!important;gap:11px!important;min-height:38px!important;padding:7px 9px!important;border-radius:9px!important;text-align:left!important}
+.chat-command-item strong{font-size:12.5px!important;font-weight:700!important;white-space:nowrap;text-align:left!important}.chat-command-item small{font-size:11px!important;opacity:.68!important;text-align:left!important;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .file-attached{width:calc(100% - 8px)!important;max-width:none!important;margin:0 4px 8px!important}
 .dictation-btn.is-listening{color:#c84d4d!important;background:rgba(200,77,77,.10)!important;animation:dictationPulse 1.25s ease-in-out infinite}.dictation-btn.is-unavailable{opacity:.48}@keyframes dictationPulse{0%,100%{transform:scale(1)}50%{transform:scale(1.07)}}
 body.chat-layout .wa-attachment-card.wa-attachment-image .wa-photo-preview{cursor:zoom-in}
@@ -4492,7 +4494,7 @@ body.chat-layout .wa-attachment-card.wa-attachment-image .wa-photo-preview:focus
 .chat-image-lightbox[hidden]{display:none!important}.chat-image-lightbox{position:fixed;inset:0;z-index:2400;display:flex;align-items:center;justify-content:center;padding:34px;background:rgba(6,12,17,.88);backdrop-filter:blur(2px)}
 .chat-image-lightbox img{display:block;max-width:min(94vw,1400px);max-height:90vh;width:auto;height:auto;object-fit:contain;border-radius:8px;box-shadow:0 18px 60px rgba(0,0,0,.42)}
 .chat-image-lightbox-close{position:fixed;top:18px;right:22px;width:40px;height:40px;border:0;border-radius:50%;background:rgba(255,255,255,.14);color:#fff;font-size:28px;line-height:1;cursor:pointer}.chat-image-lightbox-close:hover{background:rgba(255,255,255,.24)}body.chat-lightbox-open{overflow:hidden}
-html[data-theme="dark"] .chat-action-menu,html[data-theme="dark"] .chat-command-menu{background:var(--surface,#1e2730)!important;border-color:var(--line,#33404d)!important}html[data-theme="dark"] .chat-action-item{color:var(--ink,#edf2f6)}html[data-theme="dark"] .composer-action-btn,html[data-theme="dark"] .dictation-btn{color:var(--muted,#aab5c0)!important}
+html[data-theme="dark"] .chat-action-menu{background:var(--surface,#1e2730)!important;border-color:var(--line,#33404d)!important}html[data-theme="dark"] .chat-command-menu{background:#172633;border-color:#31546d;color:var(--ink,#edf2f6)}html[data-theme="dark"] .chat-command-group{color:#9fc7e3;border-color:rgba(159,199,227,.16)}html[data-theme="dark"] .chat-action-item{color:var(--ink,#edf2f6)}html[data-theme="dark"] .composer-action-btn,html[data-theme="dark"] .dictation-btn{color:var(--muted,#aab5c0)!important}
 @media(max-width:800px){.composer-wrap{padding:8px 8px 10px!important}.composer{width:100%!important;margin:0!important}.chat-action-menu{left:8px;bottom:64px;width:min(260px,calc(100% - 16px))}.chat-command-menu{left:8px!important;right:8px!important;bottom:64px!important;width:auto!important}}
 @media(max-width:560px){.chat-image-lightbox{padding:18px}.chat-image-lightbox-close{top:10px;right:10px}}
 
@@ -4524,13 +4526,13 @@ body.chat-layout .wa-sent-attachments .wa-photo-preview{min-height:120px!importa
 
 /* ETAPA 3 — Persistencia visual de fichas operativas históricas */
 .insured-profile-row{margin-top:2px!important}
-.insured-profile-card{width:min(560px,100%);border:1px solid var(--line,#e2e7ea);border-radius:14px;padding:14px;background:var(--panel,#fff)}
+.insured-profile-card{width:min(560px,100%);border:1px solid #bfd8ed;border-top:3px solid #2f6f9f;border-radius:14px;padding:13px 14px 14px;background:#f8fbfe}
 .insured-profile-header{display:flex;align-items:flex-start;justify-content:space-between;gap:12px;margin-bottom:12px}
 .insured-profile-header small{display:block;font-size:10.5px;letter-spacing:.08em;color:var(--muted,#667384);font-weight:700;margin-bottom:3px}
 .insured-profile-header strong{font-size:16px;line-height:1.25}
 .insured-profile-badge{font-size:11.5px;background:var(--hover,#eef2f4);border-radius:999px;padding:5px 8px;color:var(--muted,#667384);white-space:nowrap}
 .insured-profile-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px;margin-bottom:12px}
-.insured-profile-fact{min-width:0;background:var(--hover,#f5f7f8);border-radius:9px;padding:8px 9px}
+.insured-profile-fact{min-width:0;background:#eef6fc;border:1px solid rgba(47,111,159,.08);border-radius:9px;padding:8px 9px}
 .insured-profile-fact span{display:block;font-size:10.5px;color:var(--muted,#667384);margin-bottom:2px}
 .insured-profile-fact b{display:block;font-size:13px;overflow-wrap:anywhere}
 .insured-profile-section-title{font-size:11px;text-transform:uppercase;letter-spacing:.06em;color:var(--muted,#667384);font-weight:700;margin:4px 0 6px}
@@ -4540,8 +4542,8 @@ body.chat-layout .wa-sent-attachments .wa-photo-preview{min-height:120px!importa
 .insured-profile-vehicle-main strong{font-size:13.5px}
 .insured-profile-vehicle-main small{font-size:11.5px;color:var(--muted,#667384);overflow-wrap:anywhere}
 .insured-profile-actions{display:flex;gap:7px;margin-top:12px}
-html[data-theme="dark"] .insured-profile-card{background:var(--panel,#20272c)}
-html[data-theme="dark"] .insured-profile-fact,html[data-theme="dark"] .insured-profile-badge{background:rgba(255,255,255,.055)}
+html[data-theme="dark"] .insured-profile-card{background:#1a2731;border-color:#345a75;border-top-color:#6fa6cd}
+html[data-theme="dark"] .insured-profile-fact,html[data-theme="dark"] .insured-profile-badge{background:rgba(111,166,205,.10)}
 @media(max-width:700px){.insured-profile-card{width:94%;padding:12px}.insured-profile-grid{grid-template-columns:1fr}}
 
 
@@ -5098,3 +5100,62 @@ html[data-theme="dark"] .quotes-calculator-btn,html[data-theme="dark"] .quotes-a
 .chat-action-item[data-chat-action="patente"] .chat-action-icon{background:#e8f7fb!important}
 html[data-theme="dark"] .chat-action-item[data-chat-action="cedula"] .chat-action-icon{background:#172c44!important}
 html[data-theme="dark"] .chat-action-item[data-chat-action="patente"] .chat-action-icon{background:#18343d!important}
+
+/* Normalizador universal: lectura recuperada pero con coherencia para revisar. */
+.quote-source-review-warning{
+  margin:8px 0 2px;padding:8px 10px;border:1px solid var(--line,#e2e7ea);border-radius:9px;
+  background:var(--hover,#f5f7f8);color:var(--muted,#667384);font-size:12px;line-height:1.35;
+}
+html[data-theme="dark"] .quote-source-review-warning{background:rgba(255,255,255,.045)}
+
+/* Documentos institucionales: una sola ficha editable para Bienvenida/Pago/Baja. */
+.insured-profile-doc-actions{display:flex;gap:6px;flex-wrap:wrap;margin-top:7px}
+.insured-profile-doc-btn{padding:6px 9px!important;font-size:12px!important}
+.insurance-doc-panel{margin-top:12px;border:1px solid #d6e3ec;border-left:3px solid #6f94ad;border-radius:12px;padding:12px;background:#fbfcfd}
+.insurance-doc-head{display:flex;align-items:flex-start;justify-content:space-between;gap:10px;margin-bottom:9px}
+.insurance-doc-head small{display:block;font-size:10.5px;letter-spacing:.07em;color:var(--muted,#667384);font-weight:700}
+.insurance-doc-head strong{display:block;font-size:14px;margin-top:2px}
+.insurance-doc-close{border:0;background:transparent;color:var(--muted,#667384);padding:5px;cursor:pointer;border-radius:7px}
+.insurance-doc-close:hover{background:var(--hover,#eef2f4)}
+.insurance-doc-loading,.insurance-doc-warning{font-size:12px;line-height:1.4;color:var(--muted,#667384)}
+.insurance-doc-warning{padding:8px 10px;background:var(--hover,#f5f7f8);border:1px solid var(--line,#e2e7ea);border-radius:9px;margin-bottom:9px}
+.insurance-doc-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px}
+.insurance-doc-field{display:flex;flex-direction:column;gap:4px;min-width:0}
+.insurance-doc-field span{font-size:11px;color:var(--muted,#667384);font-weight:600}
+.insurance-doc-field input,.insurance-doc-field textarea,.insurance-doc-field select,.insurance-doc-format{width:100%;box-sizing:border-box;border:1px solid var(--line,#d9e0e5);border-radius:8px;background:var(--panel,#fff);color:var(--text,#18202a);padding:8px 9px;font:inherit;font-size:12.5px;outline:none}
+.insurance-doc-field textarea{min-height:64px;resize:vertical;grid-column:1/-1}
+.insurance-doc-field.needs-review input,.insurance-doc-field.needs-review textarea{border-color:#c99a42}
+.insurance-doc-actions{display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-top:10px}
+.insurance-doc-summary{display:flex;flex-direction:column;gap:2px;padding:9px 10px;margin-bottom:10px;border-radius:9px;background:#f0f5f8}
+.insurance-doc-summary strong{font-size:13.5px}.insurance-doc-summary small{font-size:11.5px;color:var(--muted,#667384);overflow-wrap:anywhere}
+.insurance-doc-edit-details{margin-top:9px;border-top:1px solid var(--line,#e2e7ea);padding-top:8px}.insurance-doc-edit-details summary{cursor:pointer;font-size:11.5px;font-weight:700;color:#4f7189;margin-bottom:8px}
+.insurance-doc-format{width:auto;min-width:88px;height:36px}.insurance-doc-grid-operational .insurance-doc-field[hidden]{display:none}
+html[data-theme="dark"] .insurance-doc-summary{background:rgba(113,151,174,.10)}
+html[data-theme="dark"] .insurance-doc-panel{background:#1d252b;border-color:#344650;border-left-color:#7197ae}html[data-theme="dark"] .insurance-doc-field input,html[data-theme="dark"] .insurance-doc-field textarea,html[data-theme="dark"] .insurance-doc-field select,html[data-theme="dark"] .insurance-doc-format{background:var(--panel,#20272c)}
+html[data-theme="dark"] .insurance-doc-warning{background:rgba(255,255,255,.045)}
+@media(max-width:700px){.insurance-doc-grid{grid-template-columns:1fr}.insured-profile-doc-actions{gap:5px}}
+
+/* HOTFIX 15-09-2026 · Slash menu: lectura LTR y contenido alineado a la izquierda. */
+.chat-command-menu,
+.chat-command-item,
+.chat-command-copy{
+  direction:ltr!important;
+}
+.chat-command-item{
+  justify-content:flex-start!important;
+  text-align:left!important;
+}
+.chat-command-copy{
+  flex:1 1 auto!important;
+  width:auto!important;
+  min-width:0!important;
+  justify-items:start!important;
+  align-items:start!important;
+  text-align:left!important;
+}
+.chat-command-item strong,
+.chat-command-item small{
+  display:block!important;
+  width:100%!important;
+  text-align:left!important;
+}

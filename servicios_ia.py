@@ -1012,28 +1012,9 @@ def _puntuar_metadato(consulta, texto):
     return puntuacion
 
 
-# Compañías que aparecen en otras áreas/configuración de OficinaIA pero no
-# necesariamente tienen un código operativo en companias.py. Sólo se usan para
-# AISLAR metadata; no alteran emisión, cotización ni normalización de cartera.
-_COMPANIAS_DOCUMENTALES_EXTRA = {
-    "allianz": "Allianz",
-    "mapfre": "Mapfre",
-    "mapfre argentina": "Mapfre",
-    "zurich": "Zurich",
-    "zurich retiro": "Zurich",
-    "experta": "Experta",
-    "sura": "Sura",
-    "nacion": "Nación Seguros",
-    "nacion seguros": "Nación Seguros",
-    "hdi": "HDI",
-    "chubb": "Chubb",
-    "smg": "SMG",
-    "smg seguros": "SMG",
-    "galeno": "Galeno",
-    "prevencion": "Prevención",
-    "prevencion art": "Prevención",
-}
-
+# Las identidades documentales también viven en companias.py. No mantener
+# excepciones paralelas acá: una compañía registrada puede no tener cotizador
+# o manual y aun así debe aislar correctamente la búsqueda documental.
 
 def _companias_mencionadas_en_consulta(consulta):
     """Devuelve compañías visibles mencionadas de forma explícita en la consulta.
@@ -1051,7 +1032,6 @@ def _companias_mencionadas_en_consulta(consulta):
     for alias, (_codigo, display) in aliases_companias().items():
         candidatos_compania.append((alias, display))
         candidatos_compania.append((display, display))
-    candidatos_compania.extend(_COMPANIAS_DOCUMENTALES_EXTRA.items())
 
     # Más específicos primero ("zurich retiro" antes que "zurich").
     candidatos_compania.sort(key=lambda item: len(_normalizar_texto(item[0])), reverse=True)

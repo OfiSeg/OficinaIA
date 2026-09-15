@@ -19,6 +19,7 @@ from xml.sax.saxutils import escape as _xml_escape
 from openpyxl import Workbook, load_workbook
 from envios_ya_utils import normalizar_telefono_argentina as _normalizar_telefono_argentina_compartido
 from office_time import office_today, office_year
+from companias import catalogo_companias
 
 BASE_DIR = Path(__file__).resolve().parent
 PLANTILLA_ENVIOSYA = BASE_DIR / "plantillas" / "enviosya_contactos.xlsx"
@@ -84,21 +85,24 @@ NOMBRES_COMUNES = {
     "VALERIA", "VERONICA", "VICTOR", "VICTORIA", "VIVIANA", "WALTER", "YANINA",
 }
 
-COMPANIAS_FILENAME = {
-    "ALLIANZ": "ALLIANZ",
-    "ATM": "ATM SEGUROS",
-    "AGROSALTA": "AGROSALTA SEGUROS",
-    "FEDERACION PATRONAL": "FEDERACION PATRONAL",
-    "FEDERACIÓN PATRONAL": "FEDERACION PATRONAL",
-    "MERCANTIL ANDINA": "MERCANTIL ANDINA",
-    "SAN CRISTOBAL": "SAN CRISTOBAL",
-    "SAN CRISTÓBAL": "SAN CRISTOBAL",
-    "RIVADAVIA": "RIVADAVIA",
-    "TRIUNFO": "TRIUNFO SEGUROS",
-    "PROF": "PROF SEGUROS",
-    "EUROAMERICA": "EUROAMERICA",
-    "EUROAMÉRICA": "EUROAMERICA",
-}
+# Detección por nombre de archivo derivada del registro central. Las etiquetas
+# históricas de Envíos se conservan mediante ``envios_filename``; para las
+# demás compañías se usa el nombre visible canónico, sin crear otra lista.
+def _companias_filename_desde_registro():
+    out = {}
+    for item in catalogo_companias():
+        salida = str(item.get("envios_filename") or "").strip()
+        if not salida:
+            continue
+        candidatos = [item.get("codigo"), item.get("nombre"), *(item.get("aliases") or [])]
+        for alias in candidatos:
+            alias = str(alias or "").strip()
+            if alias:
+                out.setdefault(alias, salida)
+    return out
+
+
+COMPANIAS_FILENAME = _companias_filename_desde_registro()
 
 
 def _norm_texto(v: Any) -> str:
@@ -319,7 +323,9 @@ def separar_nombre_completo(valor: Any) -> tuple[str, str]:
 
 def _detectar_compania_filename(nombre: str) -> str:
     n = _norm_texto(Path(nombre).stem).replace("_", " ").replace("-", " ")
-    for clave, salida in COMPANIAS_FILENAME.items():
+    # Alias más largo primero: evita que una forma abreviada capture antes que
+    # el nombre completo de la compañía.
+    for clave, salida in sorted(COMPANIAS_FILENAME.items(), key=lambda item: len(_norm_texto(item[0])), reverse=True):
         if _norm_texto(clave) in n:
             return salida
     return ""

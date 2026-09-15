@@ -24,6 +24,20 @@
   --oi-success:#23845c;
   --oi-warning:#b86c15;
   --oi-danger:#c94b4b;
+
+  /* Superficies semánticas: color = tipo de objeto, no decoración. */
+  --oi-surface-info:#f1f8fd;
+  --oi-border-info:#bfd8ed;
+  --oi-surface-tool:#eff8ff;
+  --oi-border-tool:#c9e1f4;
+  --oi-surface-pending:#fff9ed;
+  --oi-border-pending:#ead7ad;
+  --oi-surface-document:#f5f8fa;
+  --oi-border-document:#d6e3ec;
+  --oi-surface-success:#f1f8f4;
+  --oi-border-success:#c8dfd2;
+  --oi-surface-danger:#fff5f5;
+  --oi-border-danger:#ebcece;
   --oi-r-xs:8px;
   --oi-r-sm:10px;
   --oi-r-md:13px;
@@ -83,6 +97,18 @@ html[data-theme="dark"]{
   --oi-accent-hover:#6ab6d5;
   --oi-accent-soft:#173849;
   --oi-accent-faint:#132b37;
+  --oi-surface-info:#172936;
+  --oi-border-info:#355a72;
+  --oi-surface-tool:#172633;
+  --oi-border-tool:#31546d;
+  --oi-surface-pending:#2b2418;
+  --oi-border-pending:#5d4a2a;
+  --oi-surface-document:#1c252d;
+  --oi-border-document:#344650;
+  --oi-surface-success:#182b22;
+  --oi-border-success:#345a47;
+  --oi-surface-danger:#2c1d20;
+  --oi-border-danger:#653b42;
   --oi-shadow-popover:0 16px 42px rgba(0,0,0,.35);
   --oi-shadow-modal:0 30px 80px rgba(0,0,0,.48);
   --oi-shadow-card:none;
@@ -294,15 +320,10 @@ body.chat-layout .composer textarea{min-height:38px!important;padding:9px 5px!im
 .chat-action-menu::-webkit-scrollbar{display:none!important}
 .chat-action-item{min-height:48px!important;padding:6px 8px!important;gap:10px!important;border-radius:10px!important}
 .chat-action-item:hover{background:var(--oi-surface-muted)!important}
-.chat-action-icon{width:32px!important;height:32px!important;flex-basis:32px!important;border-radius:9px!important;background:var(--oi-accent-faint)!important}
-.chat-action-item:nth-child(2) .chat-action-icon{background:#f2ebff!important}
-.chat-action-item:nth-child(3) .chat-action-icon{background:#fff1df!important}
-.chat-action-item:nth-child(4) .chat-action-icon{background:#e6f7ef!important}
-.chat-action-item:nth-child(5) .chat-action-icon{background:#e7f6f5!important}
-.chat-action-item:nth-child(6) .chat-action-icon{background:#e8f2fb!important}
-.chat-action-item:nth-child(7) .chat-action-icon{background:#fbe9ec!important}
-.chat-action-item:nth-child(8) .chat-action-icon{background:#fff0f1!important}
-.chat-action-item:nth-child(9) .chat-action-icon{background:#fff4da!important}
+.chat-action-icon{
+  width:32px!important;height:32px!important;flex-basis:32px!important;border-radius:9px!important;
+  background:var(--oi-surface-muted)!important;color:var(--oi-accent)!important;
+}
 .chat-action-item b{font-size:13px!important;font-weight:680!important;color:var(--oi-text)!important}
 .chat-action-item small{font-size:11px!important;color:var(--oi-soft)!important}
 
@@ -355,19 +376,25 @@ body.chat-layout .composer textarea{min-height:38px!important;padding:9px 5px!im
 .pend-filter.active{background:var(--oi-surface)!important;color:var(--oi-accent)!important;box-shadow:0 1px 4px rgba(26,43,58,.08)!important}
 .pend-list{display:grid!important;gap:8px!important}
 .pend-card{
-  padding:12px 14px!important;border:1px solid var(--oi-line)!important;border-radius:13px!important;
+  padding:12px 14px!important;border:1px solid var(--oi-line)!important;border-left:3px solid var(--oi-line-strong)!important;border-radius:13px!important;
   background:var(--oi-surface)!important;box-shadow:var(--oi-shadow-card)!important;
 }
+.pend-card.is-pendiente{background:var(--oi-surface-pending)!important;border-color:var(--oi-border-pending)!important;border-left-color:var(--oi-warning)!important}
+.pend-card.is-hecho{background:var(--oi-surface-success)!important;border-color:var(--oi-border-success)!important;border-left-color:var(--oi-success)!important}
+.pend-card.is-descartado{background:var(--oi-surface-soft)!important;border-color:var(--oi-line)!important;border-left-color:var(--oi-soft)!important;opacity:.9}
 .pend-card header{display:grid!important;grid-template-columns:auto minmax(0,1fr) auto!important;gap:8px!important;align-items:center!important;margin-bottom:5px!important}
 .pend-card header strong{font-size:13.5px!important;font-weight:700!important;color:var(--oi-ink)!important;min-width:0!important;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .pend-card header small{font-size:11px!important;color:var(--oi-soft)!important;white-space:nowrap}
 .pend-tag{padding:3px 7px!important;border-radius:7px!important;background:var(--oi-accent-soft)!important;color:var(--oi-accent)!important;font-size:9.5px!important;font-weight:750!important}
+.pend-card.is-pendiente .pend-tag{background:color-mix(in srgb,var(--oi-warning) 12%,transparent)!important;color:var(--oi-warning)!important}
+.pend-card.is-hecho .pend-tag{background:color-mix(in srgb,var(--oi-success) 12%,transparent)!important;color:var(--oi-success)!important}
+.pend-card.is-descartado .pend-tag{background:var(--oi-surface-muted)!important;color:var(--oi-muted)!important}
 .pend-preview{margin:0 0 9px!important;font-size:12.5px!important;line-height:1.42!important;color:var(--oi-muted)!important;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
 .pend-actions{gap:6px!important}
 .pend-actions .primary,.pend-actions .secondary{min-height:34px!important;height:34px!important;padding:0 11px!important;font-size:12px!important}
 
 /* ---------- Modales / popovers ---------- */
-.modal,.atm-coti-modal{background:rgba(17,29,39,.34)!important;backdrop-filter:blur(6px)!important;-webkit-backdrop-filter:blur(6px)!important}
+.modal,.atm-coti-modal{background:rgba(17,29,39,.38)!important;backdrop-filter:none!important;-webkit-backdrop-filter:none!important}
 .modal>div{
   max-width:480px!important;padding:22px!important;border:1px solid rgba(255,255,255,.55)!important;
   border-radius:18px!important;background:var(--oi-surface)!important;box-shadow:var(--oi-shadow-modal)!important;
@@ -418,9 +445,87 @@ body.chat-layout .composer textarea{min-height:38px!important;padding:9px 5px!im
 .chat-image-lightbox-close{background:rgba(255,255,255,.16)!important;backdrop-filter:blur(8px)}
 
 /* ---------- Cards operativas ---------- */
+/* Objetos operativos: misma geometría, superficie según función. */
 .insured-profile-card,.cedula-card,.personal-document-card,.alta-compact-card,.excel-proposal,.metadata-proposal,.tabulado-flota{
-  border-color:var(--oi-line)!important;border-radius:14px!important;background:var(--oi-surface)!important;box-shadow:none!important;
+  border-radius:14px!important;box-shadow:none!important;
 }
+.insured-profile-card{
+  background:var(--oi-surface-info)!important;border-color:var(--oi-border-info)!important;border-top-color:var(--oi-accent)!important;
+}
+.personal-document-card{background:var(--oi-surface-document)!important;border-color:var(--oi-border-document)!important}
+.cedula-card,.alta-compact-card,.excel-proposal,.metadata-proposal,.tabulado-flota{background:var(--oi-surface-soft)!important;border-color:var(--oi-line)!important}
+
+/* Ficha operativa: información estructurada con identidad, sin competir con el chat. */
+.insured-profile-header small,.insured-profile-section-title{color:var(--oi-accent)!important}
+.insured-profile-badge{background:color-mix(in srgb,var(--oi-accent) 8%,var(--oi-surface))!important;color:var(--oi-muted)!important;border:1px solid color-mix(in srgb,var(--oi-accent) 10%,var(--oi-line))!important}
+.insured-profile-fact{background:color-mix(in srgb,var(--oi-accent) 6%,var(--oi-surface))!important;border-color:color-mix(in srgb,var(--oi-accent) 12%,var(--oi-line))!important}
+.insured-profile-vehicles{gap:8px!important}
+.insured-profile-vehicle{
+  padding:10px!important;border:1px solid color-mix(in srgb,var(--oi-accent) 10%,var(--oi-line))!important;border-radius:10px!important;
+  background:color-mix(in srgb,var(--oi-surface) 86%,var(--oi-surface-info) 14%)!important;
+}
+.insured-profile-doc-actions{gap:6px!important}
+.insured-profile-doc-btn{
+  min-height:34px!important;padding:0 10px!important;border:1px solid color-mix(in srgb,var(--oi-accent) 15%,var(--oi-line))!important;
+  border-radius:9px!important;background:var(--oi-surface)!important;color:var(--oi-text)!important;font-weight:650!important;
+}
+.insured-profile-doc-btn:hover{background:var(--oi-accent-faint)!important;border-color:color-mix(in srgb,var(--oi-accent) 32%,var(--oi-line))!important;color:var(--oi-accent)!important}
+.insured-profile-actions .alta-secondary-btn{background:transparent!important;border-color:transparent!important;color:var(--oi-muted)!important;padding-inline:4px!important}
+.insured-profile-actions .alta-secondary-btn:hover{background:transparent!important;color:var(--oi-accent)!important}
+
+/* Documentos: superficie propia, distinta de ficha y conversación. */
+.insurance-doc-panel{
+  background:var(--oi-surface-document)!important;border-color:var(--oi-border-document)!important;border-left:3px solid var(--oi-accent)!important;
+}
+.insurance-doc-head small{color:var(--oi-accent)!important}
+.insurance-doc-summary{background:var(--oi-surface)!important;border:1px solid var(--oi-border-document)!important}
+.insurance-doc-field input,.insurance-doc-field textarea,.insurance-doc-field select,.insurance-doc-format{background:var(--oi-surface)!important}
+.insurance-doc-actions .primary{min-width:148px!important}
+.insurance-doc-actions .secondary,.insurance-doc-actions .alta-secondary-btn{background:var(--oi-surface)!important}
+
+/* Botón secundario histórico: misma jerarquía que el sistema actual. */
+.alta-secondary-btn{
+  min-height:36px!important;border:1px solid var(--oi-line)!important;border-radius:10px!important;
+  background:var(--oi-surface-soft)!important;color:var(--oi-text)!important;font-size:13px!important;font-weight:640!important;
+  box-shadow:none!important;transition:background var(--oi-ease),border-color var(--oi-ease),color var(--oi-ease)!important;
+}
+.alta-secondary-btn:hover{background:var(--oi-surface-muted)!important;border-color:var(--oi-line-strong)!important}
+
+/* Pendientes: las acciones terciarias no compiten con la resolución principal. */
+.pend-actions [data-act="editar"],.pend-actions [data-act="copiar"],.pend-actions [data-act="descartado"]{background:transparent!important;color:var(--oi-muted)!important;border-color:transparent!important}
+.pend-actions [data-act="editar"]:hover,.pend-actions [data-act="copiar"]:hover,.pend-actions [data-act="descartado"]:hover{background:color-mix(in srgb,var(--oi-text) 5%,transparent)!important;color:var(--oi-text)!important}
+.pend-actions [data-act="borrar"]{background:transparent!important;border-color:transparent!important;color:var(--oi-danger)!important}
+.pend-actions [data-act="borrar"]:hover{background:color-mix(in srgb,var(--oi-danger) 8%,transparent)!important}
+
+/* Feedback de interacción común. */
+.app button:disabled,.app .primary:disabled,.app .secondary:disabled,.app .alta-secondary-btn:disabled{opacity:.52!important;cursor:not-allowed!important;box-shadow:none!important;transform:none!important}
+.app button:focus-visible,.app a:focus-visible,.app summary:focus-visible{outline:2px solid color-mix(in srgb,var(--oi-accent) 62%,transparent)!important;outline-offset:2px!important}
+
+/* Resultados estructurados del chat: se distinguen de una burbuja textual común. */
+.envios-chat-card{background:var(--oi-surface-soft)!important;border-color:var(--oi-line)!important;border-radius:14px!important;box-shadow:none!important}
+.excel-proposal-save,.metadata-proposal-save,.tabulado-flota-copy,.envios-chat-primary{
+  min-height:38px!important;padding:0 13px!important;border:0!important;border-radius:10px!important;
+  background:var(--oi-accent)!important;color:#fff!important;font-size:13px!important;font-weight:700!important;
+  box-shadow:0 4px 12px rgba(23,107,145,.14)!important;cursor:pointer!important;
+}
+.excel-proposal-save:hover,.metadata-proposal-save:hover,.tabulado-flota-copy:hover,.envios-chat-primary:hover{background:var(--oi-accent-hover)!important}
+
+/* Módulos secundarios: misma geometría, sin competir cromáticamente con objetos del chat. */
+.manual-grid article,.estudio-card,.envios-card,.health-panel,.workspace-panel{
+  border:1px solid var(--oi-line)!important;border-radius:14px!important;background:var(--oi-surface)!important;box-shadow:none!important;
+}
+.manual-grid article:hover{border-color:var(--oi-line-strong)!important;background:var(--oi-surface-soft)!important}
+
+/* Empty states visibles pero tranquilos. */
+.panel>.empty,.pend-list>.empty,.settings-empty,.health-empty,.envios-empty{
+  border:1px dashed var(--oi-line-strong)!important;border-radius:12px!important;background:var(--oi-surface-soft)!important;
+  padding:24px 18px!important;color:var(--oi-muted)!important;
+}
+
+/* Tabs: un único lenguaje de estado activo. */
+.estudio-tabs button,.health-tab,.workspace-tab,.library-tab{border-radius:9px!important;transition:background var(--oi-ease),color var(--oi-ease),border-color var(--oi-ease)!important}
+.estudio-tabs button:hover,.health-tab:hover,.workspace-tab:hover,.library-tab:hover{background:var(--oi-surface-muted)!important;color:var(--oi-text)!important}
+.estudio-tabs button.active,.health-tab.active,.workspace-tab.active,.library-tab.active{background:var(--oi-accent-faint)!important;color:var(--oi-accent)!important;border-color:color-mix(in srgb,var(--oi-accent) 24%,var(--oi-line))!important}
 
 /* ---------- Dark mode: profundidad equivalente ---------- */
 html[data-theme="dark"] body .sidebar .quickaccess-item,
@@ -709,11 +814,11 @@ body .sidebar .nav-toggle:active{
 }
 body .sidebar .nav-item.active,
 body .sidebar .nav-item[aria-current="page"]{
-  background:transparent!important;
+  background:var(--oi-accent-faint)!important;
   color:var(--oi-accent)!important;
   border-left-color:var(--oi-accent)!important;
   font-weight:680!important;
-  box-shadow:none!important;
+  box-shadow:inset 0 0 0 1px color-mix(in srgb,var(--oi-accent) 8%,transparent)!important;
   filter:none!important;
   transform:none!important;
 }
@@ -1146,7 +1251,7 @@ body.chat-layout .composer.is-file-dragging textarea::placeholder{color:var(--oi
 .settings-reset-order{margin:0!important}
 
 /* Modal system: jerarquía común, blur sólo donde crea foco. */
-.modal,.atm-coti-modal{background:rgba(14,24,33,.38)!important;backdrop-filter:blur(8px)!important;-webkit-backdrop-filter:blur(8px)!important}
+.modal,.atm-coti-modal{background:rgba(14,24,33,.40)!important;backdrop-filter:none!important;-webkit-backdrop-filter:none!important}
 .modal>div{padding:24px!important;border-radius:20px!important;box-shadow:var(--oi-shadow-modal)!important}
 .modal h2{font-size:21px!important;margin-bottom:16px!important}
 .modal form label{font-size:13.5px!important}.modal form input,.modal form select,.modal form textarea{font-size:14px!important}
@@ -2102,3 +2207,33 @@ html[data-theme="dark"] .quote-selected-row{
   .atm-selected-item.quote-selected-row .atm-selected-info{grid-column:1/-1!important}
   .atm-selected-item.quote-selected-row>span{text-align:left!important}
 }
+
+/* ==========================================================
+   COTIZACIONES · ALTA RÁPIDA DE RESPONSABILIDAD CIVIL
+   Entrada manual universal: la cobertura resultante usa el mismo pipeline
+   que una alternativa leída desde PDF/captura.
+   ========================================================== */
+.quotes-quick-add{display:grid;gap:7px;margin:8px 0 2px}
+.quotes-add-rc-btn{
+  justify-self:start;height:34px;padding:0 11px;border:1px solid var(--oi-line);border-radius:9px;
+  background:var(--oi-surface);color:var(--oi-ink);font:inherit;font-size:12.5px;font-weight:760;cursor:pointer;
+}
+.quotes-add-rc-btn:hover,.quotes-add-rc-btn[aria-expanded="true"]{border-color:color-mix(in srgb,var(--oi-accent) 42%,var(--oi-line));background:var(--oi-surface-muted)}
+.quotes-rc-editor{
+  display:grid;grid-template-columns:minmax(160px,1fr) minmax(210px,1.25fr) minmax(120px,.65fr) auto;
+  gap:8px;align-items:end;padding:10px;border:1px solid var(--oi-line);border-radius:11px;background:var(--oi-surface-soft)
+}
+.quotes-rc-editor[hidden]{display:none}
+.quotes-rc-editor>label{display:grid;gap:5px;min-width:0}
+.quotes-rc-editor>label>span{font-size:11.5px;font-weight:750;color:var(--oi-muted)}
+.quotes-rc-editor select,.quotes-rc-editor input{
+  width:100%;min-width:0;height:36px;box-sizing:border-box;border:1px solid var(--oi-line);border-radius:8px;
+  background:var(--oi-surface);color:var(--oi-ink);font:inherit;font-size:13px;padding:0 9px
+}
+.quotes-rc-editor select:focus,.quotes-rc-editor input:focus{outline:2px solid color-mix(in srgb,var(--oi-accent) 20%,transparent);border-color:var(--oi-accent)}
+.quotes-rc-money{display:grid;grid-template-columns:24px minmax(0,1fr);align-items:center;border:1px solid var(--oi-line);border-radius:8px;background:var(--oi-surface);overflow:hidden}
+.quotes-rc-money>span{display:grid;place-items:center;color:var(--oi-muted);font-size:13px;font-weight:750}
+.quotes-rc-money input{border:0!important;border-radius:0!important;background:transparent!important;padding-left:0!important;outline:0!important}
+.quotes-rc-actions{display:flex;gap:6px;align-items:center}
+@media(max-width:760px){.quotes-rc-editor{grid-template-columns:1fr 1fr}.quotes-rc-actions{grid-column:1/-1;justify-content:flex-end}}
+@media(max-width:480px){.quotes-rc-editor{grid-template-columns:1fr}.quotes-rc-actions{grid-column:auto}}

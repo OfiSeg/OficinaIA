@@ -6,41 +6,22 @@ import fitz
 
 from database_pg import listar_manuales, listar_polizas as pg_listar_polizas
 from storage_r2 import descargar_pdf_temporal
-from companias import nombre_compania, aliases_companias
+from companias import nombre_compania, aliases_companias, nombres_companias, slug_compania, datos_compania
 
 BASE_DIR = Path(__file__).resolve().parent
 DOCUMENTOS_DIR = BASE_DIR / "documentos"
 
-MANUALES_COMPANIAS = [
-    "Mercantil Andina",
-    "Federación Patronal",
-    "ATM",
-    "San Cristóbal",
-    "Rivadavia",
-    "EuroAmérica",
-    "AgroSalta",
-    "Triunfo",
-    "PROF",
-]
+MANUALES_COMPANIAS = nombres_companias("manuales_enabled")
+
+def slug_manual_compania(nombre):
+    return slug_compania(nombre)
+
 
 MANUALES_MAX_CANDIDATOS_GENERAL = int(os.getenv("MANUALES_MAX_CANDIDATOS_GENERAL", "12"))
 MANUALES_MAX_CANDIDATOS_CIA = int(os.getenv("MANUALES_MAX_CANDIDATOS_CIA", "10"))
 MANUALES_MAX_ARCHIVOS_CON_CIA = int(os.getenv("MANUALES_MAX_ARCHIVOS_CON_CIA", "6"))
 MANUALES_MAX_ARCHIVOS_GENERAL = int(os.getenv("MANUALES_MAX_ARCHIVOS_GENERAL", "3"))
 
-def slug_manual_compania(nombre):
-    equivalencias = {
-        "Mercantil Andina": "mercantil_andina",
-        "Federación Patronal": "federacion_patronal",
-        "ATM": "atm",
-        "San Cristóbal": "san_cristobal",
-        "Rivadavia": "rivadavia",
-        "EuroAmérica": "euroamerica",
-        "AgroSalta": "agrosalta",
-        "Triunfo": "triunfo",
-        "PROF": "prof",
-    }
-    return equivalencias[nombre]
 
 def _companias_mencionadas_local(texto):
     """Detecta compañías sin depender de servicios_ia ni Flask."""
@@ -50,6 +31,10 @@ def _companias_mencionadas_local(texto):
     for alias, (_codigo, display) in aliases_companias().items():
         alias_norm = _normalizar_busqueda(alias)
         if not alias_norm:
+            continue
+        # "MA" es un alias operativo útil para normalizar, pero demasiado
+        # ambiguo para disparar una búsqueda documental por sí solo.
+        if alias_norm == "ma":
             continue
         if len(alias_norm) <= 3:
             if re.search(rf"\b{re.escape(alias_norm)}\b", norm):
@@ -399,37 +384,12 @@ def _manuales_r2_por_ruta(consulta="", max_manuales=None):
         # Detector local: DocumentSearch no depende de Sofia ni de Flask.
         companias_detectadas = _companias_mencionadas_local(consulta)
 
-        slug_por_canon = {
-            "mercantil andina": "mercantil_andina",
-            "mercantilandina": "mercantil_andina",
-            "federacion patronal": "federacion_patronal",
-            "federacion": "federacion_patronal",
-            "atm": "atm",
-            "san cristobal": "san_cristobal",
-            "sancristobal": "san_cristobal",
-            "rivadavia": "rivadavia",
-            "euroamerica": "euroamerica",
-            "euro america": "euroamerica",
-            "agrosalta": "agrosalta",
-            "ags": "agrosalta",
-            "triunfo": "triunfo",
-            "prof": "prof",
-        }
-
-        # Algunos aliases del detector tienen una forma compacta distinta
-        # (ej. "mercantilandina"). Se resuelven contra la misma compañía.
+        # El slug de manual pertenece a la identidad canónica, no a un mapa
+        # paralelo de DocumentSearch.
         slug_companias = set()
         for canon in companias_detectadas:
-            canon_norm = _normalizar_busqueda(canon)
-            slug = slug_por_canon.get(canon_norm)
-            if slug:
-                slug_companias.add(slug)
-                continue
-            compact = re.sub(r"[^a-z0-9]+", "", canon_norm)
-            for nombre, slug_candidato in slug_por_canon.items():
-                if compact == re.sub(r"[^a-z0-9]+", "", nombre):
-                    slug_companias.add(slug_candidato)
-                    break
+            if datos_compania(canon):
+                slug_companias.add(slug_compania(canon))
 
         candidatos = []
         for fila in manuales:

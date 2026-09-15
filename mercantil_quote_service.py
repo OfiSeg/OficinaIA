@@ -10,6 +10,7 @@ import unicodedata
 import fitz
 
 from mercantil_coberturas import ORDEN_VISUAL, entrada
+from quote_normalizer import normalizar_cobertura, normalizar_porcentaje
 
 
 def _norm(texto: str) -> str:
@@ -124,12 +125,36 @@ def extraer_cotizacion_mercantil(pdf_bytes: bytes) -> dict:
             if franquicia_importe is not None:
                 extra += f" · {_fmt_decimal(franquicia_importe)}"
             tooltip += " —" + extra
+        # Toda fuente específica termina en el mismo contrato canónico. El
+        # parser Mercantil sólo conoce cómo leer su PDF; la familia, nombre
+        # comercial, riesgos y variantes se obtienen del normalizador común.
+        normal = normalizar_cobertura(
+            cat["descripcion_cliente"],
+            compania="Mercantil Andina",
+            codigo=cat["codigo_visual"],
+            nombre=cat["nombre_cliente"],
+        )
+        servicio_grua = cat.get("servicio_grua") if isinstance(cat.get("servicio_grua"), bool) else None
+        variantes = []
+        pct_visual = normalizar_porcentaje(franquicia_pct)
+        if normal["perfil_normalizado"] == "TODO_RIESGO" and pct_visual:
+            variantes.append(f"FRANQUICIA {pct_visual}")
+        nombre_comercial = normal["nombre_cliente"]
         encontradas.append({
             "codigo_real": real,
             "codigo_visual": cat["codigo_visual"],
-            "nombre_cliente": cat["nombre_cliente"],
-            "descripcion_cliente": cat["descripcion_cliente"],
+            "codigo_original": real,
+            "nombre_original": cat["nombre_cliente"],
+            "nombre_cliente": nombre_comercial,
+            "descripcion_cliente": normal["descripcion_cliente"],
             "tipo_cobertura": cat["tipo"],
+            "perfil_normalizado": normal["perfil_normalizado"],
+            "familia": normal["perfil_normalizado"],
+            "riesgos_detectados": normal["riesgos_detectados"],
+            "evidencias": normal["evidencias"],
+            "nombre_comercial": nombre_comercial,
+            "variante_comercial": " · ".join(variantes),
+            "titulo_comercial": " · ".join([nombre_comercial, *variantes]),
             "precio_base": str(precio),
             "precio_base_formateado": _fmt_decimal(precio),
             "max_descuento": int(cat["max_descuento"]),
@@ -137,6 +162,8 @@ def extraer_cotizacion_mercantil(pdf_bytes: bytes) -> dict:
             "franquicia_pct": franquicia_pct,
             "franquicia_importe": str(franquicia_importe) if franquicia_importe is not None else None,
             "franquicia_importe_formateado": _fmt_decimal(franquicia_importe) if franquicia_importe is not None else "",
+            "servicio_grua": servicio_grua,
+            "tiene_grua": servicio_grua,
             "tooltip": tooltip,
         })
 

@@ -151,6 +151,16 @@
       <!-- Compatibilidad: el flujo ATM histórico sigue existiendo, pero ya no se muestra antes de detectar ATM. -->
       <span data-atm-tab="capture" hidden>Pegá con Ctrl+V o elegí una imagen</span>
     </div>
+
+    <div class="quotes-quick-add" id="quotesQuickAdd">
+      <button type="button" class="quotes-add-rc-btn" id="quotesAddRcBtn" aria-expanded="false" aria-controls="quotesRcEditor">+ Agregar RC</button>
+      <div class="quotes-rc-editor" id="quotesRcEditor" hidden>
+        <label><span>Compañía</span><select id="quotesRcCompany" aria-label="Compañía"></select></label>
+        <label><span>Cobertura</span><select id="quotesRcType" aria-label="Tipo de Responsabilidad Civil"><option value="rc">Responsabilidad Civil</option><option value="rc_sin_grua">Responsabilidad Civil sin grúa</option></select></label>
+        <label class="quotes-rc-price"><span>Precio</span><div class="quotes-rc-money"><span>$</span><input id="quotesRcPrice" inputmode="decimal" autocomplete="off" placeholder="0"></div></label>
+        <div class="quotes-rc-actions"><button type="button" class="quote-company-cancel" id="quotesRcCancel">Cancelar</button><button type="button" class="quote-company-confirm" id="quotesRcConfirm">Agregar</button></div>
+      </div>
+    </div>
     <p class="quotes-global-status" id="quotesGlobalStatus" hidden></p>
 
     <div class="quotes-sources" id="quotesSources">

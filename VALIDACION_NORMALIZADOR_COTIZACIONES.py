@@ -45,8 +45,8 @@ assert "destrucción total" not in cobertura_federacion("LB1", "")[1].lower()
 
 print("OK - normalizador universal de cotizaciones")
 
-# Tabla genérica de compañía no registrada: debe leer TODAS las filas y
-# normalizar por la descripción visible, no quedarse sólo con RC.
+# Firma AgroSalta sin nombre impreso: debe reconocer la plantilla, leer TODAS
+# las filas y normalizar por contenido visible, no quedarse sólo con RC.
 tabla = """
 Cotización de Automotores
 Vehículo Cotizado
@@ -87,6 +87,8 @@ $ 73.548,61
 """
 d = normalizar_texto_cotizacion(tabla)
 assert d["cantidad"] == 6, d
+assert d["compania"] == "AgroSalta", d
+assert d["anio"] == "2024" and d["suma_asegurada_formateada"] == "$8.999.999,00", d
 assert [x["codigo_original"] for x in d["coberturas"]] == ["A", "B1", "B", "C1", "C", "CF"], d
 assert [x["perfil_normalizado"] for x in d["coberturas"][:5]] == ["RC", "B1", "B", "C1", "C"], d
 assert d["coberturas"][2]["precio_cuota_formateado"] == "$64.434,51", d
@@ -128,3 +130,85 @@ vision = _qn._normalizar_dato_vision({
 })
 assert vision["compania"] == "San Cristóbal", vision
 assert [x["codigo_visual"] for x in vision["coberturas"]] == ["D1.5", "D2", "D2.5"], vision
+
+
+
+# Allianz D4: granizo es un atributo del producto, también en fallback visual.
+allianz_d4 = _qn._normalizar_dato_vision({
+    "es_cotizacion": True,
+    "compania": "Allianz",
+    "coberturas": [
+        {"codigo":"90", "nombre":"D4 Alta Gama Vip - 1% - C/granizo", "descripcion":"Responsabilidad Civil. Incendio total o parcial. Robo total o parcial. Daños parciales por accidente. C/granizo", "precio":"465452.86", "franquicia_pct":"1"},
+        {"codigo":"91", "nombre":"D4 Alta Gama Vip - 2% - C/granizo", "descripcion":"Responsabilidad Civil. Incendio total o parcial. Robo total o parcial. Daños parciales por accidente. C/granizo", "precio":"417035.57", "franquicia_pct":"2"},
+        {"codigo":"92", "nombre":"D4 Alta Gama Vip - 3% - C/granizo", "descripcion":"Responsabilidad Civil. Incendio total o parcial. Robo total o parcial. Daños parciales por accidente. C/granizo", "precio":"360146.75", "franquicia_pct":"3"},
+    ],
+})
+assert [x["codigo_visual"] for x in allianz_d4["coberturas"]] == ["D1", "D2", "D3"], allianz_d4
+assert all(x["nombre_comercial"] == "Alta Gama VIP" for x in allianz_d4["coberturas"]), allianz_d4
+assert all(x.get("granizo_estado") == "INCLUYE" for x in allianz_d4["coberturas"]), allianz_d4
+
+# ATM PDF oficial: una cabecera de plan + N prestaciones sigue siendo UNA
+# cobertura. FCIA es franquicia; Premio/Cuota no puede confundirse con SA.
+atm_d2 = normalizar_texto_cotizacion("""
+ATM Seguros
+AUTOMOTORES
+66724000,00
+VOLKSWAGEN-AMAROK 20TD 4X2 DC COMFORTL 2026
+Valor a Asegurar: Equipo GNC:
+Cobertura Premio Cuotas 1° Cuota
+D2 - TODO RIESGO C/FCIA.VARIABLE 3% SUMA ASEGURADA
+755.639,04
+1
+755.639,04
+Ajus. Aut.: (SIN AJUSTE)
+RESPONSABILIDAD CIVIL HASTA $ 208.000.000,00
+ACCIDENTE TOTAL O PARCIAL $ 66.724.000,00
+INCENDIO TOTAL O PARCIAL $ 66.724.000,00
+ROBO TOTAL O PARCIAL $ 66.724.000,00
+Daños a parabrisas y luneta, sin límite en la cantidad anual de eventos.
+""")
+assert atm_d2["compania"] == "ATM" and atm_d2["cantidad"] == 1, atm_d2
+atm_d2_cov = atm_d2["coberturas"][0]
+assert atm_d2_cov["codigo_original"] == "D2" and atm_d2_cov["perfil_normalizado"] == "TODO_RIESGO", atm_d2_cov
+assert atm_d2_cov["franquicia_pct"] == "3", atm_d2_cov
+assert atm_d2_cov["precio_cuota_formateado"] == "$755.639,04", atm_d2_cov
+assert atm_d2["suma_asegurada_formateada"] == "$66.724.000,00", atm_d2
+
+atm_c2 = normalizar_texto_cotizacion("""
+ATM Seguros
+AUTOMOTORES
+66724000,00
+VOLKSWAGEN-AMAROK 20TD 4X2 DC COMFORTL 2026
+Valor a Asegurar: Equipo GNC:
+Cobertura Premio Cuotas 1° Cuota
+C2 - TERCEROS COMPLETOS PREMIUM
+238.051,17
+1
+238.051,17
+Ajus. Aut.: (SIN AJUSTE)
+RESPONSABILIDAD CIVIL HASTA $ 208.000.000,00
+DAÑO TOTAL POR ACCIDENTE $ 66.724.000,00
+INCENDIO TOTAL O PARCIAL $ 66.724.000,00
+ROBO TOTAL O PARCIAL $ 66.724.000,00
+Daños a cristales y cerraduras, hasta 2 eventos acumulados por año.
+""")
+assert atm_c2["cantidad"] == 1, atm_c2
+assert atm_c2["coberturas"][0]["codigo_original"] == "C2", atm_c2
+assert atm_c2["coberturas"][0]["nombre_cliente"] == "Terceros Completo Premium", atm_c2
+assert atm_c2["coberturas"][0]["precio_cuota_formateado"] == "$238.051,17", atm_c2
+
+# Allianz: si existe una cobertura explícita, una segmentación anterior no
+# gobierna el título comercial.
+allianz = normalizar_texto_cotizacion("""
+ALLIANZ
+CLÁSICO SEGMENTADO
+TERCEROS COMPLETOS C2
+Responsabilidad Civil
+Incendio total o parcial
+Robo total o parcial
+Destrucción total por accidente
+Cuota: $205.000
+""")
+assert allianz["cantidad"] == 1, allianz
+assert allianz["coberturas"][0]["nombre_cliente"] == "Terceros Completo C2", allianz
+assert "CLÁSICO SEGMENTADO" not in allianz["coberturas"][0]["nombre_cliente"].upper(), allianz

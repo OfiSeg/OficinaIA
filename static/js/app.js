@@ -1124,6 +1124,96 @@ async function prepararSalidasAlta(campos){
   return d;
 }
 
+async function prepararDocumentoSeguro(tipo,contexto={}){
+  const resp=await fetch('/api/documentos-seguro/preparar',{
+    method:'POST',credentials:'same-origin',headers:{'Content-Type':'application/json'},
+    body:JSON.stringify({tipo,query:contexto.query||'',patente:contexto.patente||'',poliza:contexto.poliza||'',campos:contexto.campos||{},extras:contexto.extras||{}})
+  });
+  const d=await leerJsonSeguro(resp);if(!resp.ok||d.ok===false)throw Error(d.error||'No pude preparar el documento.');return d;
+}
+function descargarBlobSeguro(blob,nombre){
+  const url=URL.createObjectURL(blob);const a=document.createElement('a');a.href=url;a.download=nombre||'documento.docx';document.body.appendChild(a);a.click();a.remove();setTimeout(()=>URL.revokeObjectURL(url),1500);
+}
+function nombreArchivoDispositionSeguro(raw){
+  const v=String(raw||'');const utf=v.match(/filename\*=UTF-8''([^;]+)/i);if(utf){try{return decodeURIComponent(utf[1])}catch(_){}}
+  const simple=v.match(/filename="?([^";]+)"?/i);return simple?simple[1]:'documento.docx';
+}
+async function abrirEditorDocumentoSeguro(host,tipo,contexto={}){
+  if(!(host instanceof HTMLElement))return;
+  host.querySelector('.insurance-doc-panel')?.remove();
+  const panel=document.createElement('section');panel.className='insurance-doc-panel';
+  const loading=document.createElement('div');loading.className='insurance-doc-loading';loading.textContent='Preparando datos…';panel.appendChild(loading);host.appendChild(panel);
+  try{
+    const prep=await prepararDocumentoSeguro(tipo,contexto);panel.replaceChildren();
+    const head=document.createElement('div');head.className='insurance-doc-head';
+    const title=document.createElement('div');const small=document.createElement('small');small.textContent='DOCUMENTO';const strong=document.createElement('strong');strong.textContent=String(prep.titulo||'Documento');title.append(small,strong);
+    const close=document.createElement('button');close.type='button';close.className='insurance-doc-close';close.innerHTML=oiaIconHtml('close');close.title='Cerrar';close.setAttribute('aria-label','Cerrar');close.addEventListener('click',()=>panel.remove());head.append(title,close);panel.appendChild(head);
+
+    const fields=prep.campos&&typeof prep.campos==='object'?{...prep.campos}:{};const labels=prep.labels||{};const missing=new Set(Array.isArray(prep.faltantes)?prep.faltantes:[]);
+    const conflicts=Array.isArray(prep.conflictos)?prep.conflictos:[];const ambiguos=Array.isArray(prep.registros_ambiguos)?prep.registros_ambiguos:[];
+    const sourceMap=prep.fuentes&&typeof prep.fuentes==='object'?{...prep.fuentes}:{};const conflictKeys=new Set(conflicts.map(x=>String(x?.campo||'')).filter(Boolean));
+    if(conflicts.length||ambiguos.length){const warn=document.createElement('div');warn.className='insurance-doc-warning';const parts=[];if(conflicts.length)parts.push('Hay datos distintos entre fuentes; revisá los campos marcados.');if(ambiguos.length)parts.push('Hay más de un registro posible; confirmá el vehículo/póliza.');warn.textContent=parts.join(' ');panel.appendChild(warn)}
+
+    // Primero mostramos qué objeto se va a documentar. Los datos conocidos no
+    // vuelven a ocupar todo el panel; siguen editables bajo “Editar datos”.
+    const summary=document.createElement('div');summary.className='insurance-doc-summary';
+    const summaryTitle=document.createElement('strong');summaryTitle.textContent=String(fields.NOMBRE||'Asegurado');
+    const summaryMeta=document.createElement('small');summaryMeta.textContent=[fields.VEHICULO,fields.PATENTE,fields.COMPANIA,fields.COBERTURA].filter(Boolean).join(' · ');
+    summary.append(summaryTitle,summaryMeta);panel.appendChild(summary);
+
+    const identityKeys=['NOMBRE','VEHICULO','PATENTE','COMPANIA','COBERTURA','POLIZA'];
+    const visibleByType={
+      bienvenida:['FECHA_EMISION','FORMA_PAGO','VENCIMIENTO','ASISTENCIA_ESTADO','ASISTENCIA_GRUA'],
+      pago_pendiente:['IMPORTE_PENDIENTE','VENCIMIENTO','FORMA_PAGO','INSTRUCCION_PAGO'],
+      baja:['FECHA_BAJA','MOTIVO_BAJA']
+    };
+    const operational=new Set(visibleByType[tipo]||[]);const inputs={};const labelsByKey={};
+    const makeField=(key)=>{
+      const lab=document.createElement('label');lab.className='insurance-doc-field'+((missing.has(key)||conflictKeys.has(key))?' needs-review':'');labelsByKey[key]=lab;
+      const span=document.createElement('span');span.textContent=labels[key]||key;let input;
+      if(key==='ASISTENCIA_ESTADO'){
+        input=document.createElement('select');[['DESCONOCIDO','Desconocido'],['INCLUYE','Incluye'],['NO_INCLUYE','No incluye']].forEach(([v,t])=>{const o=document.createElement('option');o.value=v;o.textContent=t;input.appendChild(o)});input.value=String(fields[key]||'DESCONOCIDO');
+      }else{
+        const multiline=['INSTRUCCION_PAGO','ASISTENCIA_GRUA','MOTIVO_BAJA'].includes(key);input=document.createElement(multiline?'textarea':'input');if(!multiline)input.type='text';input.value=String(fields[key]||'');if(missing.has(key))input.placeholder='Completar';
+      }
+      input.dataset.docField=key;input.autocomplete='off';
+      const sync=()=>{fields[key]=String(input.value||'').trim();sourceMap[key]='manual_confirmado';conflictKeys.delete(key);if(fields[key])missing.delete(key);lab.classList.toggle('needs-review',(!fields[key]&&missing.has(key))||conflictKeys.has(key));if(key==='ASISTENCIA_ESTADO')syncAssistance()};
+      input.addEventListener('input',sync);input.addEventListener('change',sync);lab.append(span,input);inputs[key]=input;return lab;
+    };
+
+    const grid=document.createElement('div');grid.className='insurance-doc-grid insurance-doc-grid-operational';
+    Object.keys(labels).filter(k=>operational.has(k)).forEach(key=>grid.appendChild(makeField(key)));panel.appendChild(grid);
+
+    const editDetails=document.createElement('details');editDetails.className='insurance-doc-edit-details';
+    const editSummary=document.createElement('summary');editSummary.textContent='Editar datos del seguro';editDetails.appendChild(editSummary);
+    const editGrid=document.createElement('div');editGrid.className='insurance-doc-grid';
+    Object.keys(labels).filter(k=>identityKeys.includes(k)).forEach(key=>editGrid.appendChild(makeField(key)));editDetails.appendChild(editGrid);panel.appendChild(editDetails);
+
+    function syncAssistance(){
+      const state=String(inputs.ASISTENCIA_ESTADO?.value||fields.ASISTENCIA_ESTADO||'DESCONOCIDO').toUpperCase();const field=labelsByKey.ASISTENCIA_GRUA;
+      if(!field)return;
+      field.hidden=state!=='INCLUYE';
+      if(state==='INCLUYE'&&inputs.ASISTENCIA_GRUA&&!String(inputs.ASISTENCIA_GRUA.value||'').trim())inputs.ASISTENCIA_GRUA.placeholder='Los contactos de la compañía se completan automáticamente';
+    }
+    syncAssistance();
+
+    const actions=document.createElement('div');actions.className='insurance-doc-actions';
+    const format=document.createElement('select');format.className='insurance-doc-format';[['docx','Word'],['pdf','PDF'],['png','PNG'],['jpg','JPG']].forEach(([v,t])=>{const o=document.createElement('option');o.value=v;o.textContent=t;format.appendChild(o)});
+    const gen=document.createElement('button');gen.type='button';gen.className='excel-proposal-save';gen.textContent='Generar documento';const status=document.createElement('span');status.className='excel-proposal-status';actions.append(format,gen,status);panel.appendChild(actions);
+    gen.addEventListener('click',async()=>{
+      Object.entries(inputs).forEach(([key,input])=>fields[key]=String(input.value||'').trim());
+      const faltan=[...(prep.faltantes||[])].filter(k=>!fields[k]);if(faltan.length){status.textContent='Completá los campos marcados.';inputs[faltan[0]]?.focus();return}
+      if(conflictKeys.size&&!confirm('Hay datos distintos entre fuentes. ¿Confirmás que los valores visibles son los correctos?')){status.textContent='Revisá los campos marcados antes de generar.';return}if(conflictKeys.size){conflictKeys.forEach(k=>sourceMap[k]='manual_confirmado');conflictKeys.clear()}
+      gen.disabled=true;format.disabled=true;const genLabel=gen.textContent;gen.textContent='Generando…';gen.setAttribute('aria-busy','true');status.textContent='Preparando archivo…';
+      try{
+        const formato=format.value||'docx';const r=await fetch('/api/documentos-seguro/generar',{method:'POST',credentials:'same-origin',headers:{'Content-Type':'application/json'},body:JSON.stringify({tipo,campos:fields,fuentes:sourceMap,formato})});
+        if(!r.ok){const d=await leerJsonSeguro(r);throw Error(d.error||'No pude generar el documento.')}
+        const blob=await r.blob();descargarBlobSeguro(blob,nombreArchivoDispositionSeguro(r.headers.get('Content-Disposition')));status.textContent=`${format.options[format.selectedIndex]?.text||'Documento'} generado.`;
+      }catch(e){status.textContent=e?.message||'No pude generar el documento.'}finally{gen.disabled=false;format.disabled=false;gen.textContent=genLabel;gen.removeAttribute('aria-busy')}
+    });
+  }catch(e){panel.replaceChildren();const err=document.createElement('div');err.className='insurance-doc-warning';err.textContent=e?.message||'No pude preparar el documento.';panel.appendChild(err)}
+}
+
 function mostrarOpcionesAltaAsegurado(_tabuladoInicial,camposGuardar,opciones={}){
   const c=document.getElementById('chat');
   if(!c||!camposGuardar||typeof camposGuardar!=='object')return;
@@ -1154,7 +1244,7 @@ function mostrarOpcionesAltaAsegurado(_tabuladoInicial,camposGuardar,opciones={}
 
   const resumen=document.createElement('div');resumen.className='alta-compact-summary';
   const resumenRefs={};
-  const camposResumen=[['VEHICULO','Vehículo'],['PATENTE','Patente'],['CIA','Compañía'],['MEDIO DE PAGO','Medio de pago'],['IMPORTE APROX','Precio'],['EMITIDO DÍA:','Emisión']];
+  const camposResumen=[['VEHICULO','Vehículo'],['PATENTE','Patente'],['CIA','Compañía'],['COBERTURA','Cobertura'],['MEDIO DE PAGO','Medio de pago'],['VENCIMIENTO','Vencimiento'],['IMPORTE APROX','Precio'],['EMITIDO DÍA:','Emisión']];
   const valorVisible=(clave,valor)=>{const raw=String(valor??'').trim();if(!raw)return '—';if(clave==='IMPORTE APROX'){const n=Number(raw.replace(',','.'));if(Number.isFinite(n)){try{return new Intl.NumberFormat('es-AR',{style:'currency',currency:'ARS',maximumFractionDigits:2}).format(n)}catch(_){}}}return raw};
   camposResumen.forEach(([clave,label])=>{const item=document.createElement('div');item.className='alta-compact-item'+(revisiones[clave]?' needs-review':'');item.dataset.resumenCampo=clave;const k=document.createElement('span');k.className='alta-compact-key';k.textContent=label;const v=document.createElement('strong');v.className='alta-compact-value';v.textContent=valorVisible(clave,valores[clave]);resumenRefs[clave]=v;item.append(k,v);resumen.appendChild(item)});
   b.appendChild(resumen);
@@ -1166,7 +1256,7 @@ function mostrarOpcionesAltaAsegurado(_tabuladoInicial,camposGuardar,opciones={}
   telefonoWrap.append(telefonoLabel,telefonoInput,telefonoNota);b.appendChild(telefonoWrap);
 
   const detalles=document.createElement('div');detalles.className='alta-edit-panel';detalles.hidden=true;
-  const editables=[['ASEGURADO','Asegurado','text'],['POLIZA','N.º póliza','text'],['VEHICULO','Vehículo','text'],['PATENTE','Patente','text'],['CIA','Compañía','text'],['MEDIO DE PAGO','Medio de pago','select'],['CP','Código postal','text'],['EMITIDO DÍA:','Día de emisión','text'],['IMPORTE APROX','Precio','text'],['MAIL','Mail','email']];
+  const editables=[['ASEGURADO','Asegurado','text'],['POLIZA','N.º póliza','text'],['VEHICULO','Vehículo','text'],['PATENTE','Patente','text'],['CIA','Compañía','text'],['COBERTURA','Cobertura','text'],['MEDIO DE PAGO','Medio de pago','select'],['VENCIMIENTO','Próximo vencimiento','text'],['ASISTENCIA_GRUA','Asistencia y grúa','text'],['CP','Código postal','text'],['EMITIDO DÍA:','Día de emisión','text'],['IMPORTE APROX','Precio','text'],['MAIL','Mail','email']];
   const inputs={};
   editables.forEach(([clave,label,tipo])=>{const wrap=document.createElement('label');wrap.className='alta-edit-field'+(revisiones[clave]?' needs-review':'');const span=document.createElement('span');span.textContent=label;let input;if(tipo==='select'){input=document.createElement('select');[['','—'],['CUPONERA','CUPONERA'],['CBU','CBU'],['CREDITO','CREDITO']].forEach(([value,text])=>{const opt=document.createElement('option');opt.value=value;opt.textContent=text;if(String(valores[clave]||'').toUpperCase()===value)opt.selected=true;input.appendChild(opt)})}else{input=document.createElement('input');input.type=tipo;input.value=String(valores[clave]??'')}input.dataset.campo=clave;inputs[clave]=input;let reviewNote=null;if(revisiones[clave]){reviewNote=document.createElement('small');reviewNote.className='alta-field-review-note';reviewNote.textContent=revisiones[clave]}const sync=(e)=>{valores[clave]=input.value.trim();if(resumenRefs[clave])resumenRefs[clave].textContent=valorVisible(clave,valores[clave]);if(clave==='ASEGURADO')refrescarTitulo();if(e?.isTrusted&&revisiones[clave]){delete revisiones[clave];wrap.classList.remove('needs-review');reviewNote?.remove();const item=resumen.querySelector(`[data-resumen-campo="${clave}"]`);item?.classList.remove('needs-review');refrescarRevisionAviso()}};input.addEventListener('input',sync);input.addEventListener('change',sync);wrap.append(span,input);if(reviewNote)wrap.appendChild(reviewNote);detalles.appendChild(wrap)});
   b.appendChild(detalles);
@@ -1176,8 +1266,9 @@ function mostrarOpcionesAltaAsegurado(_tabuladoInicial,camposGuardar,opciones={}
   const editar=document.createElement('button');editar.type='button';editar.className='alta-secondary-btn';editar.textContent='Editar';
   const tabular=document.createElement('button');tabular.type='button';tabular.className='alta-secondary-btn';tabular.textContent='Tabulado';
   const enviosBtn=document.createElement('button');enviosBtn.type='button';enviosBtn.className='alta-secondary-btn';enviosBtn.textContent='Copiar Envíos Ya';
+  const bienvenidaBtn=document.createElement('button');bienvenidaBtn.type='button';bienvenidaBtn.className='alta-secondary-btn';bienvenidaBtn.textContent='Generar bienvenida';bienvenidaBtn.hidden=!opciones?.uiState?.saved_excel;
   const estado=document.createElement('span');estado.className='excel-proposal-status';
-  acciones.append(guardar,editar,tabular,enviosBtn,estado);b.appendChild(acciones);
+  acciones.append(guardar,editar,tabular,enviosBtn,bienvenidaBtn,estado);b.appendChild(acciones);
   if(opciones?.uiState?.saved_excel){guardar.textContent='Guardado en Excel';guardar.disabled=true;editar.disabled=true;telefonoInput.disabled=true;Object.values(inputs).forEach(input=>input.disabled=true);b.dataset.altaActiva='0';}
 
   const tabPanel=document.createElement('div');tabPanel.className='alta-inline-panel';tabPanel.hidden=true;
@@ -1194,12 +1285,13 @@ function mostrarOpcionesAltaAsegurado(_tabuladoInicial,camposGuardar,opciones={}
   r.appendChild(b);c.appendChild(r);
 
   const recoger=()=>{Object.values(inputs).forEach(input=>{valores[input.dataset.campo]=input.value.trim()});valores.NUMERO=telefonoInput.value.trim();valores.TELEFONO='';valores['ENVIOS YA']='';return {...valores}};
-  const payloadExcel=()=>{const v=recoger();delete v.POLIZA;delete v.NUMERO_POLIZA;return v};
+  const payloadExcel=()=>{const v=recoger();['POLIZA','NUMERO_POLIZA','COBERTURA','VENCIMIENTO','ASISTENCIA_GRUA'].forEach(k=>delete v[k]);return v};
   const filaTabulada=()=>{const v=recoger();const orden=['ASEGURADO','NUMERO','VEHICULO','PATENTE','ENVIOS YA','COMPAÑIA','MEDIO DE PAGO','CODIGO POSTAL','EMITIDO DÍA:','IMPORTE APROX','DE DONDE ','MAIL','TELEFONO'];const map={ASEGURADO:v.ASEGURADO||'',NUMERO:v.NUMERO||'',VEHICULO:v.VEHICULO||'',PATENTE:v.PATENTE||'','ENVIOS YA':'',COMPAÑIA:v.CIA||'','MEDIO DE PAGO':v['MEDIO DE PAGO']||'','CODIGO POSTAL':v.CP||'','EMITIDO DÍA:':v['EMITIDO DÍA:']||'','IMPORTE APROX':v['IMPORTE APROX']||'','DE DONDE ':'',MAIL:v.MAIL||'',TELEFONO:''};return orden.map(k=>String(map[k]??'')).join('\t')};
 
   editar.addEventListener('click',()=>{detalles.hidden=!detalles.hidden;editar.textContent=detalles.hidden?'Editar':'Cerrar edición';if(!detalles.hidden)inputs.ASEGURADO?.focus()});
   tabular.addEventListener('click',()=>{tabPre.textContent=filaTabulada();tabPanel.hidden=!tabPanel.hidden;tabular.textContent=tabPanel.hidden?'Tabulado':'Ocultar tabulado'});
   tabCopy.addEventListener('click',async()=>{tabPre.textContent=filaTabulada();if(await copiarTextoSeguro(tabPre.textContent)){tabCopy.textContent='¡Copiado!';setTimeout(()=>tabCopy.textContent='Copiar',1600)}});
+  bienvenidaBtn.addEventListener('click',()=>abrirEditorDocumentoSeguro(b,'bienvenida',{query:String(valores.ASEGURADO||''),patente:String(valores.PATENTE||''),poliza:String(valores.POLIZA||''),campos:recoger()}));
 
   enviosBtn.addEventListener('click',async()=>{
     estado.textContent='Preparando Envíos Ya…';
@@ -1230,7 +1322,7 @@ function mostrarOpcionesAltaAsegurado(_tabuladoInicial,camposGuardar,opciones={}
       const completo=recoger();Object.assign(completo,payload);
       const resp=await fetch('/api/excel/agregar-fila',{method:'POST',headers:{'Content-Type':'application/json'},credentials:'same-origin',body:JSON.stringify({campos:completo,libro_id:'1'})});
       const d=await leerJsonSeguro(resp);if(!resp.ok||d.ok===false)throw Error(d.error||'No se pudo guardar el registro.');
-      guardar.textContent='Guardado en Excel';estado.textContent='';detalles.hidden=true;editar.textContent='Editar';editar.disabled=true;telefonoInput.disabled=true;Object.values(inputs).forEach(input=>input.disabled=true);b.dataset.altaActiva='0';
+      guardar.textContent='Guardado en Excel';estado.textContent='';detalles.hidden=true;editar.textContent='Editar';editar.disabled=true;telefonoInput.disabled=true;Object.values(inputs).forEach(input=>input.disabled=true);bienvenidaBtn.hidden=false;b.dataset.altaActiva='0';
       if(messageId){try{await fetch(`/api/chats/${currentChatId}/messages/${messageId}/ui-state`,{method:'PATCH',headers:{'Content-Type':'application/json'},credentials:'same-origin',body:JSON.stringify({ui_state:{saved_excel:true}})})}catch(_){}}
       if(d.texto_envios_ya){enviosPre.textContent=d.texto_envios_ya;enviosPanel.hidden=false;const avisos=Array.isArray(d.envios_ya_advertencias)?d.envios_ya_advertencias:[];enviosAviso.textContent=avisos.join(' ');enviosAviso.hidden=!avisos.length}
     }catch(e){estado.textContent=e?.message||'No se pudo guardar.';guardar.disabled=false;editar.disabled=false}
@@ -1251,7 +1343,7 @@ function mostrarFichaOperativaAsegurado(ficha){
   if(Array.isArray(ficha.companias)&&ficha.companias.length)facts.push(['Compañía',ficha.companias.join(' · ')]);if(Array.isArray(ficha.polizas)&&ficha.polizas.length)facts.push(['Póliza',ficha.polizas.join(' · ')]);
   if(facts.length){const grid=document.createElement('div');grid.className='insured-profile-grid';facts.forEach(([k,v])=>{const item=document.createElement('div');item.className='insured-profile-fact';const lab=document.createElement('span');lab.textContent=k;const val=document.createElement('b');val.textContent=v;item.append(lab,val);grid.appendChild(item)});card.appendChild(grid)}
   const vehiculos=Array.isArray(ficha.vehiculos)?ficha.vehiculos:[];
-  if(vehiculos.length){const st=document.createElement('div');st.className='insured-profile-section-title';st.textContent=vehiculos.length===1?'Vehículo':'Vehículos';card.appendChild(st);const list=document.createElement('div');list.className='insured-profile-vehicles';vehiculos.forEach(v=>{const row=document.createElement('div');row.className='insured-profile-vehicle';const main=document.createElement('div');main.className='insured-profile-vehicle-main';const name=document.createElement('strong');name.textContent=String(v.vehiculo||v.patente||'Vehículo');main.appendChild(name);const meta=[v.patente,v.compania,v.poliza&&`Pól. ${v.poliza}`,v.cobertura].filter(Boolean).join(' · ');if(meta){const sm=document.createElement('small');sm.textContent=meta;main.appendChild(sm)}row.appendChild(main);list.appendChild(row)});card.appendChild(list)}
+  if(vehiculos.length){const st=document.createElement('div');st.className='insured-profile-section-title';st.textContent=vehiculos.length===1?'Vehículo':'Vehículos';card.appendChild(st);const list=document.createElement('div');list.className='insured-profile-vehicles';vehiculos.forEach(v=>{const row=document.createElement('div');row.className='insured-profile-vehicle';const main=document.createElement('div');main.className='insured-profile-vehicle-main';const name=document.createElement('strong');name.textContent=String(v.vehiculo||v.patente||'Vehículo');main.appendChild(name);const meta=[v.patente,v.compania,v.poliza&&`Pól. ${v.poliza}`,v.cobertura].filter(Boolean).join(' · ');if(meta){const sm=document.createElement('small');sm.textContent=meta;main.appendChild(sm)}row.appendChild(main);const docActions=document.createElement('div');docActions.className='insured-profile-doc-actions';const camposDoc={ASEGURADO:ficha.asegurado||'',NUMERO:contacto.telefono||'',MAIL:contacto.mail||'',VEHICULO:v.vehiculo||'',PATENTE:v.patente||'',CIA:v.compania||'',POLIZA:v.poliza||'',COBERTURA:v.cobertura||'','MEDIO DE PAGO':v.medio_pago||'','EMITIDO DÍA:':v.emitido_dia||'',VENCIMIENTO:v.vencimiento||'',ASISTENCIA_ESTADO:v.asistencia_estado||'DESCONOCIDO',ASISTENCIA_GRUA:v.asistencia_grua||'',IMPORTE_PENDIENTE:v.importe_pendiente||''};[['bienvenida','Bienvenida'],['pago_pendiente','Pago pendiente'],['baja','Baja']].forEach(([tipo,label])=>{const db=document.createElement('button');db.type='button';db.className='alta-secondary-btn insured-profile-doc-btn';db.textContent=label;db.addEventListener('click',()=>abrirEditorDocumentoSeguro(card,tipo,{query:String(ficha.asegurado||''),patente:String(v.patente||''),poliza:String(v.poliza||''),campos:camposDoc}));docActions.appendChild(db)});row.appendChild(docActions);list.appendChild(row)});card.appendChild(list)}
   const actions=document.createElement('div');actions.className='insured-profile-actions';const btn=document.createElement('button');btn.type='button';btn.className='alta-secondary-btn';btn.textContent='Copiar resumen';btn.addEventListener('click',async()=>{const lines=[String(ficha.asegurado||'')];facts.forEach(([k,v])=>lines.push(`${k}: ${v}`));vehiculos.forEach(v=>lines.push([v.vehiculo,v.patente,v.compania,v.poliza&&`Póliza ${v.poliza}`].filter(Boolean).join(' · ')));const ok=await copiarTextoSeguro(lines.filter(Boolean).join('\n'));if(ok){const prev=btn.textContent;btn.textContent='Copiado';setTimeout(()=>btn.textContent=prev,1400)}});actions.appendChild(btn);card.appendChild(actions);r.appendChild(card);c.appendChild(r);
 }
 
@@ -1837,51 +1929,17 @@ function mostrarPropuestaMetadato(propuesta){
 }
 
 const COMANDOS_CHAT=[
-  {
-    comando:'/guardar asegurado',
-    descripcion:'Cargar un asegurado en la planilla con campos en orden fijo.',
-    plantilla:'/guardar asegurado (asegurado) (numero) (vehiculo) (patente) (cia) (medio de pago) (cp) (mail)'
-  },
-  {
-    comando:'/ficha',
-    descripcion:'Ver ficha operativa del asegurado',
-    plantilla:'/ficha '
-  },
-  {
-    comando:'/flota',
-    descripcion:'Cargar datos de una póliza para completar una flota',
-    plantilla:'/flota'
-  },
-  {
-    comando:'/coti',
-    descripcion:'Abrir Cotizaciones',
-    plantilla:'/coti'
-  },
-  {
-    comando:'/m',
-    descripcion:'Enviar un correo indicando destinatario, asunto y mensaje. Podés adjuntar el archivo del turno actual.',
-    plantilla:'/m @ asunto:  mensaje: '
-  },
-  {
-    comando:'/mail',
-    descripcion:'Alias de /m para enviar un correo desde OficinaIA.',
-    plantilla:'/mail @ asunto:  mensaje: '
-  },
-  {
-    comando:'/patente',
-    descripcion:'Consultar un vehículo de la cartera por patente.',
-    plantilla:'/patente '
-  },
-  {
-    comando:'/cuit',
-    descripcion:'Buscar CUIT/CUIL en ARCA',
-    plantilla:'/cuit '
-  },
-  {
-    comando:'/cuil',
-    descripcion:'Buscar CUIT/CUIL en ARCA',
-    plantilla:'/cuil '
-  }
+  {comando:'/ficha',grupo:'Buscar',descripcion:'Ver ficha operativa',plantilla:'/ficha '},
+  {comando:'/patente',grupo:'Buscar',descripcion:'Buscar por patente',plantilla:'/patente '},
+  {comando:'/asegurado',grupo:'Buscar',descripcion:'Buscar por nombre',plantilla:'/asegurado '},
+  {comando:'/info',grupo:'Buscar',descripcion:'Buscar por cualquier dato',plantilla:'/info '},
+  {comando:'/guardar asegurado',grupo:'Gestión',descripcion:'Agregar a cartera',plantilla:'/guardar asegurado (asegurado) (numero) (vehiculo) (patente) (cia) (medio de pago) (cp) (mail)'},
+  {comando:'/flota',grupo:'Gestión',descripcion:'Completar flota',plantilla:'/flota'},
+  {comando:'/coti',grupo:'Gestión',descripcion:'Abrir Cotizaciones',plantilla:'/coti'},
+  {comando:'/m',grupo:'Comunicación',descripcion:'Enviar correo',plantilla:'/m @ asunto:  mensaje: '},
+  {comando:'/mail',grupo:'Comunicación',descripcion:'Enviar correo',plantilla:'/mail @ asunto:  mensaje: '},
+  {comando:'/cuit',grupo:'ARCA',descripcion:'Buscar en ARCA',plantilla:'/cuit '},
+  {comando:'/cuil',grupo:'ARCA',descripcion:'Buscar en ARCA',plantilla:'/cuil '}
 ];
 
 const ICONOS_COMANDOS_CHAT={
@@ -1895,6 +1953,8 @@ const ICONOS_COMANDOS_CHAT={
   '/cuil':'cuil',
   '/dni':'dni',
   '/patente':'patente',
+  '/asegurado':'contact',
+  '/info':'contact',
   '/cedula':'cedula',
   '/licencia':'licencia',
   '/poliza':'policy',
@@ -1948,11 +2008,34 @@ function obtenerMenuComandos(){
   return menu;
 }
 
+function posicionarMenuComandos(){
+  const menu=document.getElementById('chatCommandMenu');
+  if(!menu)return;
+  // El menú slash siempre pertenece al composer: abre hacia arriba y queda
+  // anclado a la izquierda. Nunca sigue fichas ni contenido del chat.
+  menu.classList.remove('is-profile-aligned');
+  menu.style.top='';
+  menu.style.right='';
+  menu.style.left='';
+  menu.style.bottom='';
+  menu.style.maxHeight='';
+}
+function renderComandosMenu(menu,disponibles,conGrupos=false){
+  menu.innerHTML='';let grupoAnterior='';
+  disponibles.forEach((cmd,index)=>{
+    if(conGrupos&&cmd.grupo&&cmd.grupo!==grupoAnterior){const g=document.createElement('div');g.className='chat-command-group';g.textContent=cmd.grupo;menu.appendChild(g);grupoAnterior=cmd.grupo;}
+    const item=document.createElement('button');item.type='button';item.className='chat-command-item'+(index===indiceComando?' active':'');item.dataset.index=String(index);item.innerHTML=htmlComandoChat(cmd);item.addEventListener('mousedown',e=>e.preventDefault());item.addEventListener('click',()=>ejecutarClickComando(cmd,document.getElementById('mensaje')));menu.appendChild(item);
+  });
+  menu.hidden=false;
+  // El CSS mantiene el menú anclado al lado izquierdo del composer.
+  posicionarMenuComandos();
+}
+
 function cerrarMenuComandos(){
   const menu=document.getElementById('chatCommandMenu');
   if(menu){
     menu.hidden=true;
-    menu.innerHTML='';
+    menu.innerHTML='';menu.classList.remove('is-profile-aligned');menu.style.top='';menu.style.right='';menu.style.left='';menu.style.bottom='';menu.style.maxHeight='';
   }
   indiceComando=-1;
 }
@@ -1973,20 +2056,7 @@ function actualizarMenuComandos(){
     cerrarMenuComandos();
     return;
   }
-  menu.innerHTML='';
-  disponibles.forEach((cmd,index)=>{
-    const item=document.createElement('button');
-    item.type='button';
-    item.className='chat-command-item'+(index===indiceComando?' active':'');
-    item.dataset.index=String(index);
-    item.innerHTML=htmlComandoChat(cmd);
-    item.addEventListener('mousedown',e=>e.preventDefault());
-    item.addEventListener('click',()=>{
-      ejecutarClickComando(cmd,input);
-    });
-    menu.appendChild(item);
-  });
-  menu.hidden=false;
+  renderComandosMenu(menu,disponibles,!filtro);
 }
 
 function navegarMenuComandos(direccion){
@@ -2024,20 +2094,7 @@ function mostrarMenuComandosCompleto(){
   const menu=obtenerMenuComandos();
   if(!input||!menu)return;
   indiceComando=-1;
-  menu.innerHTML='';
-  COMANDOS_CHAT.forEach((cmd,index)=>{
-    const item=document.createElement('button');
-    item.type='button';
-    item.className='chat-command-item'+(index===indiceComando?' active':'');
-    item.dataset.index=String(index);
-    item.innerHTML=htmlComandoChat(cmd);
-    item.addEventListener('mousedown',e=>e.preventDefault());
-    item.addEventListener('click',()=>{
-      ejecutarClickComando(cmd,input);
-    });
-    menu.appendChild(item);
-  });
-  menu.hidden=false;
+  renderComandosMenu(menu,COMANDOS_CHAT,true);
   input.focus();
 }
 
@@ -2050,6 +2107,7 @@ function toggleMenuComandos(){
   }
   mostrarMenuComandosCompleto();
 }
+
 
 function cerrarMenuAccionesChat(){
   const menu=document.getElementById('chatActionMenu');
@@ -2335,7 +2393,14 @@ function montarEditorCompaniaCotizacion(section,sourceId){
 
 function normalizarPorcentajeCotizacion(valor){
   const raw=String(valor??'').trim().replace(/(?:\s*%)+\s*$/,'').replace(',','.');if(!raw)return '';
-  const n=Number(raw);if(!Number.isFinite(n))return raw+'%';return `${Number.isInteger(n)?String(n):String(n).replace(/\.0+$/,'')}%`;
+  const n=Number(raw);if(!Number.isFinite(n))return raw+'%';const visual=Number.isInteger(n)?String(n):String(n).replace(/\.0+$/,'').replace('.',',');return `${visual}%`;
+}
+function notaFranquiciaCotizacion(pct='',importe=''){
+  const porcentaje=normalizarPorcentajeCotizacion(pct);
+  if(porcentaje)return `En caso de daño parcial, queda a cargo del asegurado una franquicia equivalente al ${porcentaje} de la suma asegurada. Todo gasto que supere ese importe queda a cargo de la compañía.`;
+  const monto=String(importe||'').trim();
+  if(monto)return `En caso de daño parcial, queda a cargo del asegurado una franquicia de ${monto}. Todo gasto que supere ese importe queda a cargo de la compañía.`;
+  return '';
 }
 function servicioGruaOpcion(op){
   if(typeof op?.servicio_grua==='boolean')return op.servicio_grua;
@@ -2380,8 +2445,13 @@ function familiaComercialOpcion(op){
   return normalizarClaveMarca(nombreBaseComercialOpcion(op));
 }
 function nombreComercialNormalizadoOpcion(op){
+  // Autoridad de nombres: nombre comercial explícito -> nombre ya resuelto por
+  // la fuente/catálogo -> familia normalizada. La familia nunca debe aplastar
+  // variantes reales como ATM Plus/Premium/Black.
   const explicito=String(op?.nombre_comercial||'').trim();
   if(explicito&&!/^cobertura(?:\s+|$)/i.test(explicito))return explicito;
+  const resuelto=String(op?.nombre_cliente||'').trim();
+  if(resuelto&&!/^cobertura(?:\s+|$)/i.test(resuelto))return resuelto;
   const perfil=String(op?.perfil_normalizado||op?.familia||'').trim().toUpperCase();
   return QUOTE_PROFILE_COMMERCIAL_NAMES[perfil]||nombreBaseComercialOpcion(op);
 }
@@ -2576,12 +2646,9 @@ function togglearCodigoATM(codigo,tipo='auto'){
   if(!items.length)return;
   invalidarPropuestaATM();
   if(tipo==='auto'&&codigo==='TR'){
-    const alguno=items.some(c=>c.ofrecer);
-    items.forEach(c=>c.ofrecer=false);
-    if(!alguno){
-      const preferida=items.find(c=>String(c.franquicia_pct||'').trim()==='3')||items[0];
-      if(preferida)preferida.ofrecer=true;
-    }
+    // Todo Riesgo no tiene un selector genérico: 3% y 6% son alternativas
+    // independientes y pueden convivir en la misma propuesta.
+    return;
   }else{
     const nuevo=!items[0].ofrecer;
     items.forEach(c=>c.ofrecer=false);
@@ -2596,9 +2663,7 @@ function togglearFranquiciaATM(pct){
   const item=items.find(c=>String(c.franquicia_pct||'').trim()===String(pct));
   if(!item)return;
   invalidarPropuestaATM();
-  const yaActivo=!!item.ofrecer;
-  items.forEach(c=>c.ofrecer=false);
-  if(!yaActivo)item.ofrecer=true;
+  item.ofrecer=!item.ofrecer;
   renderMatrizCoberturasATM();renderResumenSeleccionATM();programarRecalculoSeleccionATM();
 }
 function codigoVisualATM(codigo,tipo='auto'){
@@ -2654,7 +2719,7 @@ function renderMatrizCoberturasATM(){
   matrix.hidden=esMoto;
   if(motoRow)motoRow.hidden=!esMoto;
   if(esMoto){renderFilaMotosATM();return;}
-  ATM_CODIGOS_ORDEN.forEach(codigo=>{
+  ATM_CODIGOS_ORDEN.filter(codigo=>codigo!=='TR').forEach(codigo=>{
     const wrap=document.createElement('div');wrap.className='atm-code-slot';
     wrap.appendChild(crearCeldaCodigoATM(codigo,'auto'));matrix.appendChild(wrap);
   });
@@ -2666,7 +2731,7 @@ function renderMatrizCoberturasATM(){
 
 function nombreSeleccionATM(c){
   const codigo=String(c.codigo||c.nombre_corto||'').trim()||'Cobertura';
-  if(codigo==='TR'&&String(c.franquicia_pct||'').trim())return `TR ${c.franquicia_pct}%`;
+  if(codigo==='TR'&&String(c.franquicia_pct||'').trim())return `${c.franquicia_pct}%`;
   return codigo;
 }
 function renderResumenSeleccionATM(){
@@ -2772,10 +2837,6 @@ function nombreClientePropuestaATM(c){
 }
 function descripcionPropuestaATM(c){
   const codigo=String(c.codigo||'');
-  if(codigo==='TR'){
-    const pct=String(c.franquicia_pct||'').trim();
-    return `Incluye responsabilidad civil, incendio total y parcial, robo total y parcial, destrucción total y daños parciales por accidente. Además incluye ruedas, vidrios, granizo, cerraduras y grúa.\n\nEn caso de un daño parcial, queda a cargo del asegurado una franquicia equivalente al ${pct}% de la suma asegurada. Todo gasto que supere ese importe queda a cargo de la compañía.`;
-  }
   return String(c.descripcion_cliente||c.descripcion||entradaCatalogoATM(codigo,c.tipo_vehiculo)?.descripcion_cliente||entradaCatalogoATM(codigo,c.tipo_vehiculo)?.descripcion||'').trim();
 }
 function limpiarLineaCoberturaCotizacion(linea){
@@ -2809,7 +2870,7 @@ function lineasCoberturaCotizacion(descripcion){
       salida.push('Responsabilidad Civil','Robo/Hurto Total');return;
     }
     if(/^responsabilidad civil\.?$/i.test(linea)){salida.push('Responsabilidad Civil');return;}
-    if(/^franquicia\s+3%$/i.test(linea)){salida.push('Franquicia 3%');return;}
+    if(/^franquicia\s+\d+(?:[.,]\d+)?%$/i.test(linea)){salida.push(linea.charAt(0).toUpperCase()+linea.slice(1));return;}
     if(/^robo e incendio total y parcial, m[aá]s destrucci[oó]n total por accidente/i.test(linea)){
       salida.push('Robo Total y Parcial','Incendio Total y Parcial','Destrucción Total por Accidente');return;
     }
@@ -2822,11 +2883,82 @@ function lineasCoberturaCotizacion(descripcion){
   });
   return salida.filter((x,i,a)=>x&&a.indexOf(x)===i);
 }
-function datosCoberturaPropuesta({compania,companiaDetectada='',companiaConfirmada='',companyKey='',codigo='',familia='',nombre,nombreComercial='',varianteComercial='',varianteGrua='',servicioGrua=null,suma='',descripcion='',precio='',cuponera='',adherido='',franquiciaPct='',franquiciaImporte='',mostrarFranquiciaWhatsApp=true}){
-  const items=lineasCoberturaCotizacion(descripcion).map(texto=>({
-    tipo:/^En caso de un daño parcial/i.test(texto)?'nota':'beneficio',
+const QUOTE_CORE_BENEFIT={
+  RC:['Responsabilidad Civil'],
+  B:['Responsabilidad Civil','Incendio Total','Robo/Hurto Total','Destrucción Total por Accidente'],
+  B1:['Responsabilidad Civil','Incendio Total','Robo/Hurto Total'],
+  C:['Responsabilidad Civil','Incendio Total y Parcial','Robo/Hurto Total y Parcial','Destrucción Total por Accidente'],
+  C1:['Responsabilidad Civil','Incendio Total y Parcial','Robo/Hurto Total y Parcial'],
+  C_PLUS:['Responsabilidad Civil','Incendio Total y Parcial','Robo/Hurto Total y Parcial','Destrucción Total por Accidente'],
+  LB:['Responsabilidad Civil','Incendio Total y Parcial','Robo/Hurto Total','Robo Parcial al amparo del Robo Total','Destrucción Total por Accidente'],
+  LB1:['Responsabilidad Civil','Incendio Total y Parcial','Robo/Hurto Total','Robo Parcial al amparo del Robo Total'],
+  TODO_RIESGO:['Responsabilidad Civil','Incendio Total y Parcial','Robo/Hurto Total y Parcial','Destrucción Total por Accidente','Daños Parciales por Accidente'],
+  TR:['Responsabilidad Civil','Incendio Total y Parcial','Robo/Hurto Total y Parcial','Destrucción Total por Accidente','Daños Parciales por Accidente']
+};
+function esNotaFranquiciaCotizacion(texto){
+  const key=normalizarClaveMarca(texto);return key.includes('franquicia')&&(key.includes('queda a cargo del asegurado')||key.startsWith('en caso de dano parcial')||key.startsWith('en caso de un dano parcial'));
+}
+function esBeneficioNucleoCotizacion(texto){
+  const key=normalizarClaveMarca(texto);return ['responsabilidad civil','incendio','robo','hurto','destruccion total','danos parciales por accidente','robo parcial al amparo'].some(x=>key.includes(x));
+}
+function contenidosCanonicosCotizacion(items,familia,riesgosDetectados=[],servicioGrua=null,varianteGrua='',beneficiosAdicionales=[],granizoEstado=''){
+  const fam=String(familia||'').trim().toUpperCase(),base=[...(QUOTE_CORE_BENEFIT[fam]||[])];
+  const limpios=(items||[]).filter(x=>x&&String(x.texto||'').trim()&&!esNotaFranquiciaCotizacion(x.texto));
+  if(!base.length)return limpios;
+  const notas=limpios.filter(x=>x.tipo==='nota'),beneficios=limpios.filter(x=>x.tipo!=='nota');
+  const out=[],vistos=new Set();const add=texto=>{const txt=String(texto||'').trim(),key=normalizarClaveMarca(txt);if(txt&&key&&!vistos.has(key)){out.push({tipo:'beneficio',texto:txt});vistos.add(key)}};
+  const riesgos=new Set((riesgosDetectados||[]).map(x=>String(x||'').trim().toUpperCase()).filter(Boolean));
+  // Hechos estructurados primero; familia sólo como fallback. Así una familia
+  // común no vuelve a reinterpretar una variante que la fuente ya resolvió.
+  const coreIds=['RESPONSABILIDAD_CIVIL','INCENDIO_TOTAL','INCENDIO_PARCIAL','ROBO_HURTO_TOTAL','ROBO_HURTO_PARCIAL','ROBO_PARCIAL_AMPARO_TOTAL','DESTRUCCION_TOTAL_ACCIDENTE','DANOS_PARCIALES_ACCIDENTE'];
+  let core=[];
+  if(coreIds.some(id=>riesgos.has(id))){
+    if(riesgos.has('RESPONSABILIDAD_CIVIL'))core.push('Responsabilidad Civil');
+    if(riesgos.has('INCENDIO_TOTAL')&&riesgos.has('INCENDIO_PARCIAL'))core.push('Incendio Total y Parcial');
+    else if(riesgos.has('INCENDIO_TOTAL'))core.push('Incendio Total');
+    else if(riesgos.has('INCENDIO_PARCIAL'))core.push('Incendio Parcial');
+    if(riesgos.has('ROBO_HURTO_TOTAL')&&riesgos.has('ROBO_HURTO_PARCIAL'))core.push('Robo/Hurto Total y Parcial');
+    else if(riesgos.has('ROBO_HURTO_TOTAL'))core.push('Robo/Hurto Total');
+    else if(riesgos.has('ROBO_HURTO_PARCIAL'))core.push('Robo/Hurto Parcial');
+    if(riesgos.has('ROBO_PARCIAL_AMPARO_TOTAL'))core.push('Robo Parcial al amparo del Robo Total');
+    if(riesgos.has('DESTRUCCION_TOTAL_ACCIDENTE'))core.push('Destrucción Total por Accidente');
+    if(riesgos.has('DANOS_PARCIALES_ACCIDENTE'))core.push('Daños Parciales por Accidente');
+  }else{
+    core=base.map(x=>x);
+  }
+  core.forEach(add);
+  const detalles=(beneficiosAdicionales||[]).map(x=>String(x||'').trim()).filter(Boolean),detalleKey=normalizarClaveMarca(detalles.join(' '));
+  [['RUEDAS','Ruedas'],['BATERIA','Batería'],['VIDRIOS','Vidrios'],['GRANIZO','Granizo'],['CERRADURAS','Cerraduras']].forEach(([id,label])=>{
+    if(!riesgos.has(id))return;
+    if(id==='RUEDAS'&&(detalleKey.includes('rueda')||detalleKey.includes('cubierta')))return;
+    if(id==='VIDRIOS'&&(detalleKey.includes('cristal')||detalleKey.includes('parabris')||detalleKey.includes('luneta')))return;
+    if(id==='GRANIZO'&&detalleKey.includes('granizo'))return;
+    if(id==='CERRADURAS'&&detalleKey.includes('cerradura'))return;
+    add(label);
+  });
+  detalles.forEach(add);
+  beneficios.filter(x=>!esBeneficioNucleoCotizacion(x.texto)).forEach(x=>{const key=normalizarClaveMarca(x.texto);const tokens=['ruedas','vidrios','granizo','cerraduras'].filter(t=>key.includes(t));if(tokens.length>=2&&tokens.every(t=>vistos.has(t)))return;add(x.texto)});
+  if(normalizarClaveMarca(granizoEstado)==='incluye')add('Granizo');
+  const vg=normalizarClaveMarca(varianteGrua);if(typeof servicioGrua==='boolean'&&!['con grua','sin grua'].includes(vg))add(servicioGrua?'Incluye grúa':'Sin grúa');
+  notas.forEach(x=>{const key=normalizarClaveMarca(x.texto);if(key&&!vistos.has(key)){out.push(x);vistos.add(key)}});
+  return out;
+}
+
+function datosCoberturaPropuesta({compania,companiaDetectada='',companiaConfirmada='',companyKey='',codigo='',familia='',nombre,nombreComercial='',varianteComercial='',varianteGrua='',servicioGrua=null,suma='',descripcion='',precio='',cuponera='',adherido='',franquiciaPct='',franquiciaImporte='',mostrarFranquiciaWhatsApp=true,riesgosDetectados=[],beneficiosAdicionales=[],detalleTecnico=[],granizoEstado=''}){
+  let descripcionNormalizada=String(descripcion||'').trim();
+  const varianteGruaKey=normalizarClaveMarca(varianteGrua);
+  const tieneMencionGrua=/\b(?:gr[uú]a|asistencia(?:\s+vehicular|\s+mec[aá]nica)?)\b/i.test(descripcionNormalizada);
+  // La asistencia es una prestación universal. Si la fuente la confirmó y no
+  // está expresada como variante de título, la presentamos con el mismo
+  // criterio para cualquier compañía.
+  if(typeof servicioGrua==='boolean'&&!tieneMencionGrua&&!['con grua','sin grua'].includes(varianteGruaKey)){
+    descripcionNormalizada=[descripcionNormalizada,servicioGrua?'Incluye grúa.':'Sin grúa.'].filter(Boolean).join('\n');
+  }
+  let items=lineasCoberturaCotizacion(descripcionNormalizada).map(texto=>({
+    tipo:/^En caso de (?:un )?daño parcial/i.test(texto)?'nota':'beneficio',
     texto
-  }));
+  })).filter(x=>!esNotaFranquiciaCotizacion(x.texto));
+  items=contenidosCanonicosCotizacion(items,familia,riesgosDetectados,servicioGrua,varianteGrua,beneficiosAdicionales,granizoEstado);
   const pct=normalizarPorcentajeCotizacion(franquiciaPct).replace('%','');
   return {
     compania:String(compania||'Compañía').trim()||'Compañía',
@@ -2839,6 +2971,10 @@ function datosCoberturaPropuesta({compania,companiaDetectada='',companiaConfirma
     variante_comercial:String(varianteComercial||'').trim(),
     variante_grua:String(varianteGrua||'').trim(),
     tiene_grua:typeof servicioGrua==='boolean'?servicioGrua:null,
+    granizo_estado:String(granizoEstado||'').trim().toUpperCase(),
+    riesgos_detectados:(riesgosDetectados||[]).map(x=>String(x||'').trim().toUpperCase()).filter(Boolean),
+    beneficios_adicionales:(beneficiosAdicionales||[]).map(x=>String(x||'').trim()).filter(Boolean),
+    detalle_tecnico:(detalleTecnico||[]).map(x=>String(x||'').trim()).filter(Boolean),
     suma:String(suma||'').trim(),
     franquicia_pct:pct,
     franquicia_importe:String(franquiciaImporte||'').trim(),
@@ -2849,6 +2985,7 @@ function datosCoberturaPropuesta({compania,companiaDetectada='',companiaConfirma
     contenidos:items
   };
 }
+
 function bloqueCoberturaWhatsAppDatos(item){
   const lineas=[`*${String(item?.compania||'').toUpperCase()} | ${String(item?.nombre||'COBERTURA').toUpperCase()}*`];
   if(item?.suma)lineas.push('',`*Suma asegurada:* ${item.suma}`);
@@ -2856,8 +2993,18 @@ function bloqueCoberturaWhatsAppDatos(item){
     const detalle=[item.franquicia_pct?`${item.franquicia_pct}%`:'',item.franquicia_importe||''].filter(Boolean).join(' · ');
     lineas.push('',`*Franquicia:* ${detalle}`);
   }
-  const items=(item?.contenidos||[]).map(x=>String(x?.texto||'').trim()).filter(Boolean);
-  if(items.length)lineas.push('',...items.map(x=>`• ${x}`));
+  const beneficios=(item?.contenidos||[]).filter(x=>x?.tipo!=='nota').map(x=>String(x?.texto||'').trim()).filter(Boolean);
+  const notas=(item?.contenidos||[]).filter(x=>x?.tipo==='nota'&&!esNotaFranquiciaCotizacion(x?.texto)).map(x=>String(x?.texto||'').trim()).filter(Boolean);
+  if(beneficios.length)lineas.push('',...beneficios.map(x=>`• ${x}`));
+  if(notas.length)lineas.push('',...notas);
+  const notaFranquicia=notaFranquiciaCotizacion(item?.franquicia_pct,item?.franquicia_importe);
+  if(notaFranquicia){
+    // ATM históricamente oculta la línea "*Franquicia:*" porque la variante
+    // ya la muestra en el título. Conservamos ese formato, pero la explicación
+    // sigue apareciendo exactamente una vez. El resto usa la presentación común.
+    if(item?.mostrar_franquicia_whatsapp===false)lineas.push('',`• ${notaFranquicia}`);
+    else lineas.push('',notaFranquicia);
+  }
   if(item?.cuponera||item?.adherido){
     lineas.push('');if(item.cuponera)lineas.push(`*Cuponera:* ${item.cuponera}`);if(item.adherido)lineas.push(`*Adherido:* ${item.adherido}`);
   }else if(item?.precio)lineas.push('',`*Precio:* ${item.precio} por cuota`);
@@ -2877,6 +3024,10 @@ function datosATMPropuesta(c,saATM=''){
     cuponera:cupones,
     adherido,
     franquiciaPct:c.franquicia_pct||'',
+    riesgosDetectados:c.riesgos_detectados||[],
+    beneficiosAdicionales:c.beneficios_adicionales||[],
+    detalleTecnico:c.detalle_tecnico||[],
+    granizoEstado:c.granizo_estado||'',
     mostrarFranquiciaWhatsApp:false
   });
 }
@@ -2966,7 +3117,9 @@ async function leerPDFCompaniaCotizaciones(file){
       cargarLecturaFederacion(d);mostrarEstadoCotizaciones('Federación Patronal detectada. La alternativa quedó agregada a la propuesta.','ok');return;
     }
     if(d.tipo==='generica'||d.es_cotizacion_generica){
-      cargarLecturaGenerica(d);mostrarEstadoCotizaciones(`${d.compania||'Cotización'} detectada por contenido. Revisá y elegí las coberturas.`, 'ok');return;
+      cargarLecturaGenerica(d);
+      const revisar=!!d.requiere_revision;
+      mostrarEstadoCotizaciones(revisar?`${d.compania||'Cotización'} leída con datos para revisar antes de generar.`:`${d.compania||'Cotización'} detectada por contenido. Revisá y elegí las coberturas.`, revisar?'warning':'ok');return;
     }
     throw Error('No pude identificar la compañía del PDF.');
   }catch(e){mostrarEstadoCotizaciones(e?.message||'No pude identificar el PDF.','error');}
@@ -2985,6 +3138,7 @@ function cargarLecturaGenerica(lectura){
     id,compania:lectura?.compania||'Compañía no identificada',compania_detectada:lectura?.compania_detectada||lectura?.compania||'Compañía no identificada',compania_confirmada:lectura?.compania_confirmada||'',company_key:lectura?.company_key||'',tipo_fuente:'normalizada',
     vehiculo:lectura?.vehiculo||'',anio:lectura?.anio||'',
     suma_asegurada:lectura?.suma_asegurada||'',suma_asegurada_formateada:lectura?.suma_asegurada_formateada||'',
+    requiere_revision:!!lectura?.requiere_revision,calidad_lectura:lectura?.calidad_lectura||null,
     opciones
   };
   inicializarIdentidadFuente(source,source.compania_detectada);genericQuoteSources.push(source);quoteSources.push(source);marcarFuenteVisualReciente(id);
@@ -3005,6 +3159,7 @@ function renderGenericQuoteSources(){
     const info=document.createElement('div');const b=document.createElement('b');b.textContent=companiaEfectivaFuente(source);
     const small=document.createElement('small');const meta=[];if(source.vehiculo)meta.push([source.vehiculo,source.anio].filter(Boolean).join(' · '));if(source.suma_asegurada_formateada)meta.push(`SA ${source.suma_asegurada_formateada.replace(',00','')}`);meta.push(`${source.opciones.length} cobertura${source.opciones.length===1?'':'s'} normalizada${source.opciones.length===1?'':'s'}`);small.textContent=meta.join(' · ');info.append(b,small);
     const remove=document.createElement('button');remove.type='button';remove.className='quote-source-remove';remove.innerHTML=oiaIconHtml('close');remove.title='Quitar cotización';remove.setAttribute('aria-label','Quitar cotización');remove.addEventListener('click',()=>quitarFuenteGenerica(source.id));head.append(info,remove);section.appendChild(head);
+    if(source.requiere_revision){const warn=document.createElement('div');warn.className='quote-source-review-warning';warn.textContent='Lectura automática para revisar · confirmá compañía, cobertura y precio antes de generar.';section.appendChild(warn)}
 
     const cobTitle=document.createElement('div');cobTitle.className='quote-subsection-title';cobTitle.textContent='Coberturas';section.appendChild(cobTitle);
     const matrix=document.createElement('div');matrix.className='mercantil-code-matrix generic-code-matrix';
@@ -3159,6 +3314,42 @@ function renderResumenMercantil(){
   });
   wrap.hidden=!seleccion.length;const selectedLabel=document.getElementById('mercantilSelectedLabel');if(selectedLabel)selectedLabel.hidden=!seleccion.length;actualizarFooterCotizaciones();
 }
+async function prepararSelectorRCManual(){
+  const select=document.getElementById('quotesRcCompany');if(!select)return;
+  const catalogo=await asegurarCatalogoCompaniasCotizacion();
+  const actual=select.value;select.innerHTML='<option value="">Seleccionar compañía</option>';
+  catalogo.forEach(item=>{const opt=document.createElement('option');opt.value=String(item.key||item.nombre||'');opt.textContent=String(item.nombre||item.key||'Compañía');opt.dataset.name=String(item.nombre||'');select.appendChild(opt)});
+  const agro=catalogo.find(x=>normalizarClaveMarca(x.nombre)==='agrosalta'||String(x.key)==='agrosalta');
+  select.value=actual||(agro?String(agro.key||agro.nombre):'');
+}
+async function abrirEditorRCManual(){
+  const editor=document.getElementById('quotesRcEditor');if(!editor)return;
+  await prepararSelectorRCManual();editor.hidden=false;document.getElementById('quotesAddRcBtn')?.setAttribute('aria-expanded','true');
+  document.getElementById('quotesRcPrice')?.focus();
+}
+function cerrarEditorRCManual(){
+  const editor=document.getElementById('quotesRcEditor');if(editor)editor.hidden=true;document.getElementById('quotesAddRcBtn')?.setAttribute('aria-expanded','false');
+}
+function agregarRCManualDesdeEditor(){
+  const companySelect=document.getElementById('quotesRcCompany'),typeSelect=document.getElementById('quotesRcType'),priceInput=document.getElementById('quotesRcPrice');
+  const option=companySelect?.selectedOptions?.[0];const compania=String(option?.dataset?.name||option?.textContent||'').trim();
+  const catalogada=resolverCompaniaCotizacion(compania);const precio=parseNumeroCotizacion(priceInput?.value);
+  if(!compania||!companySelect?.value){mostrarEstadoCotizaciones('Elegí la compañía para agregar la Responsabilidad Civil.','error');companySelect?.focus();return false;}
+  if(!Number.isFinite(precio)||precio<=0){mostrarEstadoCotizaciones('Ingresá el precio de la Responsabilidad Civil.','error');priceInput?.focus();return false;}
+  const sinGrua=String(typeSelect?.value||'')==='rc_sin_grua';
+  const item={
+    id:`manual-${quoteSourceSeq++}`,compania:String(catalogada?.nombre||compania),compania_detectada:String(catalogada?.nombre||compania),compania_confirmada:String(catalogada?.nombre||compania),company_key:String(catalogada?.key||companySelect.value||''),
+    tipo_fuente:'manual_rc',codigo:'RC',codigo_visual:'RC',familia:'RC',perfil_normalizado:'RC',
+    nombre_comercial:sinGrua?'Responsabilidad Civil sin grúa':'Responsabilidad Civil',variante_comercial:'',variante_grua:'',
+    servicio_grua:sinGrua?false:true,precio,seleccionada:true,
+    riesgos_detectados:sinGrua?['RESPONSABILIDAD_CIVIL']:['RESPONSABILIDAD_CIVIL','GRUA'],
+    descripcion:sinGrua?'Responsabilidad civil.\nSin grúa.':'Responsabilidad civil.\nIncluye grúa.'
+  };
+  inicializarIdentidadFuente(item,item.compania);manualQuoteSources.push(item);quoteSources.push({...item,opciones:[item]});marcarFuenteVisualReciente(item.id);
+  renderManualQuoteSources();invalidarPropuestaCotizaciones();actualizarFooterCotizaciones();mostrarEstadoCotizaciones(`${item.compania} · ${sinGrua?'Responsabilidad Civil sin grúa':'Responsabilidad Civil'} agregada a la propuesta.`,'ok');
+  if(priceInput)priceInput.value='';cerrarEditorRCManual();return true;
+}
+
 function nombreComercialManual(compania,codigo){
   const cia=String(compania||'').toLowerCase(),c=String(codigo||'').toUpperCase();
   if(cia.includes('feder')){
@@ -3184,11 +3375,30 @@ function speechManual(compania,codigo){
   }
   return '';
 }
+function resolverPrefijoCompaniaCotizacion(texto){
+  const raw=String(texto||'').trim();if(!raw)return null;
+  const target=normalizarClaveMarca(raw);if(!target)return null;
+  let mejor=null;
+  for(const item of quoteCompanyCatalog){
+    if(!item||typeof item!=='object')continue;
+    const aliases=[item.nombre,item.key,...(Array.isArray(item.aliases)?item.aliases:[])];
+    for(const aliasRaw of aliases){
+      const alias=normalizarClaveMarca(aliasRaw);
+      if(!alias||!(target===alias||target.startsWith(alias+' ')))continue;
+      if(!mejor||alias.length>mejor.alias.length)mejor={item,alias};
+    }
+  }
+  if(!mejor)return null;
+  const palabras=mejor.alias.split(/\s+/).filter(Boolean).length;
+  const partes=raw.split(/\s+/);
+  return {item:mejor.item,resto:partes.slice(palabras).join(' ').trim()};
+}
 function parsearAlternativaManual(texto){
   const raw=String(texto||'').trim();if(!raw)return null;
-  const companias=[['Federación Patronal',/^(?:federaci[oó]n(?:\s+patronal)?|federacion(?:\s+patronal)?|fed)\b/i],['Allianz',/^allianz\b/i],['San Cristóbal',/^san\s+crist[oó]bal\b/i],['Mercantil Andina',/^(?:mercantil(?:\s+andina)?|ma)\b/i],['ATM',/^atm\b/i]];
-  let compania='',resto=raw;for(const [nombre,re] of companias){const m=resto.match(re);if(m){compania=nombre;resto=resto.slice(m[0].length).trim();break;}}
-  if(!compania)return null;
+  const detectada=resolverPrefijoCompaniaCotizacion(raw);
+  if(!detectada)return null;
+  const compania=String(detectada.item?.nombre||'').trim(),resto=detectada.resto;
+  if(!compania||!resto)return null;
   const cod=resto.match(/^([A-Za-z0-9+%-]+)/);if(!cod)return null;const codigo=cod[1].toUpperCase();
   const sa=resto.match(/\b(?:SA|SUMA(?:\s+ASEGURADA)?)\s*[:=$-]*\s*\$?\s*([\d.,]+)/i);
   const precio=resto.match(/\b(?:PRECIO|CUOTA|PREMIO)\s*[:=$-]*\s*\$?\s*([\d.,]+)/i);
@@ -3213,8 +3423,8 @@ function renderManualQuoteSources(){
     const info=document.createElement('div');const b=document.createElement('b');b.textContent=companiaEfectivaFuente(item);const small=document.createElement('small');small.textContent=[item.suma_asegurada?`SA ${formatoPesosCotizacion(item.suma_asegurada,false)}`:'','1 cobertura'].filter(Boolean).join(' · ');info.append(b,small);
     const remove=document.createElement('button');remove.type='button';remove.className='quote-source-remove';remove.innerHTML=oiaIconHtml('close');remove.title='Quitar alternativa';remove.setAttribute('aria-label','Quitar alternativa');remove.addEventListener('click',()=>{manualQuoteSources=manualQuoteSources.filter(x=>x.id!==item.id);quoteSources=quoteSources.filter(x=>x.id!==item.id);quitarOrdenVisualFuente(item.id);renderManualQuoteSources();invalidarPropuestaCotizaciones();actualizarFooterCotizaciones();});head.append(info,remove);
     section.appendChild(head);const cobTitle=document.createElement('div');cobTitle.className='quote-subsection-title';cobTitle.textContent='Coberturas';section.appendChild(cobTitle);
-    const matrix=document.createElement('div');matrix.className='mercantil-code-matrix manual-code-matrix';const code=document.createElement('button');code.type='button';code.className='atm-code-cell manual-code-cell'+(item.seleccionada?' active':'');code.textContent=item.codigo||'COB';code.title=nombreComercialManual(companiaEfectivaFuente(item),item.codigo);code.addEventListener('click',()=>{item.seleccionada=!item.seleccionada;const espejo=quoteSources.find(x=>x.id===item.id);if(espejo)espejo.seleccionada=item.seleccionada;renderManualQuoteSources();invalidarPropuestaCotizaciones();actualizarFooterCotizaciones()});matrix.appendChild(code);section.appendChild(matrix);
-    if(item.seleccionada){const selectedTitle=document.createElement('div');selectedTitle.className='quote-subsection-title quote-selected-label';selectedTitle.textContent='Seleccionadas';section.appendChild(selectedTitle);const selected=document.createElement('div');selected.className='mercantil-selected-summary manual-selected-summary';const modelo=modeloComercialOpcion(item,{...item,nombre_cliente:nombreComercialManual(companiaEfectivaFuente(item),item.codigo)});const row=document.createElement('div');row.className='mercantil-selected-item manual-selected-item quote-selected-row';const rowInfo=document.createElement('div');rowInfo.className='mercantil-selected-info';const rb=document.createElement('b');rb.textContent=item.codigo||'COB';const rs=document.createElement('small');rs.textContent=modelo.titulo_comercial;rowInfo.append(rb,rs);const price=document.createElement('span');price.className='mercantil-price';price.innerHTML=`<strong>${esc(formatoPesosCotizacion(item.precio,true))}</strong><small>Por cuota</small>`;row.append(rowInfo,price);selected.appendChild(row);section.appendChild(selected)}
+    const matrix=document.createElement('div');matrix.className='mercantil-code-matrix manual-code-matrix';const code=document.createElement('button');code.type='button';code.className='atm-code-cell manual-code-cell'+(item.seleccionada?' active':'');code.textContent=item.codigo||'COB';code.title=item.nombre_comercial||nombreComercialManual(companiaEfectivaFuente(item),item.codigo);code.addEventListener('click',()=>{item.seleccionada=!item.seleccionada;const espejo=quoteSources.find(x=>x.id===item.id);if(espejo)espejo.seleccionada=item.seleccionada;renderManualQuoteSources();invalidarPropuestaCotizaciones();actualizarFooterCotizaciones()});matrix.appendChild(code);section.appendChild(matrix);
+    if(item.seleccionada){const selectedTitle=document.createElement('div');selectedTitle.className='quote-subsection-title quote-selected-label';selectedTitle.textContent='Seleccionadas';section.appendChild(selectedTitle);const selected=document.createElement('div');selected.className='mercantil-selected-summary manual-selected-summary';const modelo=modeloComercialOpcion(item,{...item,nombre_cliente:item.nombre_comercial||nombreComercialManual(companiaEfectivaFuente(item),item.codigo)});const row=document.createElement('div');row.className='mercantil-selected-item manual-selected-item quote-selected-row';const rowInfo=document.createElement('div');rowInfo.className='mercantil-selected-info';const rb=document.createElement('b');rb.textContent=item.codigo||'COB';const rs=document.createElement('small');rs.textContent=modelo.titulo_comercial;rowInfo.append(rb,rs);const price=document.createElement('span');price.className='mercantil-price';price.innerHTML=`<strong>${esc(formatoPesosCotizacion(item.precio,true))}</strong><small>Por cuota</small>`;row.append(rowInfo,price);selected.appendChild(row);section.appendChild(selected)}
     presentarFuenteCotizacion(section,item.id,companiaEfectivaFuente(item));wrap.appendChild(section);
   });
 }
@@ -3274,7 +3484,11 @@ function obtenerDatosPropuestaCotizaciones(){
       descripcion:descripcionSinVarianteGrua(op.descripcion_cliente,modelo),
       precio:formatearPrecioComercialCotizacion(op.precio_final,op.precio_final_formateado),
       franquiciaPct:op.franquicia_pct||'',
-      franquiciaImporte:op.franquicia_importe_formateado?op.franquicia_importe_formateado.replace(',00',''):''
+      franquiciaImporte:op.franquicia_importe_formateado?op.franquicia_importe_formateado.replace(',00',''):'',
+      riesgosDetectados:op.riesgos_detectados||[],
+      beneficiosAdicionales:op.beneficios_adicionales||[],
+      detalleTecnico:op.detalle_tecnico||[],
+      granizoEstado:op.granizo_estado||''
     }));
   });
   federacionQuoteSources.filter(x=>x.seleccionada).forEach(item=>{
@@ -3286,7 +3500,11 @@ function obtenerDatosPropuestaCotizaciones(){
       descripcion:descripcionSinVarianteGrua(descripcionFederacionPropuesta(item),modelo),
       precio:formatearPrecioComercialCotizacion(item.precio_cuota,item.precio_cuota_formateado),
       franquiciaPct:item.franquicia_pct||'',
-      franquiciaImporte:item.franquicia_importe_formateado||''
+      franquiciaImporte:item.franquicia_importe_formateado||'',
+      riesgosDetectados:item.riesgos_detectados||[],
+      beneficiosAdicionales:item.beneficios_adicionales||[],
+      detalleTecnico:item.detalle_tecnico||[],
+      granizoEstado:item.granizo_estado||''
     }));
   });
   genericQuoteSources.forEach(source=>{
@@ -3300,18 +3518,26 @@ function obtenerDatosPropuestaCotizaciones(){
         descripcion:descripcionSinVarianteGrua(descripcion,modelo),
         precio:op.precio_cuota_formateado?formatearPrecioComercialCotizacion(op.precio_cuota,op.precio_cuota_formateado):'',
         franquiciaPct:op.franquicia_pct||'',
-        franquiciaImporte:op.franquicia_importe_formateado||''
+        franquiciaImporte:op.franquicia_importe_formateado||'',
+        riesgosDetectados:op.riesgos_detectados||[],
+        beneficiosAdicionales:op.beneficios_adicionales||[],
+        granizoEstado:op.granizo_estado||''
       }));
     });
   });
   manualQuoteSources.filter(x=>x.seleccionada).forEach(item=>{
-    const op={...item,nombre_cliente:nombreComercialManual(companiaEfectivaFuente(item),item.codigo)};const modelo=modeloComercialOpcion(item,op);
+    const op={...item,nombre_cliente:item.nombre_comercial||nombreComercialManual(companiaEfectivaFuente(item),item.codigo)};const modelo=modeloComercialOpcion(item,op);
     alternativas.push(datosCoberturaPropuesta({
       compania:companiaEfectivaFuente(item),companiaDetectada:item.compania_detectada,companiaConfirmada:item.compania_confirmada,companyKey:item.company_key,
-      codigo:modelo.codigo,familia:modelo.familia,nombre:modelo.titulo_comercial,nombreComercial:modelo.nombre_comercial,varianteComercial:modelo.variante_comercial,varianteGrua:modelo.variante_grua,servicioGrua:modelo.tiene_grua,
+      codigo:modelo.codigo,familia:modelo.familia,nombre:modelo.titulo_comercial,nombreComercial:modelo.nombre_comercial,varianteComercial:modelo.variante_comercial,varianteGrua:modelo.variante_grua,
       suma:item.suma_asegurada?formatoPesosCotizacion(item.suma_asegurada,false):'',
       descripcion:item.descripcion,
-      precio:formatearPrecioComercialCotizacion(item.precio,formatoPesosCotizacion(item.precio,true))
+      precio:formatearPrecioComercialCotizacion(item.precio,formatoPesosCotizacion(item.precio,true)),
+      franquiciaPct:item.franquicia_pct||'',franquiciaImporte:item.franquicia_importe_formateado||'',servicioGrua:typeof item.servicio_grua==='boolean'?item.servicio_grua:null,
+      riesgosDetectados:item.riesgos_detectados||[],
+      beneficiosAdicionales:item.beneficios_adicionales||[],
+      detalleTecnico:item.detalle_tecnico||[],
+      granizoEstado:item.granizo_estado||''
     }));
   });
   return {vehiculo:vehiculoPropuestaCotizaciones(),alternativas};
@@ -3387,6 +3613,10 @@ function inicializarCotizadorATM(pageSignal=null){
   const composer=document.getElementById('quotesComposer'),text=document.getElementById('quotesComposerText'),fileInput=document.getElementById('quotesFileInput');
   document.getElementById('quotesAttachBtn')?.addEventListener('click',()=>fileInput?.click());
   document.getElementById('quotesSendBtn')?.addEventListener('click',procesarComposerCotizaciones);
+  document.getElementById('quotesAddRcBtn')?.addEventListener('click',()=>{const editor=document.getElementById('quotesRcEditor');if(editor?.hidden)abrirEditorRCManual();else cerrarEditorRCManual();});
+  document.getElementById('quotesRcConfirm')?.addEventListener('click',agregarRCManualDesdeEditor);
+  document.getElementById('quotesRcCancel')?.addEventListener('click',cerrarEditorRCManual);
+  document.getElementById('quotesRcPrice')?.addEventListener('keydown',e=>{if(e.key==='Enter'){e.preventDefault();agregarRCManualDesdeEditor();}});
   text?.addEventListener('input',autoSizeQuotesComposer);text?.addEventListener('keydown',e=>{if(e.key==='Enter'&&!e.shiftKey){e.preventDefault();procesarComposerCotizaciones();}});
   fileInput?.addEventListener('change',()=>{const f=fileInput.files?.[0];if(f)procesarArchivoCotizaciones(f);fileInput.value='';});
   ['dragenter','dragover'].forEach(ev=>composer?.addEventListener(ev,e=>{e.preventDefault();composer.classList.add('drag');}));

@@ -154,7 +154,7 @@
         const payload=item.payload||{};
         const preview=payload.preview||payload.texto||payload.contenido||'';
         const corto=String(preview).slice(0,180);
-        return `<article class="pend-card" data-id="${item.id}">
+        return `<article class="pend-card is-${esc(estadoActual)}" data-id="${item.id}">
           <header>
             <span class="pend-tag">${esc(tipo)}</span>
             <strong>${esc(item.titulo)}</strong>
