@@ -1,5 +1,40 @@
 # OficinaIA — instrucciones obligatorias para Codex
 
+## 0. Principio arquitectónico obligatorio: una sola lógica activa
+
+**Una responsabilidad funcional debe tener una sola fuente de verdad ejecutable.**
+
+### Regla de antigüedad y dependencias
+
+**Nunca eliminar una implementación por ser antigua ni conservar una implementación por ser nueva.** La antigüedad del código no determina su validez ni su autoridad.
+
+- Antes de retirar una implementación, identificar qué responsabilidad cumple y mapear todos sus consumidores/dependencias.
+- Si una funcionalidad nueva necesita una lógica existente que sigue siendo válida, debe **reutilizarla/consumirla como fuente de verdad**. No duplicarla, reinterpretarla ni eliminarla.
+- Una implementación existente sólo se retira cuando otra asume explícitamente **la misma responsabilidad**, existe un contrato equivalente o migrado para sus consumidores y se comprobó que no queda ninguna dependencia necesaria de comportamiento exclusivo de la implementación retirada.
+- Agregar una función nueva no implica reemplazar lo anterior. Primero clasificar el cambio como **extensión**, **consumo** o **reemplazo**. Sólo un reemplazo justificado habilita retirar la implementación desplazada.
+- Si A es la autoridad válida y B es una función nueva que necesita su resultado, el diseño correcto es `A → resultado canónico → B`. B no vuelve a calcular A y A no se elimina.
+- Si C reemplaza justificadamente a A, primero migrar/verificar los consumidores de A para que dependan del contrato canónico de C; recién entonces retirar A.
+- Está prohibido borrar código funcional sólo para reducir legacy, duplicación aparente o cantidad de capas sin demostrar antes equivalencia de responsabilidad y seguridad de sus dependencias.
+
+Flujo obligatorio antes de retirar o reemplazar lógica:
+
+`MAPEAR RESPONSABILIDAD → MAPEAR CONSUMIDORES → CLASIFICAR (EXTENDER / CONSUMIR / REEMPLAZAR) → REUTILIZAR O MIGRAR → RETIRAR SÓLO SI CORRESPONDE → BUSCAR RESIDUOS → REGRESIÓN → END-TO-END`
+
+- Antes de agregar o modificar una regla, localizar todas las implementaciones, fallbacks, heurísticas, overrides y transformaciones que puedan decidir el mismo resultado.
+- Si la implementación nueva reemplaza a una anterior, retirar la anterior en la misma tarea. No alcanza con darle menos prioridad, envolverla en otro `if` o pisarla después.
+- Está prohibido conservar dos caminos activos que reconstruyan nombres comerciales, coberturas, contenidos, routing, estados o presentación canónica del mismo dato.
+- Parser/adaptador = extrae hechos de la fuente. Normalizador = decide el modelo canónico. UI = presenta/selecciona. Renderer/exportador = renderiza. Una capa posterior no debe reinterpretar una decisión ya tomada.
+- No resolver deuda legacy agregando otra capa de CSS, `!important`, fallback o postprocesado. Si una regla nueva es la canónica, consolidar/eliminar la regla desplazada.
+- Código histórico sólo se conserva cuando cumple una responsabilidad distinta y vigente. “Por compatibilidad” no justifica dejar una segunda autoridad sin un contrato explícito y una prueba que lo requiera.
+- Una tarea no se considera terminada hasta buscar residuos de la lógica reemplazada y probar el flujo final real.
+- Si durante una tarea aparece una contradicción entre lógica aprobada y lógica legacy, preservar la lógica aprobada: no reinventarla ni volver a inferirla desde otra capa.
+
+Flujo obligatorio para cambios de comportamiento:
+
+`MAPEAR → IDENTIFICAR AUTORIDAD → MODIFICAR/REEMPLAZAR → RETIRAR LEGACY → BUSCAR RESIDUOS → REGRESIÓN → END-TO-END`
+
+En el cierre de cada tarea indicar qué fuente de verdad quedó, qué lógica desplazada se retiró y qué validaciones se ejecutaron.
+
 Este repositorio es un sistema existente y funcional. Trabajá de forma incremental.
 La prioridad es **preservar comportamiento y UI ya validados**. No uses una tarea puntual como excusa para refactorizar o rediseñar otras áreas.
 

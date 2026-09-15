@@ -38,37 +38,6 @@ VALORES_VACIOS = {"", "undefined", "null", "none", "n/a", "na", "—"}
 AZUL_INSTITUCIONAL = "102A56"
 
 
-PERFIL_NOMBRE_COMERCIAL = {
-    "RC": "RESPONSABILIDAD CIVIL",
-    "B": "ROBO, INCENDIO Y ACCIDENTE TOTAL",
-    "B1": "ROBO E INCENDIO TOTAL",
-    "C": "TERCEROS COMPLETO",
-    "C1": "TERCEROS COMPLETO",
-    "C_PLUS": "TERCEROS COMPLETO PLUS",
-    "LB": "ROBO E INCENDIO + ROBO PARCIAL AL AMPARO + ACCIDENTE TOTAL",
-    "LB1": "ROBO E INCENDIO + ROBO PARCIAL AL AMPARO",
-    "TODO_RIESGO": "TODO RIESGO",
-    "TR": "TODO RIESGO",
-}
-
-ORDEN_COMERCIAL = {
-    "RESPONSABILIDAD CIVIL": 10,
-    "ROBO TOTAL": 20,
-    "ROBO E INCENDIO TOTAL": 30,
-    "ROBO E INCENDIO TOTAL Y/O PARCIAL": 35,
-    "ROBO, INCENDIO Y ACCIDENTE TOTAL": 40,
-    "ROBO E INCENDIO TOTAL Y/O PARCIAL + ACCIDENTE TOTAL": 50,
-    "ROBO E INCENDIO + ROBO PARCIAL AL AMPARO": 57,
-    "TERCEROS COMPLETO": 60,
-    "ROBO E INCENDIO + ROBO PARCIAL AL AMPARO + ACCIDENTE TOTAL": 62,
-    "TERCEROS COMPLETO PLUS": 70,
-    "TERCEROS COMPLETO PREMIUM": 75,
-    "TERCEROS COMPLETO BLACK": 78,
-    "ALTA GAMA VIP": 80,
-    "TODO RIESGO": 80,
-}
-
-
 class CotizacionDocumentError(ValueError):
     """Error funcional de datos/plantilla."""
 
@@ -149,378 +118,67 @@ def _nota_franquicia_estandar(pct: str = "", importe: str = "") -> str:
     return ""
 
 
-def _normalizar_beneficio_para_carta(texto: str) -> list[str]:
-    """Normaliza vocabulario comercial sin agregar riesgos no presentes.
-
-    Puede devolver más de un ítem únicamente cuando la fuente trae dos riesgos
-    explícitos en la misma frase (por ejemplo destrucción total + daños
-    parciales). Lo que no se reconoce se conserva limpio para no perder dato.
-    """
-    original = _texto(texto, max_len=650)
-    if not original:
-        return []
-    clave = _normalizar_clave(original)
-
-    if clave == "sin grua":
-        return ["Sin grúa"]
-    if clave in {"incluye grua", "grua", "servicio de grua", "asistencia de grua"}:
-        return ["Incluye grúa"]
-
-    if clave in {
-        "destruccion total y danos parciales por accidente",
-        "destruccion total por accidente y danos parciales por accidente",
-    }:
-        return ["Destrucción Total por Accidente", "Daños Parciales por Accidente"]
-    if clave in {"destruccion total por accidente", "destruccion total accidente"}:
-        return ["Destrucción Total por Accidente"]
-    if clave in {"danos parciales por accidente", "danos parciales accidente"}:
-        return ["Daños Parciales por Accidente"]
-
-    if clave == "responsabilidad civil":
-        return ["Responsabilidad Civil"]
-
-    if clave in {
-        "robo total y parcial",
-        "robo hurto total y parcial",
-        "robo y hurto total y parcial",
-    }:
-        return ["Robo/Hurto Total y Parcial"]
-    if clave in {"robo total", "robo hurto total", "robo y hurto total", "hurto total"}:
-        return ["Robo/Hurto Total"]
-    if clave in {"incendio total y parcial", "incendio total parcial"}:
-        return ["Incendio Total y Parcial"]
-    if clave == "incendio total":
-        return ["Incendio Total"]
-
-    extras = ("rueda", "vidrio", "granizo", "cerradura")
-    if all(token in clave for token in extras):
-        salida = ["Ruedas, vidrios, granizo y cerraduras"]
-        if "grua" in clave:
-            salida.append("Incluye grúa")
-        return salida
-
-    return [original]
-
-
-def _limpiar_nombre_tecnico(nombre: str) -> str:
-    """Quita envoltorios/códigos cuando queda un nombre comercial útil."""
-    original = _texto(nombre, max_len=180)
-    if not original:
-        return "Cobertura"
-    limpio = original.strip()
-    # "COBERTURA B0" no aporta un nombre comercial; se resolverá por riesgos.
-    limpio = re.sub(r"^cobertura\s+", "", limpio, flags=re.I).strip()
-    # D4 ALTA GAMA VIP ... -> ALTA GAMA VIP ...; no se hace para una palabra
-    # aislada porque entonces perderíamos el único identificador disponible.
-    m = re.match(r"^(?:[A-Z]{1,3}\d+(?:\.\d+)?|[A-Z]\d*[A-Z]?)\s+(.+)$", limpio, flags=re.I)
-    if m and re.search(r"[A-Za-zÁÉÍÓÚÑáéíóúñ]", m.group(1)):
-        limpio = m.group(1).strip()
-    limpio = re.sub(r"\s*-\s*\d+(?:[.,]\d+)?\s*%+", "", limpio).strip(" -·")
-    # Granizo (Allianz) es un atributo de la alternativa, no parte de su nombre.
-    limpio = re.sub(r"\b(?:C/|CON)\s*GRANIZO\b", "", limpio, flags=re.I).strip(" -·")
-    limpio = re.sub(r"\s*-\s*", " · ", limpio)
-    limpio = re.sub(r"\s+", " ", limpio).strip(" ·-")
-    return limpio or original
-
-
-def _flags_riesgo(contenidos: list[dict], nombre: str) -> dict[str, bool]:
-    beneficios = [c.get("texto", "") for c in contenidos if c.get("tipo") == "beneficio"]
-    claves = {_normalizar_clave(x) for x in beneficios if x}
-    nombre_key = _normalizar_clave(nombre)
-    return {
-        "rc": "responsabilidad civil" in claves or "responsabilidad civil" in nombre_key,
-        "robo_total": any(k in claves for k in {"robo hurto total", "robo hurto total y parcial"}),
-        "robo_parcial": "robo hurto total y parcial" in claves,
-        "incendio_total": any(k in claves for k in {"incendio total", "incendio total y parcial"}),
-        "incendio_parcial": "incendio total y parcial" in claves,
-        "dt": "destruccion total por accidente" in claves,
-        "dp": "danos parciales por accidente" in claves,
-        "extras": "ruedas vidrios granizo y cerraduras" in claves,
-    }
-
-
-# El contenido canónico se construye desde hechos estructurados. Los renderers
-# no deben depender de que una frase previa coincida carácter por carácter.
-PERFIL_BENEFICIO_BASE = {
-    "RC": ["Responsabilidad Civil"],
-    "B": ["Responsabilidad Civil", "Incendio Total", "Robo/Hurto Total", "Destrucción Total por Accidente"],
-    "B1": ["Responsabilidad Civil", "Incendio Total", "Robo/Hurto Total"],
-    "C": ["Responsabilidad Civil", "Incendio Total y Parcial", "Robo/Hurto Total y Parcial", "Destrucción Total por Accidente"],
-    "C1": ["Responsabilidad Civil", "Incendio Total y Parcial", "Robo/Hurto Total y Parcial"],
-    "C_PLUS": ["Responsabilidad Civil", "Incendio Total y Parcial", "Robo/Hurto Total y Parcial", "Destrucción Total por Accidente"],
-    "LB": ["Responsabilidad Civil", "Incendio Total y Parcial", "Robo/Hurto Total", "Robo Parcial al amparo del Robo Total", "Destrucción Total por Accidente"],
-    "LB1": ["Responsabilidad Civil", "Incendio Total y Parcial", "Robo/Hurto Total", "Robo Parcial al amparo del Robo Total"],
-    "TODO_RIESGO": ["Responsabilidad Civil", "Incendio Total y Parcial", "Robo/Hurto Total y Parcial", "Destrucción Total por Accidente", "Daños Parciales por Accidente"],
-    "TR": ["Responsabilidad Civil", "Incendio Total y Parcial", "Robo/Hurto Total y Parcial", "Destrucción Total por Accidente", "Daños Parciales por Accidente"],
-}
-
-RIESGO_EXTRA_LABEL = {
-    "RUEDAS": "Ruedas",
-    "BATERIA": "Batería",
-    "VIDRIOS": "Vidrios",
-    "GRANIZO": "Granizo",
-    "CERRADURAS": "Cerraduras",
-}
-
 
 def _es_nota_franquicia(texto: str) -> bool:
-    """Reconoce la explicación semántica de franquicia, sin depender de una frase exacta."""
     clave = _normalizar_clave(texto)
-    if not clave or "franquicia" not in clave:
-        return False
-    return (
+    return bool(clave and "franquicia" in clave and (
         "queda a cargo del asegurado" in clave
         or clave.startswith("en caso de dano parcial")
         or clave.startswith("en caso de un dano parcial")
-    )
-
-
-def _es_beneficio_nucleo(texto: str) -> bool:
-    clave = _normalizar_clave(texto)
-    return any(token in clave for token in (
-        "responsabilidad civil", "incendio", "robo", "hurto",
-        "destruccion total", "danos parciales por accidente",
-        "robo parcial al amparo",
     ))
 
 
-def _frase_lista(items: list[str]) -> str:
-    items = [str(x).strip() for x in items if str(x).strip()]
-    if not items:
-        return ""
-    if len(items) == 1:
-        return items[0]
-    if len(items) == 2:
-        return f"{items[0]} y {items[1]}"
-    return ", ".join(items[:-1]) + " y " + items[-1]
-
-
-def _contenido_canonico_por_familia(alt: dict, contenidos: list[dict]) -> list[dict]:
-    """Presentación universal: una prestación canónica por bullet.
-
-    La familia aporta su núcleo confirmado; riesgos/adicionales agregan sólo
-    información estructurada. Los textos legacy no vuelven a gobernar la carta.
-    """
-    familia = str(alt.get("familia") or "").strip().upper()
-    base_familia = list(PERFIL_BENEFICIO_BASE.get(familia) or [])
-    if not base_familia:
-        return contenidos
-
-    notas = [x for x in contenidos if x.get("tipo") == "nota"]
-    beneficios = [x for x in contenidos if x.get("tipo") == "beneficio"]
-    salida: list[dict] = []
-    vistos: set[str] = set()
-
-    def agregar(texto):
-        texto = _texto(texto, max_len=650)
-        key = _normalizar_clave(texto)
-        if texto and key and key not in vistos:
-            salida.append({"tipo": "beneficio", "texto": texto})
-            vistos.add(key)
-
-    riesgos = {str(x or "").strip().upper() for x in (alt.get("riesgos_detectados") or []) if str(x or "").strip()}
-
-    # Las exclusiones explícitas son invariantes del modelo y dominan cualquier
-    # detección textual previa. Una fuente puede contener la palabra GRANIZO en
-    # expresiones como "S/GRANIZO"; eso nunca debe reintroducir la prestación.
-    granizo_estado = _normalizar_clave(alt.get("granizo_estado"))
-    if granizo_estado in {"no incluye", "sin granizo", "no"}:
-        riesgos.discard("GRANIZO")
-
-    # Los hechos estructurados tienen prioridad sobre la familia. La familia es
-    # sólo fallback cuando la fuente no entregó un núcleo de riesgos usable.
-    # Esto evita que una normalización genérica vuelva a reinterpretar y pise
-    # variantes ya resueltas por el catálogo de origen (ATM, u otra compañía).
-    core_ids = {
-        "RESPONSABILIDAD_CIVIL", "INCENDIO_TOTAL", "INCENDIO_PARCIAL",
-        "ROBO_HURTO_TOTAL", "ROBO_HURTO_PARCIAL", "ROBO_PARCIAL_AMPARO_TOTAL",
-        "DESTRUCCION_TOTAL_ACCIDENTE", "DANOS_PARCIALES_ACCIDENTE",
-    }
-    if riesgos.intersection(core_ids):
-        base = []
-        if "RESPONSABILIDAD_CIVIL" in riesgos:
-            base.append("Responsabilidad Civil")
-        if "INCENDIO_TOTAL" in riesgos and "INCENDIO_PARCIAL" in riesgos:
-            base.append("Incendio Total y Parcial")
-        elif "INCENDIO_TOTAL" in riesgos:
-            base.append("Incendio Total")
-        elif "INCENDIO_PARCIAL" in riesgos:
-            base.append("Incendio Parcial")
-        if "ROBO_HURTO_TOTAL" in riesgos and "ROBO_HURTO_PARCIAL" in riesgos:
-            base.append("Robo/Hurto Total y Parcial")
-        elif "ROBO_HURTO_TOTAL" in riesgos:
-            base.append("Robo/Hurto Total")
-        elif "ROBO_HURTO_PARCIAL" in riesgos:
-            base.append("Robo/Hurto Parcial")
-        if "ROBO_PARCIAL_AMPARO_TOTAL" in riesgos:
-            base.append("Robo Parcial al amparo del Robo Total")
-        if "DESTRUCCION_TOTAL_ACCIDENTE" in riesgos:
-            base.append("Destrucción Total por Accidente")
-        if "DANOS_PARCIALES_ACCIDENTE" in riesgos:
-            base.append("Daños Parciales por Accidente")
-    else:
-        base = base_familia
-
-    for texto in base:
-        agregar(texto)
-
-    # Evitar bullets genéricos si existe una prestación detallada del mismo tema.
-    adicionales_detalle = [_texto(x, max_len=650) for x in (alt.get("beneficios_adicionales") or []) if _texto(x, max_len=650)]
-    detalle_key = " ".join(_normalizar_clave(x) for x in adicionales_detalle)
-    for risk, label in RIESGO_EXTRA_LABEL.items():
-        if risk not in riesgos:
-            continue
-        if risk == "RUEDAS" and any(k in detalle_key for k in ("rueda", "cubierta")):
-            continue
-        if risk == "VIDRIOS" and any(k in detalle_key for k in ("cristal", "parabris", "luneta")):
-            continue
-        if risk == "GRANIZO" and "granizo" in detalle_key:
-            continue
-        if risk == "CERRADURAS" and "cerradura" in detalle_key:
-            continue
-        agregar(label)
-
-    for texto in adicionales_detalle:
-        agregar(texto)
-
-    # Preservar extras explícitos no nucleares que vinieron de una fuente, sin
-    # volver a incorporar frases legacy del núcleo.
-    for item in beneficios:
-        texto = _texto(item.get("texto"), max_len=650)
-        if not texto or _es_beneficio_nucleo(texto):
-            continue
-        key = _normalizar_clave(texto)
-        extras_legacy = [token for token in ("ruedas", "vidrios", "granizo", "cerraduras") if token in key]
-        if len(extras_legacy) >= 2 and all(token in vistos for token in extras_legacy):
-            continue
-        agregar(texto)
-
-    # Granizo es un atributo independiente del nombre/producto. La exclusión
-    # explícita ya dominó riesgos_detectados arriba; INCLUYE puede agregarlo.
-    if granizo_estado == "incluye":
-        agregar("Granizo")
-    elif granizo_estado in {"no incluye", "sin granizo", "no"}:
-        salida = [x for x in salida if not (
-            x.get("tipo") == "beneficio" and
-            _normalizar_clave(x.get("texto")) in {"granizo", "incluye granizo"}
-        )]
-
-    variante_grua = _normalizar_clave(alt.get("variante_grua"))
-    tiene_grua = alt.get("tiene_grua")
-    if isinstance(tiene_grua, bool) and variante_grua not in {"con grua", "sin grua"}:
-        agregar("Incluye grúa" if tiene_grua else "Sin grúa")
-
-    return salida + notas
-
-
 def normalizar_cobertura_para_carta(alternativa: dict) -> dict:
-    """Uniforma una alternativa y converge siempre al mismo estado canónico.
+    """Sanea el contrato canónico sin reinterpretar la cobertura.
 
-    La función es deliberadamente idempotente: aplicarla dos veces no agrega
-    notas, beneficios ni variantes adicionales. El cotizador aporta hechos
-    estructurados y este paso sólo asegura una presentación común.
+    La semántica comercial debe llegar resuelta por el cotizador/normalizador.
+    Este renderer sólo limpia duplicados, normaliza formato de franquicia y
+    conserva nombre/contenidos/variantes recibidos. Nunca infiere una familia,
+    un nombre comercial ni prestaciones desde riesgos, códigos o textos legacy.
     """
     alt = dict(alternativa or {})
     contenidos: list[dict] = []
-    vistos_beneficios: set[str] = set()
-    vistos_notas: set[str] = set()
+    vistos: set[tuple[str, str]] = set()
     for item in alt.get("contenidos") or []:
         tipo = str(item.get("tipo") or "beneficio").lower() if isinstance(item, dict) else "beneficio"
         raw = item.get("texto") if isinstance(item, dict) else item
-        if tipo == "nota":
-            texto = _texto(raw, max_len=650)
-            # Las notas de franquicia nunca se heredan como texto libre: se
-            # reconstruyen una sola vez desde franquicia_pct/importe.
-            if not texto or _es_nota_franquicia(texto):
-                continue
-            key = _normalizar_clave(texto)
-            if key and key not in vistos_notas:
-                vistos_notas.add(key)
-                contenidos.append({"tipo": "nota", "texto": texto})
+        tipo = "nota" if tipo == "nota" else "beneficio"
+        texto = _texto(raw, max_len=650)
+        if not texto or _es_nota_franquicia(texto):
             continue
-        for texto in _normalizar_beneficio_para_carta(raw):
-            key = _normalizar_clave(texto)
-            if key and key not in vistos_beneficios:
-                vistos_beneficios.add(key)
-                contenidos.append({"tipo": "beneficio", "texto": texto})
+        key = (tipo, _normalizar_clave(texto))
+        if key[1] and key not in vistos:
+            vistos.add(key)
+            contenidos.append({"tipo": tipo, "texto": texto})
 
-    # Cuando la familia ya fue resuelta, usamos su núcleo como contrato común
-    # y preservamos únicamente adicionales realmente confirmados.
-    contenidos = _contenido_canonico_por_familia(alt, contenidos)
-    alt["contenidos"] = contenidos
+    # El renderer valida contradicciones del contrato, pero no las corrige ni
+    # reinterpreta. Si llegan, el error está aguas arriba y debe arreglarse allí.
+    granizo_estado = _normalizar_clave(alt.get("granizo_estado"))
+    if granizo_estado in {"no incluye", "sin granizo", "no", "no_incluye"}:
+        if any(_normalizar_clave(x.get("texto")) in {"granizo", "incluye granizo"} for x in contenidos if x.get("tipo") == "beneficio"):
+            raise CotizacionDocumentError("Contrato de cotización contradictorio: granizo excluido pero presente en contenidos.")
+    variante_grua = _normalizar_clave(alt.get("variante_grua"))
+    if variante_grua == "sin grua" and any(_normalizar_clave(x.get("texto")) == "incluye grua" for x in contenidos):
+        raise CotizacionDocumentError("Contrato de cotización contradictorio: variante sin grúa pero contenidos incluyen grúa.")
+    if variante_grua == "con grua" and any(_normalizar_clave(x.get("texto")) == "sin grua" for x in contenidos):
+        raise CotizacionDocumentError("Contrato de cotización contradictorio: variante con grúa pero contenidos indican sin grúa.")
 
-    # La explicación de franquicia es una regla universal y tiene un único
-    # dueño en la normalización documental. Al eliminarla arriba y recrearla
-    # aquí, validar_datos(validar_datos(x)) produce el mismo resultado.
     nota_franquicia = _nota_franquicia_estandar(alt.get("franquicia_pct"), alt.get("franquicia_importe"))
     if nota_franquicia:
-        alt["contenidos"].append({"tipo": "nota", "texto": nota_franquicia})
+        key = ("nota", _normalizar_clave(nota_franquicia))
+        if key not in vistos:
+            contenidos.append({"tipo": "nota", "texto": nota_franquicia})
 
-    original = _texto(alt.get("nombre"), max_len=180) or "Cobertura"
-    comercial_explicit = _texto(alt.get("nombre_comercial"), max_len=180)
-    variante_explicit = _texto(alt.get("variante_comercial"), max_len=120)
-    familia = _texto(alt.get("familia"), max_len=80).upper()
-    key = _normalizar_clave(original)
-    flags = _flags_riesgo(alt["contenidos"], original)
-
-    if comercial_explicit and not _normalizar_clave(comercial_explicit).startswith("cobertura "):
-        nombre_base = _limpiar_nombre_tecnico(comercial_explicit).upper()
-    elif familia in PERFIL_NOMBRE_COMERCIAL:
-        nombre_base = PERFIL_NOMBRE_COMERCIAL[familia]
-    elif flags["dp"] or "todo riesgo" in key:
-        nombre_base = "TODO RIESGO"
-    elif "terceros completo" in key and any(x in key for x in ("premium", "black", "vip")):
-        nombre_base = "TERCEROS COMPLETO PREMIUM"
-    elif "terceros completo" in key and "plus" in key:
-        nombre_base = "TERCEROS COMPLETO PLUS"
-    elif "terceros completo" in key:
-        nombre_base = "TERCEROS COMPLETO"
-    elif key == "responsabilidad civil":
-        nombre_base = "RESPONSABILIDAD CIVIL"
-    elif flags["robo_total"] and flags["incendio_total"] and flags["dt"]:
-        if flags["robo_parcial"] or flags["incendio_parcial"]:
-            if flags["rc"]:
-                nombre_base = "TERCEROS COMPLETO PLUS" if flags["extras"] else "TERCEROS COMPLETO"
-            else:
-                nombre_base = "ROBO E INCENDIO TOTAL Y/O PARCIAL + ACCIDENTE TOTAL"
-        else:
-            nombre_base = "ROBO, INCENDIO Y ACCIDENTE TOTAL"
-    elif flags["robo_total"] and flags["incendio_total"]:
-        nombre_base = "ROBO E INCENDIO TOTAL"
-    elif flags["robo_total"]:
-        nombre_base = "ROBO TOTAL"
-    elif flags["rc"] and not any(flags[x] for x in ("robo_total", "incendio_total", "dt", "dp")):
-        nombre_base = "RESPONSABILIDAD CIVIL"
-    elif flags["incendio_total"] and flags["incendio_parcial"]:
-        nombre_base = "INCENDIO TOTAL Y PARCIAL"
-    elif flags["incendio_total"]:
-        nombre_base = "INCENDIO TOTAL"
-    else:
-        nombre_base = _limpiar_nombre_tecnico(original).upper()
-
-    variantes: list[str] = []
-    if variante_explicit:
-        variantes.extend([x.strip().upper() for x in re.split(r"\s*[·|]\s*", variante_explicit) if x.strip()])
-
-    franquicia_pct = normalizar_porcentaje(alt.get("franquicia_pct"))
-    if nombre_base == "TODO RIESGO" and franquicia_pct and not any(_normalizar_clave(x).startswith("franquicia") for x in variantes):
-        variantes.append(f"FRANQUICIA {franquicia_pct}")
-
-    variante_grua = _normalizar_clave(alt.get("variante_grua"))
-    if variante_grua in {"con grua", "sin grua"}:
-        etiqueta_grua = "CON GRÚA" if variante_grua == "con grua" else "SIN GRÚA"
-        if etiqueta_grua not in variantes:
-            variantes.append(etiqueta_grua)
-        alt["contenidos"] = [
-            item for item in alt["contenidos"]
-            if _normalizar_clave(item.get("texto")) not in {"incluye grua", "sin grua"}
-        ]
-
-    variantes = list(dict.fromkeys(variantes))
-    alt["nombre_comercial"] = nombre_base
-    alt["variante_comercial"] = " · ".join(variantes)
-    alt["nombre"] = " · ".join([nombre_base, *variantes])
-    alt["orden_comercial"] = ORDEN_COMERCIAL.get(nombre_base, 55)
+    nombre_comercial = (
+        _texto(alt.get("nombre_comercial"), max_len=180)
+        or _texto(alt.get("nombre"), max_len=180)
+        or "Cobertura"
+    )
+    variante = _texto(alt.get("variante_comercial"), max_len=120)
+    alt["contenidos"] = contenidos
+    alt["nombre_comercial"] = nombre_comercial
+    alt["variante_comercial"] = variante
+    alt["nombre"] = " · ".join(x for x in (nombre_comercial, variante) if x)
     return alt
 
 
@@ -1130,8 +788,8 @@ class CotizacionDocumentService:
 
         # Una compañía se presenta como una sección. Agrupamos por identidad
         # canónica preservando el orden de primera aparición de cada compañía.
-        # Dentro de la sección, las coberturas se ordenan por nivel comercial y
-        # conservan el orden original cuando no pueden compararse objetivamente.
+        # Dentro de cada sección se conserva el orden canónico recibido. El
+        # renderer no vuelve a decidir jerarquía comercial.
         grupos: list[dict] = []
         indice_grupo: dict[str, int] = {}
         for orden_original, alt in enumerate(datos["alternativas"]):
@@ -1146,10 +804,6 @@ class CotizacionDocumentService:
                 grupos[pos]["alternativas"].append(alt)
 
         for group_idx, grupo in enumerate(grupos):
-            grupo["alternativas"] = sorted(
-                grupo["alternativas"],
-                key=lambda alt: (int(alt.get("orden_comercial") or 55), int(alt.get("_orden_original") or 0)),
-            )
             if group_idx:
                 self._insertar_separador_estructural(marker)
             self._crear_tabla_compania(doc, marker, grupo, primera=(group_idx == 0))

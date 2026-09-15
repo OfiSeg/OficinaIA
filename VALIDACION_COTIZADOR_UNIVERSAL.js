@@ -69,14 +69,18 @@ function check(condition, message) {
   // resuelta por la fuente/catálogo (caso ATM Plus/Premium/Black).
   check(evaluate("modeloComercialOpcion(quoteSources[0],{codigo:'CPr',familia:'C_PLUS',perfil_normalizado:'C_PLUS',nombre_cliente:'Terceros Completo Premium'}).titulo_comercial") === 'Terceros Completo Premium', 'ATM Premium volvió a ser aplastado por C_PLUS.');
   check(evaluate("modeloComercialOpcion(quoteSources[0],{codigo:'CB',familia:'C_PLUS',perfil_normalizado:'C_PLUS',nombre_cliente:'Terceros Completo Black'}).titulo_comercial") === 'Terceros Completo Black', 'ATM Black volvió a ser aplastado por C_PLUS.');
+  // El frontend no reconstruye prestaciones desde familia/riesgos: consume la
+  // descripción canónica ya resuelta por el normalizador/catálogo de origen.
   const atmBParcial = evaluate(`datosCoberturaPropuesta({
     compania:'ATM',codigo:'B',familia:'B',nombre:'Robo e Incendio Total y/o Parcial + Accidente Total',
     nombreComercial:'Robo e Incendio Total y/o Parcial + Accidente Total',
     riesgosDetectados:['RESPONSABILIDAD_CIVIL','INCENDIO_TOTAL','INCENDIO_PARCIAL','ROBO_HURTO_TOTAL','ROBO_HURTO_PARCIAL','DESTRUCCION_TOTAL_ACCIDENTE'],
-    descripcion:'',precio:'$100.000'
+    descripcion:'Responsabilidad Civil\\nIncendio Total y Parcial\\nRobo/Hurto Total y Parcial\\nDestrucción Total por Accidente',precio:'$100.000'
   })`);
   const atmBTextos=atmBParcial.contenidos.filter(x=>x.tipo!=='nota').map(x=>x.texto);
-  check(atmBTextos.includes('Incendio Total y Parcial')&&atmBTextos.includes('Robo/Hurto Total y Parcial'), 'La familia B volvió a pisar riesgos estructurados ATM.');
+  check(atmBTextos.join('|')==='Responsabilidad Civil|Incendio Total y Parcial|Robo/Hurto Total y Parcial|Destrucción Total por Accidente', 'El frontend alteró la descripción canónica recibida.');
+  const sinDescripcion=evaluate(`datosCoberturaPropuesta({compania:'ATM',familia:'C_PLUS',nombre:'Terceros Completo Premium',riesgosDetectados:['RESPONSABILIDAD_CIVIL'],descripcion:''})`);
+  check(sinDescripcion.contenidos.length===0, 'El frontend volvió a inventar prestaciones desde familia/riesgos.');
 
   evaluate(`genericQuoteSources=[inicializarIdentidadFuente({id:'generica-1',compania:'Compañía no identificada',opciones:[]},'Compañía no identificada')];quoteSources.push(genericQuoteSources[0])`);
   evaluate("confirmarCompaniaFuente('generica-1','AgroSalta','agrosalta')");
@@ -101,7 +105,7 @@ function check(condition, message) {
   const mercantilPlus = evaluate(`datosCoberturaPropuesta({
     compania:'Mercantil Andina',codigo:'MP',familia:'C_PLUS',nombre:'Terceros Completo M Plus',
     nombreComercial:'Terceros Completo M Plus',servicioGrua:true,
-    descripcion:'Responsabilidad civil, incendio total y parcial, robo total y parcial, destrucción total por accidente. Cubre ruedas, vidrios, granizo y cerraduras.',
+    descripcion:'Responsabilidad Civil\\nIncendio Total y Parcial\\nRobo/Hurto Total y Parcial\\nDestrucción Total por Accidente\\nRuedas, vidrios, granizo y cerraduras',
     precio:'$100.000'
   })`);
   check(mercantilPlus.contenidos.some(x => /Incluye grúa/i.test(x.texto)), 'M Plus perdió la grúa confirmada en la salida comercial.');

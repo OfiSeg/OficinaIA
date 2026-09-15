@@ -2411,50 +2411,22 @@ function servicioGruaOpcion(op){
   if(/\b(?:incluye|con) (?:servicio de )?grua\b/.test(texto))return true;
   return null;
 }
-function nombreBaseComercialOpcion(op){
-  const codigo=String(op?.codigo||op?.codigo_real||op?.codigo_original||'').toUpperCase();
-  if(String(op?.tipo_vehiculo||'').toLowerCase()==='auto'){
-    if(['A','A1'].includes(codigo))return 'Responsabilidad Civil';
-    if(['B2','B4'].includes(codigo))return 'Robo, Incendio y Accidente Total';
-    if(['B3','B5'].includes(codigo))return 'Robo e Incendio Total';
-  }
-  if(String(op?.tipo_vehiculo||'').toLowerCase()==='moto'&&['RC','RC1'].includes(codigo))return 'Robo Clásico';
-  const original=String(op?.nombre_comercial||op?.nombre_cliente||op?.nombre_original||op?.nombre_plan||op?.titulo_leido||op?.nombre||codigo||'Cobertura').replace(/\s+(?:con|sin)\s+(?:gr[uú]a|asistencia)$/i,'').trim();
-  if(!/^Cobertura\s+[A-Z0-9.]+$/i.test(original)&&!/^\w{1,5}\d*(?:\.\d+)?$/i.test(original))return original;
-  const riesgos=normalizarClaveMarca(op?.descripcion_cliente||op?.descripcion||op?.texto_fuente||'');
-  const rc=riesgos.includes('responsabilidad civil'),robo=riesgos.includes('robo')||riesgos.includes('hurto'),incendio=riesgos.includes('incendio');
-  const parcial=riesgos.includes('total y parcial')||riesgos.includes('incendio total y parcial')||riesgos.includes('robo hurto total y parcial');
-  const dt=riesgos.includes('destruccion total')||riesgos.includes('accidente total'),dp=riesgos.includes('danos parciales por accidente');
-  if(dp||riesgos.includes('todo riesgo'))return 'Todo Riesgo';
-  if(riesgos.includes('amparo del robo total'))return dt?'Robo e Incendio + Robo Parcial al Amparo + Accidente Total':'Robo e Incendio + Robo Parcial al Amparo';
-  if(robo&&incendio&&dt)return parcial?'Robo e Incendio Total y/o Parcial + Accidente Total':'Robo, Incendio y Accidente Total';
-  if(robo&&incendio)return parcial?'Robo e Incendio Total y/o Parcial':'Robo e Incendio Total';
-  if(robo)return 'Robo Total';
-  if(incendio)return parcial?'Incendio Total y Parcial':'Incendio Total';
-  if(rc)return 'Responsabilidad Civil';
-  return original;
-}
-const QUOTE_PROFILE_COMMERCIAL_NAMES={
-  RC:'Responsabilidad Civil',B:'Robo, Incendio y Accidente Total',B1:'Robo e Incendio Total',
-  C:'Terceros Completo',C1:'Terceros Completo',C_PLUS:'Terceros Completo Plus',
-  LB:'Robo e Incendio + Robo Parcial al Amparo + Accidente Total',LB1:'Robo e Incendio + Robo Parcial al Amparo',
-  TODO_RIESGO:'Todo Riesgo',TR:'Todo Riesgo'
-};
 function familiaComercialOpcion(op){
-  const perfil=String(op?.familia||op?.perfil_normalizado||'').trim();if(perfil&&perfil!=='SIN_CLASIFICAR')return perfil;
-  return normalizarClaveMarca(nombreBaseComercialOpcion(op));
+  // La familia debe llegar resuelta por la fuente/normalizador. El frontend no
+  // la infiere desde nombres, códigos ni descripciones.
+  const perfil=String(op?.familia||op?.perfil_normalizado||'').trim();
+  return perfil||'SIN_CLASIFICAR';
 }
 function nombreComercialNormalizadoOpcion(op){
-  // Autoridad de nombres: nombre comercial explícito -> nombre ya resuelto por
-  // la fuente/catálogo -> familia normalizada. La familia nunca debe aplastar
-  // variantes reales como ATM Plus/Premium/Black.
-  const explicito=String(op?.nombre_comercial||'').trim();
-  if(explicito&&!/^cobertura(?:\s+|$)/i.test(explicito))return explicito;
-  const resuelto=String(op?.nombre_cliente||'').trim();
-  if(resuelto&&!/^cobertura(?:\s+|$)/i.test(resuelto))return resuelto;
-  const perfil=String(op?.perfil_normalizado||op?.familia||'').trim().toUpperCase();
-  return QUOTE_PROFILE_COMMERCIAL_NAMES[perfil]||nombreBaseComercialOpcion(op);
+  // La identidad comercial también llega resuelta. Sólo preservamos el mejor
+  // nombre explícito disponible; no reconstruimos coberturas por código/riesgos.
+  for(const valor of [op?.nombre_comercial,op?.nombre_cliente,op?.nombre_original,op?.nombre_plan,op?.titulo_leido,op?.nombre,op?.codigo_original,op?.codigo]){
+    const texto=String(valor||'').trim();
+    if(texto)return texto;
+  }
+  return 'Cobertura';
 }
+
 function opcionesFuenteCotizacion(source){
   if(Array.isArray(source?.opciones)&&source.opciones.length)return source.opciones;
   return source?[source]:[];
@@ -2883,74 +2855,30 @@ function lineasCoberturaCotizacion(descripcion){
   });
   return salida.filter((x,i,a)=>x&&a.indexOf(x)===i);
 }
-const QUOTE_CORE_BENEFIT={
-  RC:['Responsabilidad Civil'],
-  B:['Responsabilidad Civil','Incendio Total','Robo/Hurto Total','Destrucción Total por Accidente'],
-  B1:['Responsabilidad Civil','Incendio Total','Robo/Hurto Total'],
-  C:['Responsabilidad Civil','Incendio Total y Parcial','Robo/Hurto Total y Parcial','Destrucción Total por Accidente'],
-  C1:['Responsabilidad Civil','Incendio Total y Parcial','Robo/Hurto Total y Parcial'],
-  C_PLUS:['Responsabilidad Civil','Incendio Total y Parcial','Robo/Hurto Total y Parcial','Destrucción Total por Accidente'],
-  LB:['Responsabilidad Civil','Incendio Total y Parcial','Robo/Hurto Total','Robo Parcial al amparo del Robo Total','Destrucción Total por Accidente'],
-  LB1:['Responsabilidad Civil','Incendio Total y Parcial','Robo/Hurto Total','Robo Parcial al amparo del Robo Total'],
-  TODO_RIESGO:['Responsabilidad Civil','Incendio Total y Parcial','Robo/Hurto Total y Parcial','Destrucción Total por Accidente','Daños Parciales por Accidente'],
-  TR:['Responsabilidad Civil','Incendio Total y Parcial','Robo/Hurto Total y Parcial','Destrucción Total por Accidente','Daños Parciales por Accidente']
-};
 function esNotaFranquiciaCotizacion(texto){
   const key=normalizarClaveMarca(texto);return key.includes('franquicia')&&(key.includes('queda a cargo del asegurado')||key.startsWith('en caso de dano parcial')||key.startsWith('en caso de un dano parcial'));
 }
-function esBeneficioNucleoCotizacion(texto){
-  const key=normalizarClaveMarca(texto);return ['responsabilidad civil','incendio','robo','hurto','destruccion total','danos parciales por accidente','robo parcial al amparo'].some(x=>key.includes(x));
-}
-function contenidosCanonicosCotizacion(items,familia,riesgosDetectados=[],servicioGrua=null,varianteGrua='',beneficiosAdicionales=[],granizoEstado=''){
-  const fam=String(familia||'').trim().toUpperCase(),base=[...(QUOTE_CORE_BENEFIT[fam]||[])];
+function contenidosCanonicosCotizacion(items,_familia,_riesgosDetectados=[],servicioGrua=null,varianteGrua='',beneficiosAdicionales=[],granizoEstado=''){
+  // El frontend NO reconstruye el núcleo de una cobertura desde familia/riesgos.
+  // Ese significado ya llega resuelto por el normalizador/catálogo de origen.
+  // Aquí sólo se sanea la presentación y se agregan atributos explícitos.
   const limpios=(items||[]).filter(x=>x&&String(x.texto||'').trim()&&!esNotaFranquiciaCotizacion(x.texto));
-  if(!base.length)return limpios;
-  const notas=limpios.filter(x=>x.tipo==='nota'),beneficios=limpios.filter(x=>x.tipo!=='nota');
-  const out=[],vistos=new Set();const add=texto=>{const txt=String(texto||'').trim(),key=normalizarClaveMarca(txt);if(txt&&key&&!vistos.has(key)){out.push({tipo:'beneficio',texto:txt});vistos.add(key)}};
-  const riesgos=new Set((riesgosDetectados||[]).map(x=>String(x||'').trim().toUpperCase()).filter(Boolean));
-  // Una exclusión explícita domina cualquier detección textual previa.
-  // Evita, por ejemplo, que "S/GRANIZO" termine generando el beneficio Granizo.
+  const out=[],vistos=new Set();
+  const add=(texto,tipo='beneficio')=>{const txt=String(texto||'').trim(),key=normalizarClaveMarca(txt);if(txt&&key&&!vistos.has(`${tipo}:${key}`)){out.push({tipo,texto:txt});vistos.add(`${tipo}:${key}`)}};
+  limpios.forEach(x=>add(x.texto,x.tipo==='nota'?'nota':'beneficio'));
+  (beneficiosAdicionales||[]).map(x=>String(x||'').trim()).filter(Boolean).forEach(x=>add(x));
+
   const granizoKey=normalizarClaveMarca(granizoEstado);
-  if(['no incluye','sin granizo','no'].includes(granizoKey))riesgos.delete('GRANIZO');
-  // Hechos estructurados primero; familia sólo como fallback. Así una familia
-  // común no vuelve a reinterpretar una variante que la fuente ya resolvió.
-  const coreIds=['RESPONSABILIDAD_CIVIL','INCENDIO_TOTAL','INCENDIO_PARCIAL','ROBO_HURTO_TOTAL','ROBO_HURTO_PARCIAL','ROBO_PARCIAL_AMPARO_TOTAL','DESTRUCCION_TOTAL_ACCIDENTE','DANOS_PARCIALES_ACCIDENTE'];
-  let core=[];
-  if(coreIds.some(id=>riesgos.has(id))){
-    if(riesgos.has('RESPONSABILIDAD_CIVIL'))core.push('Responsabilidad Civil');
-    if(riesgos.has('INCENDIO_TOTAL')&&riesgos.has('INCENDIO_PARCIAL'))core.push('Incendio Total y Parcial');
-    else if(riesgos.has('INCENDIO_TOTAL'))core.push('Incendio Total');
-    else if(riesgos.has('INCENDIO_PARCIAL'))core.push('Incendio Parcial');
-    if(riesgos.has('ROBO_HURTO_TOTAL')&&riesgos.has('ROBO_HURTO_PARCIAL'))core.push('Robo/Hurto Total y Parcial');
-    else if(riesgos.has('ROBO_HURTO_TOTAL'))core.push('Robo/Hurto Total');
-    else if(riesgos.has('ROBO_HURTO_PARCIAL'))core.push('Robo/Hurto Parcial');
-    if(riesgos.has('ROBO_PARCIAL_AMPARO_TOTAL'))core.push('Robo Parcial al amparo del Robo Total');
-    if(riesgos.has('DESTRUCCION_TOTAL_ACCIDENTE'))core.push('Destrucción Total por Accidente');
-    if(riesgos.has('DANOS_PARCIALES_ACCIDENTE'))core.push('Daños Parciales por Accidente');
-  }else{
-    core=base.map(x=>x);
-  }
-  core.forEach(add);
-  const detalles=(beneficiosAdicionales||[]).map(x=>String(x||'').trim()).filter(Boolean),detalleKey=normalizarClaveMarca(detalles.join(' '));
-  [['RUEDAS','Ruedas'],['BATERIA','Batería'],['VIDRIOS','Vidrios'],['GRANIZO','Granizo'],['CERRADURAS','Cerraduras']].forEach(([id,label])=>{
-    if(!riesgos.has(id))return;
-    if(id==='RUEDAS'&&(detalleKey.includes('rueda')||detalleKey.includes('cubierta')))return;
-    if(id==='VIDRIOS'&&(detalleKey.includes('cristal')||detalleKey.includes('parabris')||detalleKey.includes('luneta')))return;
-    if(id==='GRANIZO'&&detalleKey.includes('granizo'))return;
-    if(id==='CERRADURAS'&&detalleKey.includes('cerradura'))return;
-    add(label);
-  });
-  detalles.forEach(add);
-  beneficios.filter(x=>!esBeneficioNucleoCotizacion(x.texto)).forEach(x=>{const key=normalizarClaveMarca(x.texto);const tokens=['ruedas','vidrios','granizo','cerraduras'].filter(t=>key.includes(t));if(tokens.length>=2&&tokens.every(t=>vistos.has(t)))return;add(x.texto)});
   if(granizoKey==='incluye')add('Granizo');
   else if(['no incluye','sin granizo','no'].includes(granizoKey)){
     for(let i=out.length-1;i>=0;i--){
-      const k=normalizarClaveMarca(out[i]?.texto);
-      if(out[i]?.tipo!=='nota'&&['granizo','incluye granizo'].includes(k))out.splice(i,1);
+      const key=normalizarClaveMarca(out[i]?.texto);
+      if(out[i]?.tipo!=='nota'&&['granizo','incluye granizo'].includes(key))out.splice(i,1);
     }
   }
-  const vg=normalizarClaveMarca(varianteGrua);if(typeof servicioGrua==='boolean'&&!['con grua','sin grua'].includes(vg))add(servicioGrua?'Incluye grúa':'Sin grúa');
-  notas.forEach(x=>{const key=normalizarClaveMarca(x.texto);if(key&&!vistos.has(key)){out.push(x);vistos.add(key)}});
+
+  const vg=normalizarClaveMarca(varianteGrua);
+  if(typeof servicioGrua==='boolean'&&!['con grua','sin grua'].includes(vg))add(servicioGrua?'Incluye grúa':'Sin grúa');
   return out;
 }
 

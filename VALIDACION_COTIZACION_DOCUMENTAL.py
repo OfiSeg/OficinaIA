@@ -17,6 +17,7 @@ from docx.oxml.ns import qn
 from docx.shared import Cm
 
 from cotizacion_document_service import (
+    CotizacionDocumentError,
     AZUL_INSTITUCIONAL,
     CotizacionDocumentService,
     ESTILOS_REQUERIDOS,
@@ -173,14 +174,17 @@ def main():
     # Invariantes semánticas: una exclusión explícita domina cualquier
     # detección textual contradictoria. Este caso reproduce el fallo real de
     # Allianz S/GRANIZO observado en la salida Nissan Tiida.
-    sin_granizo = normalizar_cobertura_para_carta({
-        "compania": "Allianz", "familia": "C", "nombre": "Clásica Segmentada",
-        "variante_comercial": "S/GRANIZO", "granizo_estado": "NO_INCLUYE",
-        "riesgos_detectados": ["RESPONSABILIDAD_CIVIL", "GRANIZO"],
-        "contenidos": [{"tipo": "beneficio", "texto": "Granizo"}],
-    })
-    beneficios_sg = [x["texto"].lower() for x in sin_granizo["contenidos"] if x.get("tipo") == "beneficio"]
-    check("granizo" not in beneficios_sg and "incluye granizo" not in beneficios_sg, "S/GRANIZO volvió a imprimir Granizo.")
+    try:
+        normalizar_cobertura_para_carta({
+            "compania": "Allianz", "familia": "C", "nombre": "Clásica Segmentada",
+            "variante_comercial": "S/GRANIZO", "granizo_estado": "NO_INCLUYE",
+            "riesgos_detectados": ["RESPONSABILIDAD_CIVIL", "GRANIZO"],
+            "contenidos": [{"tipo": "beneficio", "texto": "Granizo"}],
+        })
+    except CotizacionDocumentError:
+        pass
+    else:
+        raise AssertionError("El renderer aceptó un contrato contradictorio S/GRANIZO + Granizo.")
     base_doc = Document(TEMPLATE)
     baseline_shapes = len(base_doc.inline_shapes)
 
@@ -259,76 +263,41 @@ def main():
         check(una == dos, "La normalización documental no es idempotente.")
         check(sum(1 for x in dos["alternativas"][0]["contenidos"] if x.get("tipo") == "nota") == 1, "Una segunda validación duplicó la franquicia.")
 
-        # C_PLUS/Full hereda siempre el núcleo de Terceros Completo y suma sólo
-        # adicionales confirmados.
-        plus = service.validar_datos({"vehiculo": "Plus", "alternativas": [{
-            "compania": "Mercantil Andina", "familia": "C_PLUS",
-            "nombre": "Terceros Completo M Plus", "nombre_comercial": "Terceros Completo Plus",
-            "tiene_grua": True,
-            "riesgos_detectados": ["RESPONSABILIDAD_CIVIL", "INCENDIO_TOTAL", "INCENDIO_PARCIAL", "ROBO_HURTO_TOTAL", "ROBO_HURTO_PARCIAL", "DESTRUCCION_TOTAL_ACCIDENTE", "RUEDAS", "VIDRIOS", "GRANIZO", "CERRADURAS", "GRUA"],
-            "contenidos": [
-                {"tipo": "beneficio", "texto": "Ruedas, vidrios, granizo y cerraduras"},
-                {"tipo": "beneficio", "texto": "Incluye grúa"},
-            ],
+        # Contrato renderer-only: el documento conserva exactamente la semántica
+        # canónica recibida y no vuelve a reconstruirla desde familia/riesgos.
+        canon = [
+            {"tipo":"beneficio","texto":"Responsabilidad Civil"},
+            {"tipo":"beneficio","texto":"Incendio Total y Parcial"},
+            {"tipo":"beneficio","texto":"Robo/Hurto Total y Parcial"},
+            {"tipo":"beneficio","texto":"Destrucción Total por Accidente"},
+            {"tipo":"beneficio","texto":"Ruedas"},
+        ]
+        plus = service.validar_datos({"vehiculo":"Plus","alternativas":[{
+            "compania":"Mercantil Andina","familia":"C_PLUS",
+            "nombre":"Terceros Completo Plus","nombre_comercial":"Terceros Completo Plus",
+            "riesgos_detectados":["GRANIZO"],
+            "contenidos":canon,
         }]})["alternativas"][0]
-        plus_items = [x["texto"] for x in plus["contenidos"] if x.get("tipo") != "nota"]
-        for esperado in ["Responsabilidad Civil", "Incendio Total y Parcial", "Robo/Hurto Total y Parcial", "Destrucción Total por Accidente"]:
-            check(esperado in plus_items, f"C_PLUS perdió la prestación canónica: {esperado}.")
-        for esperado in ["Ruedas", "Vidrios", "Granizo", "Cerraduras", "Incluye grúa"]:
-            check(esperado in plus_items, f"C_PLUS perdió el adicional confirmado: {esperado}.")
-        check(not any(", incendio" in x.lower() and ", robo" in x.lower() for x in plus_items), "C_PLUS volvió a usar una frase legacy en lugar de una prestación por bullet.")
+        check(plus["contenidos"] == canon, "El renderer modificó prestaciones canónicas ya resueltas.")
+        check(plus["nombre"] == "Terceros Completo Plus", "El renderer reinterpretó el nombre comercial canónico.")
 
-
-        # Toda cobertura usa prestaciones canónicas, una por bullet. C1 sin DT
-        # no vuelve al speech legacy; C con DT agrega sólo el bullet correspondiente.
-        c1 = service.validar_datos({"vehiculo":"AgroSalta", "alternativas":[{
-            "compania":"AgroSalta", "codigo":"C1", "familia":"C1",
-            "nombre":"Terceros Completo", "nombre_comercial":"Terceros Completo",
-            "suma":"$8.999.999", "precio":"$72.000",
-            "riesgos_detectados":["RESPONSABILIDAD_CIVIL","INCENDIO_TOTAL","INCENDIO_PARCIAL","ROBO_HURTO_TOTAL","ROBO_HURTO_PARCIAL"],
-            "contenidos":[{"tipo":"beneficio","texto":"Responsabilidad civil, incendio total y parcial y robo/hurto total y parcial"}],
-        }]})["alternativas"][0]
-        check([x["texto"] for x in c1["contenidos"] if x["tipo"] == "beneficio"] == [
-            "Responsabilidad Civil", "Incendio Total y Parcial", "Robo/Hurto Total y Parcial"
-        ], "C1 no quedó expresado con prestaciones canónicas por bullet.")
-        c = service.validar_datos({"vehiculo":"AgroSalta", "alternativas":[{
-            "compania":"AgroSalta", "codigo":"C", "familia":"C",
-            "nombre":"Terceros Completo", "nombre_comercial":"Terceros Completo",
-            "suma":"$8.999.999", "precio":"$73.000",
-            "riesgos_detectados":["RESPONSABILIDAD_CIVIL","INCENDIO_TOTAL","INCENDIO_PARCIAL","ROBO_HURTO_TOTAL","ROBO_HURTO_PARCIAL","DESTRUCCION_TOTAL_ACCIDENTE"],
+        # Cambiar familia/riesgos no autoriza al renderer a inventar contenidos.
+        vacia = normalizar_cobertura_para_carta({
+            "compania":"ATM","familia":"C_PLUS","nombre":"Terceros Completo Premium",
+            "nombre_comercial":"Terceros Completo Premium",
+            "riesgos_detectados":["RESPONSABILIDAD_CIVIL","GRANIZO"],
             "contenidos":[],
-        }]})["alternativas"][0]
-        check([x["texto"] for x in c["contenidos"] if x["tipo"] == "beneficio"] == [
-            "Responsabilidad Civil", "Incendio Total y Parcial", "Robo/Hurto Total y Parcial", "Destrucción Total por Accidente"
-        ], "C con DT no quedó expresado con prestaciones canónicas por bullet.")
+        })
+        check(vacia["contenidos"] == [], "El renderer volvió a reconstruir prestaciones desde familia/riesgos.")
+        check(vacia["nombre"] == "Terceros Completo Premium", "El renderer aplastó una variante comercial aprobada.")
 
         tech = service.validar_datos({"vehiculo":"ATM", "alternativas":[{
             "compania":"ATM", "codigo":"CPr", "familia":"C_PLUS",
             "nombre":"Terceros Completo Premium", "nombre_comercial":"Terceros Completo Premium",
-            "riesgos_detectados":["RESPONSABILIDAD_CIVIL","INCENDIO_TOTAL","INCENDIO_PARCIAL","ROBO_HURTO_TOTAL","ROBO_HURTO_PARCIAL","DESTRUCCION_TOTAL_ACCIDENTE"],
             "detalle_tecnico":["Granizo hasta la suma asegurada · 2 eventos por año"],
             "contenidos":[],
         }]})["alternativas"][0]
         check(tech.get("detalle_tecnico") == ["Granizo hasta la suma asegurada · 2 eventos por año"], "Se perdió la metadata técnica de una variante ATM.")
-
-        for codigo, nombre in (("C", "Terceros Completo Plus"), ("CPr", "Terceros Completo Premium"), ("CB", "Terceros Completo Black")):
-            variante_atm = normalizar_cobertura_para_carta({
-                "compania": "ATM", "codigo": codigo, "familia": "C_PLUS",
-                "nombre": nombre, "nombre_comercial": nombre,
-                "riesgos_detectados": ["RESPONSABILIDAD_CIVIL", "INCENDIO_TOTAL", "INCENDIO_PARCIAL", "ROBO_HURTO_TOTAL", "ROBO_HURTO_PARCIAL", "DESTRUCCION_TOTAL_ACCIDENTE"],
-                "contenidos": [],
-            })
-            check(variante_atm["nombre"].upper() == nombre.upper(), f"ATM {codigo} perdió su variante comercial y fue aplastada por C_PLUS.")
-
-        atm_b_estructurado = normalizar_cobertura_para_carta({
-            "compania": "ATM", "codigo": "B", "familia": "B",
-            "nombre": "Robo e Incendio Total y/o Parcial + Accidente Total",
-            "nombre_comercial": "Robo e Incendio Total y/o Parcial + Accidente Total",
-            "riesgos_detectados": ["RESPONSABILIDAD_CIVIL", "INCENDIO_TOTAL", "INCENDIO_PARCIAL", "ROBO_HURTO_TOTAL", "ROBO_HURTO_PARCIAL", "DESTRUCCION_TOTAL_ACCIDENTE"],
-            "contenidos": [],
-        })
-        atm_b_items = [x["texto"] for x in atm_b_estructurado["contenidos"] if x["tipo"] == "beneficio"]
-        check("Incendio Total y Parcial" in atm_b_items and "Robo/Hurto Total y Parcial" in atm_b_items, "La familia B volvió a pisar los riesgos estructurados ATM.")
 
         # Compañía desconocida: fallback textual y generación no bloqueada.
         unknown = {"vehiculo": "Prueba", "alternativas": [alternativa("Compañía Sin Logo", 1)]}
@@ -359,93 +328,26 @@ def main():
         variante_text = texto_docx(Document(variante_docx))
         check("RESPONSABILIDAD CIVIL · CON GRÚA" in variante_text, "La variante de grúa no quedó en el título.")
 
-        # La carta normaliza códigos técnicos por riesgos reales y ordena de
-        # básico a completo sin tocar el orden de compañías.
+        # El renderer no limpia códigos ni reordena semánticamente: recibe la
+        # identidad comercial final y conserva el orden entregado por el cotizador.
         tecnicas = [
-            {
-                "compania": "Mercantil Andina",
-                "nombre": "Todo Riesgo",
-                "suma": "$69.900.600",
-                "franquicia_pct": "2%%",
-                "franquicia_importe": "$1.398.012",
-                "precio": "$247.000",
-                "contenidos": [
-                    {"tipo": "beneficio", "texto": "Responsabilidad Civil"},
-                    {"tipo": "beneficio", "texto": "Incendio Total y Parcial"},
-                    {"tipo": "beneficio", "texto": "Robo Total y Parcial"},
-                    {"tipo": "beneficio", "texto": "Destrucción Total y daños parciales por accidente"},
-                ],
-            },
-            {
-                "compania": "Mercantil Andina",
-                "nombre": "Cobertura B0",
-                "suma": "$69.900.600",
-                "precio": "$83.000",
-                "contenidos": [
-                    {"tipo": "beneficio", "texto": "Responsabilidad civil"},
-                    {"tipo": "beneficio", "texto": "Robo Total"},
-                ],
-            },
-            {
-                "compania": "Mercantil Andina",
-                "nombre": "Responsabilidad Civil",
-                "suma": "$69.900.600",
-                "precio": "$62.000",
-                "contenidos": [{"tipo": "beneficio", "texto": "Responsabilidad civil"}],
-            },
-            {
-                "compania": "Mercantil Andina",
-                "nombre": "Cobertura B3",
-                "suma": "$69.900.600",
-                "precio": "$74.000",
-                "contenidos": [
-                    {"tipo": "beneficio", "texto": "Responsabilidad civil"},
-                    {"tipo": "beneficio", "texto": "Incendio total y parcial"},
-                ],
-            },
+            {"compania":"Mercantil Andina","nombre":"Responsabilidad Civil","nombre_comercial":"Responsabilidad Civil","precio":"$62.000","contenidos":[{"tipo":"beneficio","texto":"Responsabilidad Civil"}]},
+            {"compania":"Mercantil Andina","nombre":"Robo Total","nombre_comercial":"Robo Total","precio":"$83.000","contenidos":[{"tipo":"beneficio","texto":"Robo/Hurto Total"}]},
+            {"compania":"Mercantil Andina","nombre":"Incendio Total y Parcial","nombre_comercial":"Incendio Total y Parcial","precio":"$74.000","contenidos":[{"tipo":"beneficio","texto":"Incendio Total y Parcial"}]},
+            {"compania":"Mercantil Andina","nombre":"Todo Riesgo","nombre_comercial":"Todo Riesgo","variante_comercial":"FRANQUICIA 2%","franquicia_pct":"2%%","precio":"$247.000","contenidos":[{"tipo":"beneficio","texto":"Daños Parciales por Accidente"}]},
         ]
-        tecnicas_docx = service.generar_docx({"vehiculo": "Normalización", "alternativas": tecnicas}, tmp / "normalizacion.docx")
+        tecnicas_docx = service.generar_docx({"vehiculo":"Normalización","alternativas":tecnicas}, tmp / "normalizacion.docx")
         validar_docx(tecnicas_docx, logos_esperados=1, baseline_shapes=baseline_shapes, companias_esperadas=1)
         tecnicas_text = texto_docx(Document(tecnicas_docx))
-        check("COBERTURA B0" not in tecnicas_text and "COBERTURA B3" not in tecnicas_text, "Quedó nomenclatura técnica evitable como título.")
-        check("Robo/Hurto Total" in tecnicas_text, "No se normalizó la terminología Robo/Hurto.")
-        check("Daños Parciales por Accidente" in tecnicas_text, "No se separó correctamente el riesgo de daños parciales.")
-        posiciones = [
-            tecnicas_text.index("RESPONSABILIDAD CIVIL"),
-            tecnicas_text.index("ROBO TOTAL"),
-            tecnicas_text.index("INCENDIO TOTAL Y PARCIAL"),
-            tecnicas_text.index("TODO RIESGO"),
-        ]
-        check(posiciones == sorted(posiciones), "Las coberturas no quedaron ordenadas de básica a completa.")
+        posiciones=[tecnicas_text.index("RESPONSABILIDAD CIVIL"),tecnicas_text.index("ROBO TOTAL"),tecnicas_text.index("INCENDIO TOTAL Y PARCIAL"),tecnicas_text.index("TODO RIESGO")]
+        check(posiciones == sorted(posiciones), "El renderer alteró el orden canónico recibido.")
 
-        # Allianz: D4 conserva el producto base; Granizo es una prestación/
-        # estado separado y nunca parte de la identidad visible de la cobertura.
-        d4 = normalizar_cobertura_para_carta({
-            "nombre": "D4 ALTA GAMA VIP - 2% - C/GRANIZO",
-            "franquicia_pct": "2%%",
-            "contenidos": [{"tipo": "beneficio", "texto": "Granizo"}],
-        })
-        check(d4["nombre"] == "ALTA GAMA VIP", "D4 no quedó como producto base limpio; Granizo no debe formar parte del título.")
-
-        # La autoridad comercial del cotizador debe sobrevivir intacta al DOCX/PDF.
         explicita = normalizar_cobertura_para_carta({
-            "nombre": "CÓDIGO TÉCNICO X9",
-            "familia": "C_PLUS",
-            "nombre_comercial": "Terceros Completo Plus",
-            "variante_comercial": "CON GRÚA",
-            "variante_grua": "CON GRÚA",
-            "contenidos": [{"tipo": "beneficio", "texto": "Responsabilidad Civil"}],
+            "nombre":"CÓDIGO TÉCNICO X9","familia":"C_PLUS",
+            "nombre_comercial":"Terceros Completo Plus","variante_comercial":"CON GRÚA",
+            "contenidos":[{"tipo":"beneficio","texto":"Responsabilidad Civil"}],
         })
-        check(explicita["nombre"] == "TERCEROS COMPLETO PLUS · CON GRÚA", "El renderer documental contradijo el nombre/variante comercial del cotizador.")
-
-        # Si llega un payload antiguo con nombre técnico, la familia normalizada
-        # sigue siendo suficiente para evitar 'Cobertura LB/LB1' en documentos.
-        lb = normalizar_cobertura_para_carta({
-            "nombre": "Cobertura LB",
-            "familia": "LB",
-            "contenidos": [{"tipo": "beneficio", "texto": "Responsabilidad Civil"}],
-        })
-        check(lb["nombre_comercial"] == "ROBO E INCENDIO + ROBO PARCIAL AL AMPARO + ACCIDENTE TOTAL", "LB volvió a salir como código técnico en documentos.")
+        check(explicita["nombre"] == "Terceros Completo Plus · CON GRÚA", "El renderer contradijo el nombre/variante comercial recibido.")
 
         # Compañía extensa: logo único, primera cobertura unida al encabezado
         # y ninguna cobertura puede quedar partida entre páginas.
@@ -480,13 +382,13 @@ def main():
                 paginas_id = [i for i, page in enumerate(pages) if id_txt in page]
                 paginas_precio = [i for i, page in enumerate(pages) if precio in page]
                 check(len(paginas_id) == 1 and paginas_id == paginas_precio, f"La cobertura {idx} quedó partida entre páginas.")
-            check("Ruedas, vidrios, granizo y cerraduras" in "\n".join(pages) and "Incluye grúa" in "\n".join(pages), "La normalización de beneficios perdió información real.")
+            check("Ruedas, vidrios, granizo, cerraduras y grúa" in "\n".join(pages), "El renderer alteró un beneficio canónico recibido.")
 
         # Nombres de archivo y sanitización.
         nombre = service.nombre_base({"vehiculo": "Peugeot / 208"}, date(2026, 9, 13))
         check(nombre == "Cotizacion_Peugeot_208_13-09-2026", "Nombre de archivo inesperado.")
 
-    print("OK - cotización documental: secciones de compañía, normalización comercial, bloques indivisibles, continuidad multipágina y exports validados")
+    print("OK - cotización documental: contrato canónico preservado, contradicciones rechazadas, bloques indivisibles, continuidad multipágina y exports validados")
 
 
 if __name__ == "__main__":

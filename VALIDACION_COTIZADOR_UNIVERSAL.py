@@ -63,7 +63,8 @@ check("nombre_comercial" in JS and "variante_comercial" in JS and "variante_grua
 check("modelo.titulo_comercial" in JS, "Las filas seleccionadas no consumen el título comercial.")
 check("gruaTokenExplicito" in JS, "Una variante de grúa explícita puede perderse al reconstruir el título.")
 
-check("const resuelto=String(op?.nombre_cliente||'').trim()" in JS, "La familia normalizada vuelve a tener prioridad sobre el nombre resuelto por la fuente.")
+check("for(const valor of [op?.nombre_comercial,op?.nombre_cliente" in JS, "El frontend dejó de preservar primero el nombre comercial resuelto por la fuente.")
+check("QUOTE_PROFILE_COMMERCIAL_NAMES" not in JS and "QUOTE_CORE_BENEFIT" not in JS, "El frontend volvió a incorporar tablas semánticas paralelas de coberturas.")
 check("document.querySelectorAll('.insured-profile-card')" not in JS[JS.find("function posicionarMenuComandos"):JS.find("function renderComandosMenu")], "El menú slash volvió a depender de la posición de la ficha.")
 check("setTimeout(posicionarMenuComandos,40)" not in JS, "El menú slash volvió a reposicionarse dinámicamente después del layout.")
 check(".chat-command-menu{left:16px;right:auto;bottom:68px" in ESTILO, "El menú slash no quedó anclado al lado izquierdo del composer.")
@@ -80,8 +81,7 @@ check('PROGRAMFILES' in COT_DOC and 'LibreOffice" / "program" / "soffice.exe' in
 # Los perfiles LB/LB1 no pueden volver a exponerse como códigos técnicos.
 check(not PROFILE_LABELS[PERFIL_LB].lower().startswith("cobertura lb"), "LB conserva un nombre técnico en vez de comercial.")
 check(not PROFILE_LABELS[PERFIL_LB1].lower().startswith("cobertura lb"), "LB1 conserva un nombre técnico en vez de comercial.")
-check("LB:'Robo e Incendio + Robo Parcial al Amparo + Accidente Total'" in JS, "Frontend y normalizador no comparten el nombre comercial de LB.")
-check("LB1:'Robo e Incendio + Robo Parcial al Amparo'" in JS, "Frontend y normalizador no comparten el nombre comercial de LB1.")
+check("LB:'Robo e Incendio + Robo Parcial al Amparo" not in JS, "El frontend volvió a duplicar nombres comerciales LB/LB1 del normalizador.")
 
 # design-system.css se carga después de estilo.css: la uniformidad definitiva debe
 # vivir en la hoja que realmente gana la cascada, no en una regla inefectiva.
